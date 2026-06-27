@@ -1,12 +1,15 @@
 import type { ReactNode } from 'react'
-import { LayoutDashboard, Users, Settings, GraduationCap } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { LayoutDashboard, Users, Megaphone, GraduationCap, Settings, ArrowLeft } from 'lucide-react'
 import { cx } from '../ui'
 
-export type AdminView = 'dashboard' | 'directory' | 'settings'
+export type AdminView = 'dashboard' | 'directory' | 'announcements' | 'mentors' | 'settings'
 
 const NAV: Array<{ key: AdminView; label: string; icon: ReactNode }> = [
-  { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
+  { key: 'dashboard', label: 'Invitations', icon: <LayoutDashboard size={18} /> },
   { key: 'directory', label: 'Alumni Directory', icon: <Users size={18} /> },
+  { key: 'announcements', label: 'Announcements', icon: <Megaphone size={18} /> },
+  { key: 'mentors', label: 'Mentor Approvals', icon: <GraduationCap size={18} /> },
   { key: 'settings', label: 'Settings', icon: <Settings size={18} /> },
 ]
 
@@ -22,16 +25,14 @@ export function AdminLayout({
   children: ReactNode
 }) {
   return (
-    <div className="flex min-h-screen bg-navy-950 text-slate-200">
+    <div className="flex min-h-screen bg-[#f6f7f8] text-[#1c1c1c]">
       {/* Sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-navy-800 bg-navy-900 md:flex">
-        <div className="flex items-center gap-2.5 border-b border-navy-800 px-6 py-5">
-          <div className="grid h-9 w-9 place-items-center rounded-lg bg-teal-500 text-navy-950">
-            <GraduationCap size={20} />
-          </div>
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-[#edeff1] bg-white md:flex">
+        <div className="flex items-center gap-2.5 border-b border-[#edeff1] px-6 py-4">
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#ff4500] text-lg font-black text-white">R</span>
           <div>
-            <p className="text-sm font-semibold text-white">Rooman</p>
-            <p className="text-xs text-slate-400">Alumni Network</p>
+            <p className="text-sm font-bold text-[#1c1c1c]">Rooman Admin</p>
+            <p className="text-xs text-[#878a8c]">Alumni Network</p>
           </div>
         </div>
         <nav className="flex flex-1 flex-col gap-1 p-3">
@@ -40,10 +41,10 @@ export function AdminLayout({
               key={item.key}
               onClick={() => onViewChange(item.key)}
               className={cx(
-                'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
+                'flex items-center gap-3 rounded-lg border-l-[3px] px-3 py-2.5 text-sm font-medium transition-colors',
                 view === item.key
-                  ? 'bg-teal-500/15 text-teal-300'
-                  : 'text-slate-400 hover:bg-navy-800 hover:text-slate-200',
+                  ? 'border-[#ff4500] bg-orange-50 text-[#ff4500]'
+                  : 'border-transparent text-[#1c1c1c] hover:bg-gray-100',
               )}
             >
               {item.icon}
@@ -51,28 +52,26 @@ export function AdminLayout({
             </button>
           ))}
         </nav>
-        <div className="border-t border-navy-800 p-4 text-xs text-slate-500">Admin Console v0.1</div>
+        <Link
+          to="/home"
+          className="flex items-center gap-2 border-t border-[#edeff1] p-4 text-xs font-medium text-[#878a8c] hover:text-[#ff4500]"
+        >
+          <ArrowLeft size={14} /> Back to network
+        </Link>
       </aside>
 
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Top bar with mobile nav + summary stats */}
-        <header className="border-b border-navy-800 bg-navy-900/80 px-4 py-4 backdrop-blur md:px-8">
+        <header className="border-b border-[#edeff1] bg-white px-4 py-4 md:px-8">
           <div className="mb-4 flex items-center justify-between">
-            <h1 className="text-lg font-semibold text-white">
-              {NAV.find((n) => n.key === view)?.label}
-            </h1>
-            {/* Mobile nav */}
+            <h1 className="text-lg font-bold text-[#1c1c1c]">{NAV.find((n) => n.key === view)?.label}</h1>
             <div className="flex gap-1 md:hidden">
               {NAV.map((item) => (
                 <button
                   key={item.key}
                   onClick={() => onViewChange(item.key)}
                   aria-label={item.label}
-                  className={cx(
-                    'rounded-lg p-2',
-                    view === item.key ? 'bg-teal-500/15 text-teal-300' : 'text-slate-400',
-                  )}
+                  className={cx('rounded-lg p-2', view === item.key ? 'bg-orange-50 text-[#ff4500]' : 'text-[#878a8c]')}
                 >
                   {item.icon}
                 </button>

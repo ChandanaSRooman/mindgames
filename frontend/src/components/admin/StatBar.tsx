@@ -3,11 +3,11 @@ import { Users, UserCheck, Mail, Sparkles } from 'lucide-react'
 
 function Stat({ icon, label, value }: { icon: ReactNode; label: string; value: ReactNode }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-navy-700/60 bg-navy-800/50 px-4 py-3">
-      <div className="grid h-10 w-10 place-items-center rounded-lg bg-teal-500/15 text-teal-300">{icon}</div>
+    <div className="flex items-center gap-3 rounded-xl border border-[#edeff1] bg-white px-4 py-3">
+      <div className="grid h-10 w-10 place-items-center rounded-lg bg-orange-100 text-[#ff4500]">{icon}</div>
       <div className="min-w-0">
-        <p className="text-xl font-semibold text-white">{value}</p>
-        <p className="truncate text-xs text-slate-400">{label}</p>
+        <p className="text-xl font-bold text-[#1c1c1c]">{value}</p>
+        <p className="truncate text-xs text-[#878a8c]">{label}</p>
       </div>
     </div>
   )

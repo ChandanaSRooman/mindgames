@@ -1,0 +1,48 @@
+import { useMemo } from 'react'
+import { Megaphone, Newspaper } from 'lucide-react'
+import { useApp } from '../store/AppStore'
+import { Card } from '../components/ui'
+import { PostCard } from '../components/feed/PostCard'
+import { roomanStats } from '../data/mockData'
+
+export function News() {
+  const { posts } = useApp()
+
+  // News feed = official Rooman posts + general "Update" achievements.
+  const news = useMemo(
+    () =>
+      posts
+        .filter((p) => p.pinned || p.authorId === 'rooman' || p.type === 'Update' || p.type === 'StartupVarsity')
+        .sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false) || +new Date(b.createdAt) - +new Date(a.createdAt)),
+    [posts],
+  )
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <Newspaper size={24} className="text-[#ff4500]" />
+        <h1 className="text-2xl font-bold text-[#1c1c1c]">News & Updates</h1>
+      </div>
+
+      {/* Rooman highlight banner */}
+      <Card className="overflow-hidden">
+        <div className="flex items-center gap-3 bg-gradient-to-r from-[#ff4500] to-[#ff6534] px-5 py-4 text-white">
+          <Megaphone size={22} />
+          <div>
+            <p className="font-bold">Rooman Technologies · {roomanStats.years} Years</p>
+            <p className="text-sm text-orange-50">{roomanStats.alumni} alumni trained · {roomanStats.reach}</p>
+          </div>
+        </div>
+      </Card>
+
+      {news.map((p) => (
+        <PostCard key={p.id} post={p} />
+      ))}
+      {news.length === 0 && (
+        <div className="rounded-xl border border-[#edeff1] bg-white py-12 text-center text-sm text-[#878a8c] shadow-sm">
+          No news yet.
+        </div>
+      )}
+    </div>
+  )
+}

@@ -46,19 +46,19 @@ export function CsvUpload({ onParsed }: { onParsed: (rows: ContactRow[]) => void
         onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && inputRef.current?.click()}
         className={cx(
           'flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-8 text-center transition-colors',
-          dragging ? 'border-teal-400 bg-teal-500/10' : 'border-navy-600 bg-navy-800/40 hover:border-navy-500',
+          dragging ? 'border-[#ff4500] bg-orange-50' : 'border-[#edeff1] bg-[#f6f7f8] hover:border-[#ff6534]',
         )}
       >
-        <div className="grid h-12 w-12 place-items-center rounded-full bg-teal-500/15 text-teal-300">
+        <div className="grid h-12 w-12 place-items-center rounded-full bg-orange-100 text-[#ff4500]">
           <UploadCloud size={24} />
         </div>
         <div>
-          <p className="font-medium text-slate-200">
-            Drag &amp; drop a CSV here, or <span className="text-teal-300">browse</span>
+          <p className="font-medium text-[#1c1c1c]">
+            Drag &amp; drop a CSV here, or <span className="text-[#ff4500]">browse</span>
           </p>
-          <p className="mt-1 text-xs text-slate-400">
-            We extract only <span className="text-slate-300">Name</span>,{' '}
-            <span className="text-slate-300">Phone</span> and <span className="text-slate-300">Email</span>.
+          <p className="mt-1 text-xs text-[#878a8c]">
+            We extract only <span className="text-[#1c1c1c]">Name</span>,{' '}
+            <span className="text-[#1c1c1c]">Phone</span> and <span className="text-[#1c1c1c]">Email</span>.
           </p>
         </div>
         <input
@@ -69,26 +69,26 @@ export function CsvUpload({ onParsed }: { onParsed: (rows: ContactRow[]) => void
           onChange={(e) => {
             const file = e.target.files?.[0]
             if (file) void handleFile(file)
-            e.target.value = '' // allow re-upload of same file
+            e.target.value = ''
           }}
         />
       </div>
 
       {fileName && !error && (
-        <p className="mt-3 flex items-center gap-2 text-sm text-slate-400">
-          <FileText size={15} className="text-teal-300" /> Parsed <span className="text-slate-200">{fileName}</span>
+        <p className="mt-3 flex items-center gap-2 text-sm text-[#878a8c]">
+          <FileText size={15} className="text-[#ff4500]" /> Parsed <span className="text-[#1c1c1c]">{fileName}</span>
         </p>
       )}
       {error && (
-        <p className="mt-3 flex items-center gap-2 text-sm text-rose-300">
+        <p className="mt-3 flex items-center gap-2 text-sm text-red-500">
           <AlertTriangle size={15} /> {error}
         </p>
       )}
 
-      <p className="mt-4 text-xs text-slate-500">
+      <p className="mt-4 text-xs text-[#878a8c]">
         No file handy?{' '}
         <button
-          className="text-teal-300 underline-offset-2 hover:underline"
+          className="text-[#ff4500] underline-offset-2 hover:underline"
           onClick={() =>
             onParsed(
               parseContactsCsv(

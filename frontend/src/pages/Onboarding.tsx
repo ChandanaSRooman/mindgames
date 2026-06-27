@@ -1,131 +1,296 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, GraduationCap, Sparkles } from 'lucide-react'
-import type { Experience, StatusTag } from '../types'
-import { STATUS_TAGS } from '../types'
-import { api } from '../lib/api'
+import { ArrowLeft, ArrowRight, Camera, Check } from 'lucide-react'
 import { useApp } from '../store/AppStore'
-import { Button, Card } from '../components/ui'
-import { StatusToggle } from '../components/ui/StatusBadge'
-import { ResumeUpload } from '../components/onboarding/ResumeUpload'
-import { ExperienceTimeline } from '../components/onboarding/ExperienceTimeline'
-import { SkillsPills } from '../components/onboarding/SkillsPills'
+import { Avatar } from '../components/ui'
+import {
+  DOMAINS,
+  EMPLOYMENT_TYPES,
+  type Domain,
+  type EmploymentType,
+} from '../types'
 
-const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+const STEPS = ['Basic Info', 'Current Status', 'Profile Setup', 'Interests']
 
 export function Onboarding() {
+  const { updateProfile, setAuthenticated, notify } = useApp()
   const navigate = useNavigate()
-  const { notify, setProfile } = useApp()
-  const [parsing, setParsing] = useState(false)
-  const [parsed, setParsed] = useState(false)
-  const [headline, setHeadline] = useState('')
-  const [experience, setExperience] = useState<Experience[]>([])
-  const [skills, setSkills] = useState<string[]>([])
-  const [tags, setTags] = useState<StatusTag[]>([])
+  const fileRef = useRef<HTMLInputElement>(null)
 
-  async function parse() {
-    setParsing(true)
-    try {
-      // ponytail: artificial delay to show the "AI parsing" animation; backend returns instantly.
-      const [result] = await Promise.all([api.parseResume(), wait(1800)])
-      setHeadline(result.headline)
-      setExperience(result.experience)
-      setSkills(result.skills)
-      setParsed(true)
-      notify('Resume parsed — review and edit your profile below.', 'success')
-    } catch {
-      notify('Could not parse resume. Is the backend running?', 'error')
-    } finally {
-      setParsing(false)
-    }
-  }
+  const [step, setStep] = useState(0)
+  const [photo, setPhoto] = useState<string>()
 
-  function toggleTag(t: StatusTag) {
-    setTags((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]))
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    batchYear: '',
+    course: '',
+    company: '',
+    designation: '',
+    experienceYears: '',
+    domain: '' as Domain | '',
+    employmentType: '' as EmploymentType | '',
+    linkedin: '',
+    bio: '',
+    city: '',
+    willingToMentor: false,
+    interestedInStartup: false,
+    expertise: '',
+  })
+
+  const set = (k: keyof typeof form, v: string | boolean) =>
+    setForm((f) => ({ ...f, [k]: v }))
+
+  const canNext = () => {
+    if (step === 0) return form.name && form.email && form.batchYear && form.course
+    if (step === 1) return form.company && form.designation && form.domain && form.employmentType
+    if (step === 2) return form.city
+    return true
   }
 
   function finish() {
-    setProfile({ tags })
-    navigate('/feed')
+    updateProfile({
+      name: form.name || 'You',
+      email: form.email,
+      phone: form.phone,
+      batchYear: Number(form.batchYear) || new Date().getFullYear(),
+      course: form.course,
+      company: form.company,
+      designation: form.designation,
+      experienceYears: Number(form.experienceYears) || 0,
+      domain: (form.domain || 'Web Dev') as Domain,
+      employmentType: (form.employmentType || 'Employed') as EmploymentType,
+      linkedin: form.linkedin,
+      bio: form.bio || 'Rooman alumnus.',
+      city: form.city,
+      willingToMentor: form.willingToMentor,
+      interestedInStartup: form.interestedInStartup,
+      isMentor: form.willingToMentor,
+      expertise: form.expertise
+        ? form.expertise.split(',').map((s) => s.trim()).filter(Boolean)
+        : ['Rooman Alumni'],
+    })
+    setAuthenticated(true)
+    notify('Welcome to the Rooman Alumni Network! 🎉')
+    navigate('/home')
   }
 
+  const next = () => (step < STEPS.length - 1 ? setStep((s) => s + 1) : finish())
+
   return (
-    <div className="min-h-screen bg-navy-950">
-      <header className="border-b border-navy-800 bg-navy-900/60">
-        <div className="mx-auto flex max-w-4xl items-center gap-2.5 px-6 py-4">
-          <div className="grid h-9 w-9 place-items-center rounded-lg bg-teal-500 text-navy-950">
-            <GraduationCap size={18} />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-white">Set up your profile</p>
-            <p className="text-xs text-slate-400">Step {parsed ? 2 : 1} of 2</p>
-          </div>
+    <div className="flex min-h-screen items-center justify-center bg-[#f6f7f8] px-4 py-8">
+      <div className="w-full max-w-lg rounded-2xl border border-[#edeff1] bg-white p-6 shadow-sm sm:p-8">
+        {/* Progress */}
+        <div className="mb-6 flex items-center gap-2">
+          {STEPS.map((s, i) => (
+            <div key={s} className="flex flex-1 flex-col gap-1.5">
+              <div className={`h-1.5 rounded-full ${i <= step ? 'bg-[#ff4500]' : 'bg-[#edeff1]'}`} />
+              <span className={`text-[11px] font-medium ${i === step ? 'text-[#ff4500]' : 'text-[#878a8c]'}`}>
+                {s}
+              </span>
+            </div>
+          ))}
         </div>
-      </header>
 
-      <main className="mx-auto max-w-4xl space-y-6 px-6 py-8">
-        <Card className="p-6">
-          <div className="mb-4 flex items-center gap-2">
-            <Sparkles size={18} className="text-teal-300" />
-            <h2 className="text-base font-semibold text-white">Import from resume</h2>
+        <h1 className="text-2xl font-bold text-[#1c1c1c]">{STEPS[step]}</h1>
+        <p className="mb-5 text-sm text-[#878a8c]">Step {step + 1} of {STEPS.length}</p>
+
+        {/* Step content */}
+        {step === 0 && (
+          <div className="flex flex-col gap-3">
+            <Field label="Full Name" value={form.name} onChange={(v) => set('name', v)} placeholder="Aarav Sharma" />
+            <Field label="Email" value={form.email} onChange={(v) => set('email', v)} placeholder="you@example.com" type="email" />
+            <Field label="Phone" value={form.phone} onChange={(v) => set('phone', v)} placeholder="+91 …" />
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Batch Year" value={form.batchYear} onChange={(v) => set('batchYear', v.replace(/\D/g, '').slice(0, 4))} placeholder="2019" />
+              <Field label="Course at Rooman" value={form.course} onChange={(v) => set('course', v)} placeholder="Full-Stack Dev" />
+            </div>
           </div>
-          <p className="mb-4 text-sm text-slate-400">
-            Upload your resume and let AI pre-fill your experience and skills. You can edit everything afterward.
-          </p>
-          <ResumeUpload parsing={parsing} onParse={parse} />
-        </Card>
-
-        {parsing && (
-          <Card className="flex items-center gap-3 p-6">
-            <Sparkles size={18} className="animate-pulse text-teal-300" />
-            <div className="flex-1">
-              <p className="text-sm font-medium text-slate-200">AI is parsing your resume…</p>
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-navy-700">
-                <div className="h-full w-1/3 animate-[progress_1.4s_ease-in-out_infinite] rounded-full bg-teal-500" />
-              </div>
-            </div>
-          </Card>
         )}
 
-        {parsed && (
-          <>
-            {headline && (
-              <p className="rounded-lg border border-teal-500/30 bg-teal-500/10 px-4 py-3 text-sm text-teal-200">
-                Detected headline: <span className="font-semibold">{headline}</span>
-              </p>
+        {step === 1 && (
+          <div className="flex flex-col gap-3">
+            <Field label="Current Company" value={form.company} onChange={(v) => set('company', v)} placeholder="Amazon" />
+            <Field label="Designation" value={form.designation} onChange={(v) => set('designation', v)} placeholder="Software Engineer" />
+            <Field label="Years of Experience" value={form.experienceYears} onChange={(v) => set('experienceYears', v.replace(/\D/g, '').slice(0, 2))} placeholder="4" />
+            <Select label="Expertise Domain" value={form.domain} onChange={(v) => set('domain', v)} options={DOMAINS} />
+            <Select label="Employment Type" value={form.employmentType} onChange={(v) => set('employmentType', v)} options={EMPLOYMENT_TYPES} />
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-2 border-dashed border-[#edeff1] bg-[#f6f7f8]"
+              >
+                {photo ? (
+                  <img src={photo} alt="" className="h-full w-full object-cover" />
+                ) : form.name ? (
+                  <Avatar name={form.name} size={76} />
+                ) : (
+                  <Camera size={24} className="text-[#878a8c]" />
+                )}
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) setPhoto(URL.createObjectURL(f))
+                }}
+              />
+              <div>
+                <p className="text-sm font-semibold text-[#1c1c1c]">Profile Photo</p>
+                <p className="text-xs text-[#878a8c]">Click the circle to upload (optional)</p>
+              </div>
+            </div>
+            <Field label="LinkedIn URL" value={form.linkedin} onChange={(v) => set('linkedin', v)} placeholder="https://linkedin.com/in/…" />
+            <Field label="City" value={form.city} onChange={(v) => set('city', v)} placeholder="Bengaluru" />
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[#1c1c1c]">Short Bio</label>
+              <textarea
+                value={form.bio}
+                onChange={(e) => set('bio', e.target.value)}
+                rows={3}
+                placeholder="Tell the network about yourself…"
+                className="w-full resize-none rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
+              />
+            </div>
+            <Field label="Key Skills (comma separated)" value={form.expertise} onChange={(v) => set('expertise', v)} placeholder="React, AWS, Node.js" />
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="flex flex-col gap-3">
+            <Toggle
+              label="Willing to mentor juniors?"
+              hint="Get listed as a mentor and conduct paid sessions."
+              value={form.willingToMentor}
+              onChange={(v) => set('willingToMentor', v)}
+            />
+            <Toggle
+              label="Interested in StartupVarsity?"
+              hint="Access labs, mentors and seed support to build your product."
+              value={form.interestedInStartup}
+              onChange={(v) => set('interestedInStartup', v)}
+            />
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="mt-7 flex items-center justify-between">
+          <button
+            onClick={() => (step === 0 ? navigate('/') : setStep((s) => s - 1))}
+            className="flex items-center gap-1.5 text-sm font-semibold text-[#878a8c] hover:text-[#1c1c1c]"
+          >
+            <ArrowLeft size={16} /> Back
+          </button>
+          <button
+            onClick={next}
+            disabled={!canNext()}
+            className="flex items-center gap-2 rounded-full bg-[#ff4500] px-6 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#ff6534] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {step === STEPS.length - 1 ? (
+              <>Finish <Check size={16} /></>
+            ) : (
+              <>Continue <ArrowRight size={16} /></>
             )}
-
-            <Card className="p-6">
-              <h2 className="mb-4 text-base font-semibold text-white">Experience</h2>
-              <ExperienceTimeline items={experience} />
-            </Card>
-
-            <Card className="p-6">
-              <h2 className="mb-1 text-base font-semibold text-white">Skills</h2>
-              <p className="mb-4 text-sm text-slate-400">Tap × to remove, or add your own.</p>
-              <SkillsPills skills={skills} onChange={setSkills} />
-            </Card>
-
-            <Card className="p-6">
-              <h2 className="mb-1 text-base font-semibold text-white">Your status</h2>
-              <p className="mb-4 text-sm text-slate-400">
-                Pick all that apply — these power mentor/talent matching in the feed.
-              </p>
-              <div className="flex flex-wrap gap-2.5">
-                {STATUS_TAGS.map((t) => (
-                  <StatusToggle key={t} tag={t} active={tags.includes(t)} onToggle={() => toggleTag(t)} />
-                ))}
-              </div>
-            </Card>
-
-            <div className="flex justify-end">
-              <Button icon={<ArrowRight size={16} />} onClick={finish}>
-                Go to Network Feed
-              </Button>
-            </div>
-          </>
-        )}
-      </main>
+          </button>
+        </div>
+      </div>
     </div>
+  )
+}
+
+function Field({
+  label,
+  value,
+  onChange,
+  placeholder,
+  type = 'text',
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  type?: string
+}) {
+  return (
+    <div>
+      <label className="mb-1 block text-sm font-medium text-[#1c1c1c]">{label}</label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
+      />
+    </div>
+  )
+}
+
+function Select<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string
+  value: string
+  onChange: (v: T) => void
+  options: readonly T[]
+}) {
+  return (
+    <div>
+      <label className="mb-1 block text-sm font-medium text-[#1c1c1c]">{label}</label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as T)}
+        className="w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm text-[#1c1c1c] outline-none focus:border-[#ff4500]"
+      >
+        <option value="">Select…</option>
+        {options.map((o) => (
+          <option key={o} value={o}>{o}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+function Toggle({
+  label,
+  hint,
+  value,
+  onChange,
+}: {
+  label: string
+  hint: string
+  value: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <button
+      onClick={() => onChange(!value)}
+      className={`flex items-center justify-between rounded-xl border p-4 text-left transition-colors ${
+        value ? 'border-[#ff4500] bg-orange-50' : 'border-[#edeff1] hover:bg-gray-50'
+      }`}
+    >
+      <div>
+        <p className="font-semibold text-[#1c1c1c]">{label}</p>
+        <p className="text-xs text-[#878a8c]">{hint}</p>
+      </div>
+      <span
+        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${value ? 'bg-[#ff4500]' : 'bg-gray-300'}`}
+      >
+        <span
+          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${value ? 'left-[22px]' : 'left-0.5'}`}
+        />
+      </span>
+    </button>
   )
 }

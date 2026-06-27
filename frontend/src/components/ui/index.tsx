@@ -1,38 +1,67 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
+import { avatarGradient, initials } from '../../lib/format'
+import type { PostType, StatusTag } from '../../types'
+import { POST_TYPE_STYLES, STATUS_STYLES } from '../../types'
 
-// Tiny classnames joiner — avoids a dependency.
+// Tiny classnames joiner (used by Admin components).
 export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(' ')
 }
 
+// ---- Avatar ----------------------------------------------------------------
+export function Avatar({
+  name,
+  size = 40,
+  to,
+}: {
+  name: string
+  size?: number
+  to?: string
+}) {
+  const inner = (
+    <span
+      className={`inline-flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${avatarGradient(
+        name,
+      )} font-semibold text-white select-none`}
+      style={{ width: size, height: size, fontSize: size * 0.4 }}
+      title={name}
+    >
+      {initials(name)}
+    </span>
+  )
+  if (to) return <Link to={to}>{inner}</Link>
+  return inner
+}
+
 // ---- Button ----------------------------------------------------------------
-type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'outline'
+type Variant = 'primary' | 'outline' | 'ghost' | 'subtle'
 
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: ButtonVariant
-  loading?: boolean
+const VARIANTS: Record<Variant, string> = {
+  primary: 'bg-[#ff4500] text-white hover:bg-[#ff6534] border border-transparent',
+  outline: 'bg-white text-[#ff4500] border border-[#ff4500] hover:bg-orange-50',
+  ghost: 'bg-transparent text-[#878a8c] hover:bg-gray-100 border border-transparent',
+  subtle: 'bg-gray-100 text-[#1c1c1c] hover:bg-gray-200 border border-transparent',
+}
+
+export function Button({
+  variant = 'primary',
+  className = '',
+  icon,
+  loading = false,
+  children,
+  disabled,
+  ...rest
+}: {
+  variant?: Variant
   icon?: ReactNode
-}
-
-const VARIANT: Record<ButtonVariant, string> = {
-  primary: 'bg-teal-500 text-navy-950 hover:bg-teal-400 font-semibold',
-  secondary: 'bg-navy-700 text-slate-100 hover:bg-navy-600',
-  ghost: 'bg-transparent text-slate-300 hover:bg-navy-800',
-  outline: 'border border-navy-600 text-slate-200 hover:bg-navy-800',
-}
-
-export function Button({ variant = 'primary', loading, icon, children, className, disabled, ...rest }: ButtonProps) {
+  loading?: boolean
+} & ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
-      className={cx(
-        'inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm',
-        'transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400 focus-visible:ring-offset-2 focus-visible:ring-offset-navy-950',
-        'disabled:cursor-not-allowed disabled:opacity-50',
-        VARIANT[variant],
-        className,
-      )}
       disabled={disabled || loading}
+      className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${VARIANTS[variant]} ${className}`}
       {...rest}
     >
       {loading ? <Loader2 size={16} className="animate-spin" /> : icon}
@@ -41,42 +70,95 @@ export function Button({ variant = 'primary', loading, icon, children, className
   )
 }
 
-// ---- Card ------------------------------------------------------------------
-export function Card({ children, className }: { children: ReactNode; className?: string }) {
+// ---- Checkbox (Admin invite table) -----------------------------------------
+export function Checkbox({
+  checked,
+  indeterminate = false,
+  onChange,
+  ...rest
+}: {
+  checked: boolean
+  indeterminate?: boolean
+  onChange: (checked: boolean) => void
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'checked' | 'type'>) {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate && !checked
+  }, [indeterminate, checked])
   return (
-    <div className={cx('rounded-xl border border-navy-700/60 bg-navy-900/60 shadow-lg shadow-black/20', className)}>
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      onChange={(e) => onChange(e.target.checked)}
+      className="h-4 w-4 cursor-pointer rounded border-gray-300 accent-[#ff4500]"
+      {...rest}
+    />
+  )
+}
+
+// ---- Status tag badge (Admin directory) ------------------------------------
+export function StatusBadge({ tag }: { tag: StatusTag }) {
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[tag]}`}>
+      {tag}
+    </span>
+  )
+}
+
+// ---- Card ------------------------------------------------------------------
+export function Card({
+  children,
+  className = '',
+}: {
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <div className={`rounded-xl border border-[#edeff1] bg-white shadow-sm ${className}`}>
       {children}
     </div>
   )
 }
 
-// ---- Checkbox --------------------------------------------------------------
-export function Checkbox({
-  checked,
-  onChange,
-  indeterminate,
-  'aria-label': ariaLabel,
-}: {
-  checked: boolean
-  onChange: (checked: boolean) => void
-  indeterminate?: boolean
-  'aria-label'?: string
-}) {
+// ---- Post-type badge -------------------------------------------------------
+export function PostTypeBadge({ type }: { type: PostType }) {
+  if (type === 'Update') return null
+  const s = POST_TYPE_STYLES[type]
   return (
-    <input
-      type="checkbox"
-      aria-label={ariaLabel}
-      checked={checked}
-      ref={(el) => {
-        if (el) el.indeterminate = !!indeterminate && !checked
-      }}
-      onChange={(e) => onChange(e.target.checked)}
-      className="h-4 w-4 cursor-pointer rounded border-navy-600 bg-navy-800 text-teal-500 accent-teal-500 focus:ring-teal-400"
-    />
+    <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${s.classes}`}>
+      {s.label}
+    </span>
   )
 }
 
-// ---- Spinner ---------------------------------------------------------------
-export function Spinner({ size = 18, className }: { size?: number; className?: string }) {
-  return <Loader2 size={size} className={cx('animate-spin', className)} />
+// ---- Generic pill ----------------------------------------------------------
+export function Pill({
+  children,
+  active = false,
+  onClick,
+}: {
+  children: ReactNode
+  active?: boolean
+  onClick?: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-full px-3.5 py-1.5 text-sm font-medium whitespace-nowrap transition-colors ${
+        active
+          ? 'bg-[#ff4500] text-white'
+          : 'bg-white text-[#878a8c] border border-[#edeff1] hover:bg-gray-50'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+// ---- Section heading -------------------------------------------------------
+export function SectionTitle({ children }: { children: ReactNode }) {
+  return (
+    <h2 className="mb-3 text-lg font-bold text-[#1c1c1c]">{children}</h2>
+  )
 }

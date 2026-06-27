@@ -3,8 +3,7 @@ import { Mail, MessageCircle, Send } from 'lucide-react'
 import type { Alumni } from '../../types'
 import { api } from '../../lib/api'
 import { useApp } from '../../store/AppStore'
-import { Button, Card, Checkbox, cx } from '../ui'
-import { StatusBadge } from '../ui/StatusBadge'
+import { Button, Card, Checkbox, StatusBadge, cx } from '../ui'
 
 type Channel = { email: boolean; whatsapp: boolean }
 
@@ -30,6 +29,7 @@ export function AlumniTable({
       if (c.whatsapp) whatsapp++
     }
     return { email, whatsapp, total: email + whatsapp }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection, alumni])
 
   const allOn = alumni.length > 0 && alumni.every((a) => get(a.id).email && get(a.id).whatsapp)
@@ -65,10 +65,10 @@ export function AlumniTable({
 
   return (
     <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-navy-700/60 px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#edeff1] px-4 py-3">
         <div>
-          <h3 className="text-sm font-semibold text-white">Multi-Channel Invitations</h3>
-          <p className="text-xs text-slate-400">
+          <h3 className="text-sm font-bold text-[#1c1c1c]">Multi-Channel Invitations</h3>
+          <p className="text-xs text-[#878a8c]">
             {someOn ? `${counts.email} email · ${counts.whatsapp} WhatsApp selected` : 'Select recipients and channels'}
           </p>
         </div>
@@ -80,7 +80,7 @@ export function AlumniTable({
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] text-left text-sm">
           <thead>
-            <tr className="border-b border-navy-700/60 text-xs uppercase tracking-wide text-slate-400">
+            <tr className="border-b border-[#edeff1] text-xs uppercase tracking-wide text-[#878a8c]">
               <th className="w-10 px-4 py-3">
                 <Checkbox
                   aria-label="Select all recipients and channels"
@@ -104,7 +104,7 @@ export function AlumniTable({
           <tbody>
             {alumni.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                <td colSpan={7} className="px-4 py-10 text-center text-[#878a8c]">
                   No alumni yet. Upload a CSV or add one manually to get started.
                 </td>
               </tr>
@@ -114,7 +114,7 @@ export function AlumniTable({
                 return (
                   <tr
                     key={a.id}
-                    className={cx('border-b border-navy-800/60 transition-colors hover:bg-navy-800/40', (c.email || c.whatsapp) && 'bg-teal-500/5')}
+                    className={cx('border-b border-[#edeff1] transition-colors hover:bg-gray-50', (c.email || c.whatsapp) && 'bg-orange-50/60')}
                   >
                     <td className="px-4 py-3">
                       <Checkbox
@@ -125,17 +125,17 @@ export function AlumniTable({
                       />
                     </td>
                     <td className="px-4 py-3">
-                      <p className="font-medium text-slate-100">{a.name}</p>
-                      <p className="text-xs text-slate-500">{a.role}</p>
+                      <p className="font-medium text-[#1c1c1c]">{a.name}</p>
+                      <p className="text-xs text-[#878a8c]">{a.role}</p>
                     </td>
-                    <td className="px-4 py-3 text-slate-300">{a.phone || '—'}</td>
-                    <td className="max-w-[200px] truncate px-4 py-3 text-slate-300">{a.email}</td>
+                    <td className="px-4 py-3 text-[#878a8c]">{a.phone || '—'}</td>
+                    <td className="max-w-[200px] truncate px-4 py-3 text-[#878a8c]">{a.email}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
                         {a.statusTags.length ? (
                           a.statusTags.map((t) => <StatusBadge key={t} tag={t} />)
                         ) : (
-                          <span className="text-xs text-slate-600">—</span>
+                          <span className="text-xs text-[#878a8c]">—</span>
                         )}
                       </div>
                     </td>
