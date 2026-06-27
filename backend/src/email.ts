@@ -15,11 +15,14 @@ const transport = emailEnabled
     })
   : null
 
+// Where the deployed frontend lives; set APP_URL in .env (e.g. http://44.249.86.223).
+const APP_URL = process.env.APP_URL || 'http://localhost:5173'
+
 const INVITE_SUBJECT = "You're invited to the Rooman Alumni Network"
 const inviteBody = (name: string) =>
   `Hi ${name},\n\nYou've been invited to join the Rooman Alumni Network — paid mentorship, ` +
   `StartupVarsity incubation support, and a trusted community of alumni.\n\n` +
-  `Accept your invitation: http://localhost:5173/accept-invite\n\n— The Rooman Team`
+  `Accept your invitation: ${APP_URL}/accept-invite\n\n— The Rooman Team`
 
 /**
  * Send invite emails. Returns the count actually sent (or simulated).
