@@ -13,6 +13,16 @@ import { SkillsPills } from '../components/onboarding/SkillsPills'
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
+// Read a File as a base64 string (without the data: URL prefix).
+function toBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '')
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
 export function Onboarding() {
   const navigate = useNavigate()
   const { notify, setProfile } = useApp()
@@ -23,11 +33,12 @@ export function Onboarding() {
   const [skills, setSkills] = useState<string[]>([])
   const [tags, setTags] = useState<StatusTag[]>([])
 
-  async function parse() {
+  async function parse(file: File) {
     setParsing(true)
     try {
-      // ponytail: artificial delay to show the "AI parsing" animation; backend returns instantly.
-      const [result] = await Promise.all([api.parseResume(), wait(1800)])
+      const dataBase64 = await toBase64(file)
+      // Minimum ~600ms so the parsing animation doesn't flash; Claude usually takes longer.
+      const [result] = await Promise.all([api.parseResume(dataBase64, file.type), wait(600)])
       setHeadline(result.headline)
       setExperience(result.experience)
       setSkills(result.skills)

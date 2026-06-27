@@ -7,7 +7,7 @@ export function ResumeUpload({
   onParse,
 }: {
   parsing: boolean
-  onParse: (fileName: string) => void
+  onParse: (file: File) => void
 }) {
   const [dragging, setDragging] = useState(false)
   const [file, setFile] = useState<File | null>(null)
@@ -79,7 +79,7 @@ export function ResumeUpload({
         icon={<Sparkles size={16} />}
         disabled={!file}
         loading={parsing}
-        onClick={() => file && onParse(file.name)}
+        onClick={() => file && onParse(file)}
       >
         {parsing ? 'AI is parsing your resume…' : 'Parse with AI'}
       </Button>
