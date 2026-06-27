@@ -2,7 +2,9 @@ import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, ArrowRight, Camera, Check } from 'lucide-react'
 import { useApp } from '../store/AppStore'
+import { api } from '../lib/api'
 import { Avatar } from '../components/ui'
+import { ResumeUpload } from '../components/onboarding/ResumeUpload'
 import {
   DOMAINS,
   EMPLOYMENT_TYPES,
@@ -12,6 +14,18 @@ import {
 
 const STEPS = ['Basic Info', 'Current Status', 'Profile Setup', 'Interests']
 
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+// Read a File as a base64 string (without the data: URL prefix).
+function toBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '')
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
 export function Onboarding() {
   const { updateProfile, setAuthenticated, notify } = useApp()
   const navigate = useNavigate()
@@ -19,6 +33,7 @@ export function Onboarding() {
 
   const [step, setStep] = useState(0)
   const [photo, setPhoto] = useState<string>()
+  const [parsing, setParsing] = useState(false)
 
   const [form, setForm] = useState({
     name: '',
@@ -41,6 +56,29 @@ export function Onboarding() {
 
   const set = (k: keyof typeof form, v: string | boolean) =>
     setForm((f) => ({ ...f, [k]: v }))
+
+  // Real AI resume parsing (Claude Haiku via the backend). Prefills the form.
+  async function parseResume(file: File) {
+    setParsing(true)
+    try {
+      const dataBase64 = await toBase64(file)
+      // Minimum ~600ms so the parsing animation doesn't flash; Claude usually takes longer.
+      const [result] = await Promise.all([api.parseResume(dataBase64, file.type), wait(600)])
+      const top = result.experience[0]
+      setForm((f) => ({
+        ...f,
+        designation: top?.role || f.designation || result.headline,
+        company: top?.company || f.company,
+        bio: f.bio || result.headline,
+        expertise: result.skills.length ? result.skills.join(', ') : f.expertise,
+      }))
+      notify('Resume parsed — review and complete your profile below.', 'success')
+    } catch {
+      notify('Could not parse resume. Is the backend running? You can fill it in manually.', 'error')
+    } finally {
+      setParsing(false)
+    }
+  }
 
   const canNext = () => {
     if (step === 0) return form.name && form.email && form.batchYear && form.course
@@ -111,6 +149,16 @@ export function Onboarding() {
 
         {step === 1 && (
           <div className="flex flex-col gap-3">
+            {/* AI accelerator: upload a resume to auto-fill the fields below. */}
+            <div className="rounded-xl border border-dashed border-[#edeff1] bg-[#f6f7f8] p-3">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#878a8c]">
+                Fast-track with AI
+              </p>
+              <ResumeUpload parsing={parsing} onParse={parseResume} />
+              <div className="my-3 flex items-center gap-3 text-xs text-[#878a8c]">
+                <div className="h-px flex-1 bg-[#edeff1]" /> or fill manually <div className="h-px flex-1 bg-[#edeff1]" />
+              </div>
+            </div>
             <Field label="Current Company" value={form.company} onChange={(v) => set('company', v)} placeholder="Amazon" />
             <Field label="Designation" value={form.designation} onChange={(v) => set('designation', v)} placeholder="Software Engineer" />
             <Field label="Years of Experience" value={form.experienceYears} onChange={(v) => set('experienceYears', v.replace(/\D/g, '').slice(0, 2))} placeholder="4" />

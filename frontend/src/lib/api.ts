@@ -39,7 +39,11 @@ export const api = {
   social: (provider: 'google' | 'linkedin') =>
     http<{ token: string; provider: string }>(`/api/auth/social/${provider}`, { method: 'POST' }),
 
-  parseResume: () => http<ResumeParseResult>('/api/resume/parse', { method: 'POST', body: '{}' }),
+  parseResume: (dataBase64?: string, mediaType?: string) =>
+    http<ResumeParseResult>('/api/resume/parse', {
+      method: 'POST',
+      body: JSON.stringify({ dataBase64, mediaType }),
+    }),
 
   getFeed: (tags: StatusTag[] = []) =>
     http<Post[]>(`/api/feed${tags.length ? `?tags=${encodeURIComponent(tags.join(','))}` : ''}`),

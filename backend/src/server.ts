@@ -1,18 +1,14 @@
+import './env.js' // loads .env before ai/email read process.env
 import express from 'express'
 import cors from 'cors'
 import { randomUUID } from 'node:crypto'
-import {
-  alumni,
-  posts,
-  resumeParseResult,
-  type Alumni,
-  type Post,
-  type StatusTag,
-} from './data.js'
+import { alumni, posts, type Alumni, type Post, type StatusTag } from './data.js'
+import { parseResume } from './ai.js'
+import { sendInviteEmails, emailEnabled } from './email.js'
 
 const app = express()
 app.use(cors())
-app.use(express.json({ limit: '1mb' }))
+app.use(express.json({ limit: '15mb' })) // base64 PDFs for resume parsing
 
 const PORT = Number(process.env.PORT) || 4000
 
@@ -71,17 +67,28 @@ app.post('/api/alumni/bulk', (req, res) => {
   res.status(201).json({ added, skipped })
 })
 
-// --- Invitations (simulated send) -------------------------------------------
-app.post('/api/invites/batch', (req, res) => {
-  // ponytail: no real email/WhatsApp sending — we just count and echo back.
+// --- Invitations ------------------------------------------------------------
+// Email is sent for real when SMTP is configured (see email.ts), else simulated.
+// ponytail: WhatsApp is always simulated — wire a provider (e.g. Twilio) to lift this.
+app.post('/api/invites/batch', async (req, res) => {
   const invites: Array<{ id: string; email?: boolean; whatsapp?: boolean }> = req.body?.invites ?? []
-  const emailCount = invites.filter((i) => i.email).length
+  const byId = new Map(alumni.map((a) => [a.id, a]))
+
+  const emailRecipients = invites
+    .filter((i) => i.email)
+    .map((i) => byId.get(i.id))
+    .filter((a): a is Alumni => !!a && !!a.email)
+    .map((a) => ({ name: a.name, email: a.email }))
+
   const whatsappCount = invites.filter((i) => i.whatsapp).length
+  const emailCount = await sendInviteEmails(emailRecipients)
+
+  const via = emailEnabled ? 'email' : 'email (simulated)'
   res.json({
     emailCount,
     whatsappCount,
     total: emailCount + whatsappCount,
-    message: `Sent ${emailCount} email and ${whatsappCount} WhatsApp invitation(s).`,
+    message: `Sent ${emailCount} ${via} and ${whatsappCount} WhatsApp (simulated) invitation(s).`,
   })
 })
 
@@ -101,10 +108,11 @@ app.post('/api/auth/social/:provider', (req, res) => {
   res.status(201).json({ token: `demo-${randomUUID()}`, provider })
 })
 
-// --- Resume parsing (simulated AI) ------------------------------------------
-app.post('/api/resume/parse', (_req, res) => {
-  // ponytail: ignores the uploaded file and returns a fixed mock parse result.
-  res.json(resumeParseResult)
+// --- Resume parsing (real AI via Claude Haiku when ANT_KEY is set) ----------
+app.post('/api/resume/parse', async (req, res) => {
+  const { dataBase64, mediaType } = req.body ?? {}
+  const result = await parseResume(dataBase64, mediaType)
+  res.json(result)
 })
 
 // --- Feed -------------------------------------------------------------------

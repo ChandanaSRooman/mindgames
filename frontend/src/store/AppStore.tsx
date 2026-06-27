@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -45,6 +46,49 @@ let toastSeq = 0
 let idSeq = 1000
 const nextId = () => `gen-${idSeq++}`
 
+// ---- Session persistence (localStorage — no backend needed) ----------------
+// Ported from the teammate's account-persistence work and adapted to the
+// richer User model. The signed-in profile + auth flag survive a refresh.
+export type AuthMethod = 'google' | 'linkedin' | 'email'
+
+const SESSION_KEY = 'rooman.session'
+
+interface PersistedSession {
+  user: User
+  authenticated: boolean
+}
+
+function loadSession(): PersistedSession | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY)
+    return raw ? (JSON.parse(raw) as PersistedSession) : null
+  } catch {
+    return null
+  }
+}
+
+function saveSession(session: PersistedSession | null) {
+  try {
+    if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session))
+    else localStorage.removeItem(SESSION_KEY)
+  } catch {
+    /* storage unavailable (private mode) — stay in-memory only */
+  }
+}
+
+// Derive a friendly display name from an email local-part, else a sensible default.
+function nameFromEmail(email: string, method: AuthMethod): string {
+  if (email) {
+    const local = email.split('@')[0]
+    return local
+      .split(/[._-]+/)
+      .filter(Boolean)
+      .map((w) => w[0].toUpperCase() + w.slice(1))
+      .join(' ')
+  }
+  return method === 'google' ? 'Google User' : method === 'linkedin' ? 'LinkedIn User' : 'New Member'
+}
+
 export interface NewPostInput {
   type: PostType
   content: string
@@ -64,6 +108,8 @@ interface AppContextValue {
   isAuthenticated: boolean
   setAuthenticated: (v: boolean) => void
   updateProfile: (patch: Partial<User>) => void
+  signIn: (method: AuthMethod, email?: string) => void
+  signOut: () => void
 
   // people
   users: User[]
@@ -126,9 +172,14 @@ const AppContext = createContext<AppContextValue | null>(null)
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
-  const [isAuthenticated, setAuthenticated] = useState(false)
 
-  const [users, setUsers] = useState<User[]>(seedUsers)
+  // Rehydrate the signed-in profile + auth flag from localStorage if present.
+  const persisted = loadSession()
+  const [isAuthenticated, setAuthenticated] = useState(persisted?.authenticated ?? false)
+  const [users, setUsers] = useState<User[]>(() =>
+    persisted?.user ? seedUsers.map((u) => (u.id === CURRENT_USER_ID ? persisted.user : u)) : seedUsers,
+  )
+
   const [posts, setPosts] = useState<Post[]>(seedPosts)
   const [communities, setCommunities] = useState<Community[]>(seedCommunities)
   const [sessions, setSessions] = useState<MentorshipSession[]>(seedSessions)
@@ -159,13 +210,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   // ---- profile -------------------------------------------------------------
-  const currentUser = useMemo(
-    () => users.find((u) => u.id === CURRENT_USER_ID)!,
-    [users],
-  )
+  const currentUser = useMemo(() => users.find((u) => u.id === CURRENT_USER_ID)!, [users])
+
+  // Persist the signed-in profile + auth flag whenever they change.
+  useEffect(() => {
+    saveSession({ user: currentUser, authenticated: isAuthenticated })
+  }, [currentUser, isAuthenticated])
 
   const updateProfile = useCallback((patch: Partial<User>) => {
     setUsers((list) => list.map((u) => (u.id === CURRENT_USER_ID ? { ...u, ...patch } : u)))
+  }, [])
+
+  // Sign in (from the OAuth / email invite page). Seeds the profile name/email.
+  const signIn = useCallback((method: AuthMethod, email = '') => {
+    setUsers((list) =>
+      list.map((u) =>
+        u.id === CURRENT_USER_ID
+          ? { ...u, name: u.name && u.name !== 'You' ? u.name : nameFromEmail(email, method), email: email || u.email }
+          : u,
+      ),
+    )
+    setAuthenticated(true)
+  }, [])
+
+  const signOut = useCallback(() => {
+    setUsers((list) => list.map((u) => (u.id === CURRENT_USER_ID ? seedUsers.find((s) => s.id === CURRENT_USER_ID)! : u)))
+    setAuthenticated(false)
+    saveSession(null)
   }, [])
 
   const userById = useCallback((id: string) => users.find((u) => u.id === id), [users])
@@ -415,6 +486,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     isAuthenticated,
     setAuthenticated,
     updateProfile,
+    signIn,
+    signOut,
     users,
     userById,
     connectionState,
