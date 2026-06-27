@@ -193,6 +193,7 @@ export interface Experience {
 }
 
 export interface ResumeParseResult {
+  name: string
   headline: string
   experience: Experience[]
   skills: string[]

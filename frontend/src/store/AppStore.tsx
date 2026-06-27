@@ -108,7 +108,7 @@ interface AppContextValue {
   isAuthenticated: boolean
   setAuthenticated: (v: boolean) => void
   updateProfile: (patch: Partial<User>) => void
-  signIn: (method: AuthMethod, email?: string) => void
+  signIn: (method: AuthMethod, email?: string, name?: string) => void
   signOut: () => void
 
   // people
@@ -222,11 +222,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // Sign in (from the OAuth / email invite page). Seeds the profile name/email.
-  const signIn = useCallback((method: AuthMethod, email = '') => {
+  // A provided name (e.g. the email-signup Full Name field) wins; else derive from email.
+  const signIn = useCallback((method: AuthMethod, email = '', name = '') => {
     setUsers((list) =>
       list.map((u) =>
         u.id === CURRENT_USER_ID
-          ? { ...u, name: u.name && u.name !== 'You' ? u.name : nameFromEmail(email, method), email: email || u.email }
+          ? {
+              ...u,
+              name: name.trim() || (u.name && u.name !== 'You' ? u.name : nameFromEmail(email, method)),
+              email: email || u.email,
+            }
           : u,
       ),
     )

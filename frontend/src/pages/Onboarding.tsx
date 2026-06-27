@@ -57,7 +57,8 @@ export function Onboarding() {
   const set = (k: keyof typeof form, v: string | boolean) =>
     setForm((f) => ({ ...f, [k]: v }))
 
-  // Real AI resume parsing (Claude Haiku via the backend). Prefills the form.
+  // Real AI resume parsing (Claude Haiku via the backend). Prefills the form,
+  // including the candidate's name (the most reliable source for the display name).
   async function parseResume(file: File) {
     setParsing(true)
     try {
@@ -67,6 +68,7 @@ export function Onboarding() {
       const top = result.experience[0]
       setForm((f) => ({
         ...f,
+        name: result.name || f.name,
         designation: top?.role || f.designation || result.headline,
         company: top?.company || f.company,
         bio: f.bio || result.headline,
