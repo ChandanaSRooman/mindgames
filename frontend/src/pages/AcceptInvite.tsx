@@ -15,7 +15,7 @@ const BENEFITS = [
 
 export function AcceptInvite() {
   const navigate = useNavigate()
-  const { notify } = useApp()
+  const { notify, signIn } = useApp()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -25,6 +25,7 @@ export function AcceptInvite() {
     setLoading(provider)
     try {
       await api.social(provider)
+      signIn(provider)
       notify(`Signed up with ${provider === 'google' ? 'Google' : 'LinkedIn'}.`, 'success')
       navigate('/onboarding')
     } catch {
@@ -41,6 +42,7 @@ export function AcceptInvite() {
     setLoading('email')
     try {
       await api.signup(email, password)
+      signIn('email', email)
       navigate('/onboarding')
     } catch {
       notify('Sign-up failed. Try again.', 'error')

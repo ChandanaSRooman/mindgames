@@ -25,7 +25,7 @@ function toBase64(file: File): Promise<string> {
 
 export function Onboarding() {
   const navigate = useNavigate()
-  const { notify, setProfile } = useApp()
+  const { notify, saveOnboarding } = useApp()
   const [parsing, setParsing] = useState(false)
   const [parsed, setParsed] = useState(false)
   const [headline, setHeadline] = useState('')
@@ -56,7 +56,8 @@ export function Onboarding() {
   }
 
   function finish() {
-    setProfile({ tags })
+    saveOnboarding({ headline, experience, skills, tags })
+    notify('Profile saved to this device.', 'success')
     navigate('/feed')
   }
 

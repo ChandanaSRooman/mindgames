@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { GraduationCap, Inbox } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { GraduationCap, Inbox, LogOut } from 'lucide-react'
 import type { Post, StatusTag } from '../types'
 import { api } from '../lib/api'
 import { useApp } from '../store/AppStore'
@@ -9,7 +10,8 @@ import { PostCard } from '../components/feed/PostCard'
 import { StatusFilterSidebar } from '../components/feed/StatusFilterSidebar'
 
 export function Feed() {
-  const { notify, profile } = useApp()
+  const navigate = useNavigate()
+  const { notify, account, signOut } = useApp()
   const [posts, setPosts] = useState<Post[]>([])
   const [filters, setFilters] = useState<StatusTag[]>([])
   const [loading, setLoading] = useState(true)
@@ -34,11 +36,19 @@ export function Feed() {
   async function createPost(content: string, tags: StatusTag[]) {
     try {
       const post = await api.createPost(content, tags)
-      setPosts((prev) => [{ ...post, authorName: profile.displayName, authorRole: profile.role }, ...prev])
+      const authorName = account?.displayName || 'You'
+      const authorRole = account?.role || 'Alumni Member'
+      setPosts((prev) => [{ ...post, authorName, authorRole }, ...prev])
       notify('Posted to the network.', 'success')
     } catch (e) {
       notify(e instanceof Error ? e.message : 'Could not post', 'error')
     }
+  }
+
+  function handleSignOut() {
+    signOut()
+    notify('Signed out — local profile cleared.', 'info')
+    navigate('/accept-invite')
   }
 
   return (
@@ -52,12 +62,26 @@ export function Feed() {
             <p className="text-sm font-semibold text-white">Network Feed</p>
             <p className="text-xs text-slate-400">Rooman Alumni Network</p>
           </div>
+          {account && (
+            <div className="ml-auto flex items-center gap-3">
+              <div className="text-right">
+                <p className="text-sm font-medium text-slate-200">{account.displayName}</p>
+                <p className="text-xs text-slate-500">{account.email || account.method}</p>
+              </div>
+              <button
+                onClick={handleSignOut}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-navy-600 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-navy-800"
+              >
+                <LogOut size={14} /> Sign out
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
       <div className="mx-auto grid max-w-5xl grid-cols-1 gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[1fr_18rem]">
         <div className="space-y-4">
-          <PostComposer defaultTags={profile.tags} onPost={createPost} />
+          <PostComposer defaultTags={account?.tags ?? []} onPost={createPost} />
 
           {loading ? (
             <Card className="p-10 text-center text-slate-500">Loading feed…</Card>
