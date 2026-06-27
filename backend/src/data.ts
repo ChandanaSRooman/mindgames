@@ -31,6 +31,7 @@ export interface Experience {
 }
 
 export interface ResumeParseResult {
+  name: string
   headline: string
   experience: Experience[]
   skills: string[]
@@ -62,6 +63,7 @@ export const posts: Post[] = [
 
 // The fixed result the "Parse with AI" simulation returns.
 export const resumeParseResult: ResumeParseResult = {
+  name: 'Alex Morgan',
   headline: 'Full-Stack Engineer · 5 years experience',
   experience: [
     { role: 'Senior Software Engineer', company: 'TechNova Solutions', period: '2022 — Present', summary: 'Led a 5-person team building a React + Node.js SaaS platform serving 40k MAU. Cut API latency 35%.' },

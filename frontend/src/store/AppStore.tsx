@@ -62,8 +62,10 @@ interface AppContextValue {
   notify: (message: string, kind?: ToastKind) => void
   dismissToast: (id: number) => void
   account: Account | null
-  signIn: (method: AuthMethod, email?: string) => void
-  saveOnboarding: (data: Pick<Account, 'headline' | 'experience' | 'skills' | 'tags'>) => void
+  signIn: (method: AuthMethod, email?: string, name?: string) => void
+  saveOnboarding: (
+    data: Pick<Account, 'headline' | 'experience' | 'skills' | 'tags'> & { name?: string },
+  ) => void
   signOut: () => void
 }
 
@@ -89,14 +91,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   // Create (or refresh) the locally-stored account at signup.
-  const signIn = useCallback((method: AuthMethod, email = '') => {
+  const signIn = useCallback((method: AuthMethod, email = '', name = '') => {
     setAccount((prev) => {
       // Reuse the existing account if the same email signs in again.
       if (prev && (prev.email === email || (!email && prev.method === method))) return prev
       const next: Account = {
         email,
         method,
-        displayName: nameFromEmail(email, method),
+        displayName: name.trim() || nameFromEmail(email, method),
         role: 'Alumni Member',
         tags: [],
         createdAt: new Date().toISOString(),
@@ -107,8 +109,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // Persist the parsed/edited profile from onboarding onto the account.
+  // The resume name becomes the display name (it's the most reliable source).
   const saveOnboarding = useCallback(
-    (data: Pick<Account, 'headline' | 'experience' | 'skills' | 'tags'>) => {
+    (data: Pick<Account, 'headline' | 'experience' | 'skills' | 'tags'> & { name?: string }) => {
       setAccount((prev) => {
         const base: Account =
           prev ?? {
@@ -119,7 +122,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
             tags: [],
             createdAt: new Date().toISOString(),
           }
-        const next: Account = { ...base, ...data }
+        const { name, ...profile } = data
+        const next: Account = {
+          ...base,
+          ...profile,
+          displayName: name?.trim() || base.displayName,
+        }
         saveAccount(next)
         return next
       })

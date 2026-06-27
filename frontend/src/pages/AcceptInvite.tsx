@@ -16,6 +16,7 @@ const BENEFITS = [
 export function AcceptInvite() {
   const navigate = useNavigate()
   const { notify, signIn } = useApp()
+  const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -36,13 +37,14 @@ export function AcceptInvite() {
 
   async function emailSignup(e: React.FormEvent) {
     e.preventDefault()
+    if (!fullName.trim()) return setError('Enter your full name.')
     if (!isValidEmail(email)) return setError('Enter a valid email address.')
     if (password.length < 6) return setError('Password must be at least 6 characters.')
     setError(null)
     setLoading('email')
     try {
       await api.signup(email, password)
-      signIn('email', email)
+      signIn('email', email, fullName)
       navigate('/onboarding')
     } catch {
       notify('Sign-up failed. Try again.', 'error')
@@ -119,6 +121,7 @@ export function AcceptInvite() {
             </div>
 
             <form onSubmit={emailSignup} className="space-y-3">
+              <input className={field} type="text" placeholder="Full name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
               <input className={field} type="email" placeholder="Email address" value={email} onChange={(e) => setEmail(e.target.value)} />
               <input className={field} type="password" placeholder="Password (min 6 chars)" value={password} onChange={(e) => setPassword(e.target.value)} />
               {error && <p className="text-sm text-rose-300">{error}</p>}

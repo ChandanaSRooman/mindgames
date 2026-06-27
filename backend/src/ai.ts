@@ -11,6 +11,7 @@ const SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
+    name: { type: 'string' },
     headline: { type: 'string' },
     experience: {
       type: 'array',
@@ -28,11 +29,12 @@ const SCHEMA = {
     },
     skills: { type: 'array', items: { type: 'string' } },
   },
-  required: ['headline', 'experience', 'skills'],
+  required: ['name', 'headline', 'experience', 'skills'],
 }
 
 const PROMPT =
-  'Extract this resume into structured data. Write a one-line professional headline, ' +
+  "Extract this resume into structured data. Capture the candidate's full name, " +
+  'write a one-line professional headline, ' +
   'list work experience newest-first (role, company, period like "2022 — Present", and a ' +
   'one-sentence achievement-focused summary), and a flat list of concrete skills. ' +
   'Infer reasonable values only from the document; do not invent employers.'

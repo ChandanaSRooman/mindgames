@@ -28,6 +28,7 @@ export function Onboarding() {
   const { notify, saveOnboarding } = useApp()
   const [parsing, setParsing] = useState(false)
   const [parsed, setParsed] = useState(false)
+  const [name, setName] = useState('')
   const [headline, setHeadline] = useState('')
   const [experience, setExperience] = useState<Experience[]>([])
   const [skills, setSkills] = useState<string[]>([])
@@ -39,6 +40,7 @@ export function Onboarding() {
       const dataBase64 = await toBase64(file)
       // Minimum ~600ms so the parsing animation doesn't flash; Claude usually takes longer.
       const [result] = await Promise.all([api.parseResume(dataBase64, file.type), wait(600)])
+      setName(result.name)
       setHeadline(result.headline)
       setExperience(result.experience)
       setSkills(result.skills)
@@ -56,7 +58,7 @@ export function Onboarding() {
   }
 
   function finish() {
-    saveOnboarding({ headline, experience, skills, tags })
+    saveOnboarding({ name, headline, experience, skills, tags })
     notify('Profile saved to this device.', 'success')
     navigate('/feed')
   }
@@ -101,9 +103,10 @@ export function Onboarding() {
 
         {parsed && (
           <>
-            {headline && (
+            {(name || headline) && (
               <p className="rounded-lg border border-teal-500/30 bg-teal-500/10 px-4 py-3 text-sm text-teal-200">
-                Detected headline: <span className="font-semibold">{headline}</span>
+                {name && <>Welcome, <span className="font-semibold">{name}</span>. </>}
+                {headline && <>Detected role: <span className="font-semibold">{headline}</span></>}
               </p>
             )}
 
