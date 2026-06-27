@@ -1,0 +1,13 @@
+# Dependencies & build output (also ignored per-package)
+node_modules
+dist
+dist-ssr
+
+# Logs
+*.log
+npm-debug.log*
+
+# Env & OS
+.env
+.env.local
+.DS_Store
