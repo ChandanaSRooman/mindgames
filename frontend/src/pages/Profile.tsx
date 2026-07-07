@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { Navigate, useParams } from 'react-router-dom'
+import { useMemo, useState } from 'react'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import {
   Award,
   Briefcase,
@@ -13,12 +13,15 @@ import { useApp } from '../store/AppStore'
 import { useLayout } from '../components/layout/LayoutContext'
 import { Avatar, Button, Card } from '../components/ui'
 import { PostCard } from '../components/feed/PostCard'
+import { EditProfileModal } from '../components/profile/EditProfileModal'
 import { compact } from '../lib/format'
 
 export function Profile() {
   const { id } = useParams<{ id: string }>()
-  const { currentUser, userById, posts, connectionState, sendConnect, notify } = useApp()
-  const { openComposer, toggleChat } = useLayout()
+  const { currentUser, userById, posts, connectionState, sendConnect } = useApp()
+  const navigate = useNavigate()
+  const { openComposer, openChatWith } = useLayout()
+  const [editing, setEditing] = useState(false)
 
   const targetId = id ?? currentUser.id
   const user = userById(targetId)
@@ -61,7 +64,7 @@ export function Profile() {
 
             <div className="flex flex-wrap gap-2">
               {isMe ? (
-                <Button variant="outline" onClick={() => notify('Edit profile is a demo.', 'info')}>Edit Profile</Button>
+                <Button variant="outline" onClick={() => setEditing(true)}>Edit Profile</Button>
               ) : (
                 <>
                   <Button
@@ -72,9 +75,9 @@ export function Profile() {
                   >
                     {conn === 'connected' ? 'Connected' : conn === 'pending' ? 'Request sent' : 'Connect'}
                   </Button>
-                  <Button variant="outline" icon={<MessageSquare size={15} />} onClick={toggleChat}>Message</Button>
+                  <Button variant="outline" icon={<MessageSquare size={15} />} onClick={() => openChatWith(user.id)}>Message</Button>
                   {user.isMentor && (
-                    <Button variant="ghost" className="!text-[#ff4500]" onClick={() => notify(`Book a session with ${user.name} from the Mentorship page.`, 'info')}>
+                    <Button variant="ghost" className="!text-[#ff4500]" onClick={() => navigate('/mentorship')}>
                       Book Session
                     </Button>
                   )}
@@ -114,6 +117,8 @@ export function Profile() {
           No posts yet.
         </div>
       )}
+
+      {editing && <EditProfileModal onClose={() => setEditing(false)} />}
     </div>
   )
 }

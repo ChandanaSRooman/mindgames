@@ -4,6 +4,7 @@ import type { PostType } from '../../types'
 export interface LayoutContextValue {
   openComposer: (prefill?: { type?: PostType; communityId?: string }) => void
   toggleChat: () => void
+  openChatWith: (userId: string) => void
 }
 
 export const LayoutContext = createContext<LayoutContextValue | null>(null)

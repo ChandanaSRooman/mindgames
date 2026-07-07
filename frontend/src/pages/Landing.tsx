@@ -17,7 +17,7 @@ export function Landing() {
             Roo<span className="text-[#ff4500]">Connect</span>
           </span>
         </div>
-        <Link to="/home" className="text-sm font-semibold text-[#ff4500] hover:underline">
+        <Link to="/login" className="text-sm font-semibold text-[#ff4500] hover:underline">
           Already a member? Sign In
         </Link>
       </header>

@@ -13,7 +13,11 @@ export function RightSidebar() {
     .slice(0, 3) as NonNullable<ReturnType<typeof userById>>[]
 
   const openings = posts.filter((p) => p.type === 'Hiring').slice(0, 3)
-  const upcoming = sessions.filter((s) => s.status === 'upcoming').slice(0, 2)
+  // Confirmed sessions first, then requests still awaiting the mentor.
+  const upcoming = [
+    ...sessions.filter((s) => s.status === 'upcoming'),
+    ...sessions.filter((s) => s.status === 'requested'),
+  ].slice(0, 3)
 
   return (
     <aside className="fixed bottom-0 right-0 top-14 hidden w-[300px] overflow-y-auto px-4 py-4 xl:block">
@@ -80,9 +84,17 @@ export function RightSidebar() {
           <div className="flex flex-col gap-3">
             {upcoming.map((s) => {
               const m = userById(s.mentorId)
+              const pending = s.status === 'requested'
               return (
                 <div key={s.id} className="rounded-lg border border-[#edeff1] p-3">
-                  <p className="text-sm font-semibold text-[#1c1c1c]">{s.topic}</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-semibold text-[#1c1c1c]">{s.topic}</p>
+                    {pending && (
+                      <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                        awaiting
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-[#878a8c]">with {m?.name}</p>
                   <p className="mt-1 text-[11px] font-medium text-[#ff4500]">
                     {s.date} · {s.time}

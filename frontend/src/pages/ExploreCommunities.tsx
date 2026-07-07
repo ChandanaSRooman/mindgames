@@ -94,9 +94,19 @@ function CommunityCard({ c, onToggle, compactCard = false }: { c: Community; onT
           <Users size={12} /> {compact(c.memberCount)} members
         </p>
         {!compactCard && <p className="mt-2 line-clamp-2 text-sm text-[#878a8c]">{c.description}</p>}
-        <Button variant={c.joined ? 'subtle' : 'outline'} className="mt-3 w-full" onClick={onToggle}>
-          {c.joined ? 'Joined' : 'Join'}
-        </Button>
+        {c.status === 'pending' ? (
+          <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-center text-xs font-semibold text-amber-700">
+            Awaiting admin approval
+          </div>
+        ) : c.status === 'rejected' ? (
+          <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-center text-xs font-semibold text-red-500">
+            Declined by admin
+          </div>
+        ) : (
+          <Button variant={c.joined ? 'subtle' : 'outline'} className="mt-3 w-full" onClick={onToggle}>
+            {c.joined ? 'Joined' : 'Join'}
+          </Button>
+        )}
       </div>
     </Card>
   )

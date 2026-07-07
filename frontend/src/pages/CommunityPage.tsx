@@ -19,6 +19,16 @@ export function CommunityPage() {
 
   return (
     <div className="flex flex-col gap-4">
+      {community.status === 'pending' && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          ⏳ This community is awaiting admin approval. Only you can see it until it goes live.
+        </div>
+      )}
+      {community.status === 'rejected' && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          This community request was declined by the Rooman team.
+        </div>
+      )}
       {/* Banner */}
       <Card className="overflow-hidden">
         <div className={`h-24 bg-gradient-to-r ${community.color}`} />

@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, MapPin, MessageSquare, X } from 'lucide-react'
 import { useApp } from '../store/AppStore'
+import { useLayout } from '../components/layout/LayoutContext'
 import { Avatar, Button, Card, Pill, SectionTitle } from '../components/ui'
 import { matchesUserQuery } from '../lib/search'
 import { DOMAINS } from '../types'
@@ -17,10 +18,16 @@ export function MyNetwork() {
     ignoreRequest,
     connectionState,
     query,
-    notify,
+    refreshNetwork,
   } = useApp()
+  const { openChatWith } = useLayout()
 
   const [domainFilter, setDomainFilter] = useState<string>('All')
+
+  // Pull the latest graph on entry so requests sent by others show up.
+  useEffect(() => {
+    refreshNetwork()
+  }, [refreshNetwork])
 
   const get = (id: string) => users.find((u) => u.id === id)!
 
@@ -122,7 +129,7 @@ export function MyNetwork() {
                 </Link>
                 <p className="truncate text-xs text-[#878a8c]">{u.designation} · {u.company}</p>
               </div>
-              <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => notify(`Opening chat with ${u.name}…`, 'info')}>
+              <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => openChatWith(u.id)}>
                 <MessageSquare size={15} /> Message
               </Button>
             </Card>

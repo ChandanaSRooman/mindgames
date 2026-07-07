@@ -492,6 +492,7 @@ export const mentorshipSessions: MentorshipSession[] = [
   {
     id: 's1',
     mentorId: 'a1',
+    menteeId: 'me',
     menteeName: 'You',
     topic: 'System Design Interview Prep',
     date: 'Mon, 30 Jun 2026',
@@ -501,6 +502,7 @@ export const mentorshipSessions: MentorshipSession[] = [
   {
     id: 's2',
     mentorId: 'a9',
+    menteeId: 'me',
     menteeName: 'You',
     topic: 'AWS Architecture Deep-Dive',
     date: 'Fri, 4 Jul 2026',
@@ -510,6 +512,7 @@ export const mentorshipSessions: MentorshipSession[] = [
   {
     id: 's3',
     mentorId: 'a4',
+    menteeId: 'me',
     menteeName: 'You',
     topic: 'Breaking into Engineering Management',
     date: 'Thu, 12 Jun 2026',

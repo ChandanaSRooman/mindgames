@@ -1,9 +1,12 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Building2, FlaskConical, Rocket, Users2, Wallet } from 'lucide-react'
+import { Building2, ExternalLink, FlaskConical, Rocket, Users2, Wallet } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { Avatar, Button, Card, SectionTitle } from '../components/ui'
 import { DOMAINS, type Domain, type StartupStage } from '../types'
+
+// Rooman's incubation program — the official site this page links out to.
+const STARTUPVARSITY_URL = 'https://www.startupvarsity.com'
 
 const STAGES: StartupStage[] = ['Idea', 'MVP', 'Early Revenue', 'Scaling']
 
@@ -17,19 +20,23 @@ const STAGE_STYLES: Record<StartupStage, string> = {
 export function StartupVarsity() {
   const { startups, userById, submitStartup } = useApp()
   const [form, setForm] = useState({ name: '', domain: '' as Domain | '', stage: '' as StartupStage | '', teamSize: '', description: '' })
+  const [shareToFeed, setShareToFeed] = useState(true)
 
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }))
   const canSubmit = form.name && form.domain && form.stage && form.description
 
   function submit() {
     if (!canSubmit) return
-    submitStartup({
-      name: form.name,
-      domain: form.domain as Domain,
-      stage: form.stage as StartupStage,
-      teamSize: Number(form.teamSize) || 1,
-      description: form.description,
-    })
+    submitStartup(
+      {
+        name: form.name,
+        domain: form.domain as Domain,
+        stage: form.stage as StartupStage,
+        teamSize: Number(form.teamSize) || 1,
+        description: form.description,
+      },
+      shareToFeed,
+    )
     setForm({ name: '', domain: '', stage: '', teamSize: '', description: '' })
   }
 
@@ -38,9 +45,19 @@ export function StartupVarsity() {
       {/* Explainer */}
       <Card className="overflow-hidden">
         <div className="bg-gradient-to-r from-[#7c3aed] to-[#ff4500] px-6 py-7 text-white">
-          <div className="flex items-center gap-2">
-            <Rocket size={26} />
-            <h1 className="text-2xl font-bold">StartupVarsity</h1>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Rocket size={26} />
+              <h1 className="text-2xl font-bold">StartupVarsity</h1>
+            </div>
+            <a
+              href={STARTUPVARSITY_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-full bg-white/95 px-4 py-2 text-sm font-bold text-[#7c3aed] shadow-sm transition-colors hover:bg-white"
+            >
+              Visit startupvarsity.com <ExternalLink size={15} />
+            </a>
           </div>
           <p className="mt-2 max-w-xl text-violet-50">
             Turn your idea into a company. Build your product using Rooman's labs, mentor network and
@@ -70,6 +87,15 @@ export function StartupVarsity() {
           </select>
         </div>
         <textarea value={form.description} onChange={(e) => set('description', e.target.value)} rows={3} placeholder="Describe your idea…" className="mt-3 w-full resize-none rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]" />
+        <label className="mt-3 flex items-center gap-2 text-sm text-[#1c1c1c]">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-[#ff4500]"
+            checked={shareToFeed}
+            onChange={(e) => setShareToFeed(e.target.checked)}
+          />
+          Also share my idea as a post so the network can see it
+        </label>
         <Button className="mt-3" disabled={!canSubmit} onClick={submit}>Submit Application</Button>
       </Card>
 
@@ -110,12 +136,21 @@ export function StartupVarsity() {
   )
 }
 
+// Each resource card opens the official StartupVarsity site in a new tab.
 function Resource({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
   return (
-    <div className="rounded-xl border border-[#edeff1] p-4">
+    <a
+      href={STARTUPVARSITY_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="group rounded-xl border border-[#edeff1] p-4 transition-colors hover:border-[#7c3aed] hover:bg-purple-50/40"
+    >
       <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-100 text-purple-700">{icon}</span>
-      <p className="mt-2 font-semibold text-[#1c1c1c]">{title}</p>
+      <p className="mt-2 flex items-center gap-1 font-semibold text-[#1c1c1c]">
+        {title}
+        <ExternalLink size={12} className="text-[#878a8c] opacity-0 transition-opacity group-hover:opacity-100" />
+      </p>
       <p className="text-xs text-[#878a8c]">{body}</p>
-    </div>
+    </a>
   )
 }

@@ -1,15 +1,49 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, Send, X } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { Avatar } from '../ui'
 
-export function ChatPanel({ onClose }: { onClose: () => void }) {
-  const { threads, userById, sendMessage } = useApp()
+// How often the open panel pulls new messages. ponytail: websockets/SSE would
+// replace this poll for true realtime.
+const CHAT_POLL_MS = 4000
+
+export function ChatPanel({
+  initialUserId,
+  onClose,
+}: {
+  initialUserId?: string
+  onClose: () => void
+}) {
+  const { threads, userById, sendMessage, markThreadRead, messageUser, refreshThreads } = useApp()
   const [activeId, setActiveId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Opened from a profile "Message" button — get/create that conversation.
+  useEffect(() => {
+    if (initialUserId) messageUser(initialUserId).then(setActiveId)
+  }, [initialUserId, messageUser])
+
+  // While the panel is open, poll for incoming messages so chats feel live.
+  useEffect(() => {
+    refreshThreads()
+    const interval = setInterval(refreshThreads, CHAT_POLL_MS)
+    return () => clearInterval(interval)
+  }, [refreshThreads])
 
   const active = threads.find((t) => t.id === activeId)
   const activeUser = active ? userById(active.withUserId) : undefined
+
+  // Mark the open conversation read — on open AND when new messages arrive.
+  useEffect(() => {
+    if (active && active.unread > 0) markThreadRead(active.id)
+  }, [active, markThreadRead])
+
+  // Keep the newest message in view.
+  const messageCount = active?.messages.length ?? 0
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+  }, [messageCount, activeId])
 
   function send() {
     if (!active || !draft.trim()) return
@@ -65,7 +99,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           <>
-            <div className="flex-1 space-y-3 overflow-y-auto bg-[#f6f7f8] p-4">
+            <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto bg-[#f6f7f8] p-4">
               {active.messages.map((m) => (
                 <div key={m.id} className={`flex ${m.fromMe ? 'justify-end' : 'justify-start'}`}>
                   <div

@@ -110,12 +110,14 @@ export function StatusBadge({ tag }: { tag: StatusTag }) {
 export function Card({
   children,
   className = '',
+  id,
 }: {
   children: ReactNode
   className?: string
+  id?: string
 }) {
   return (
-    <div className={`rounded-xl border border-[#edeff1] bg-white shadow-sm ${className}`}>
+    <div id={id} className={`rounded-xl border border-[#edeff1] bg-white shadow-sm ${className}`}>
       {children}
     </div>
   )

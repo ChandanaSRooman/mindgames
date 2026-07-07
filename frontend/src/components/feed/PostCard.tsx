@@ -33,8 +33,18 @@ export function PostCard({ post }: { post: Post }) {
 
   const isProfileCard = post.type === 'Open to Work' || post.type === 'Hiring'
 
+  // Copy a direct link to this post (Home scrolls to the anchor on load).
+  async function share() {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/home#post-${post.id}`)
+      notify('Post link copied to clipboard.', 'info')
+    } catch {
+      notify('Could not copy the link.', 'error')
+    }
+  }
+
   return (
-    <Card className={`overflow-hidden ${post.pinned ? 'ring-1 ring-[#ff4500]/30' : ''}`}>
+    <Card id={`post-${post.id}`} className={`overflow-hidden ${post.pinned ? 'ring-1 ring-[#ff4500]/30' : ''}`}>
       {post.pinned && (
         <div className="flex items-center gap-1.5 border-b border-orange-100 bg-orange-50 px-4 py-1.5 text-xs font-semibold text-[#ff4500]">
           <Pin size={13} /> Pinned by Rooman
@@ -110,7 +120,7 @@ export function PostCard({ post }: { post: Post }) {
           <MessageCircle size={18} />
           <span>{post.comments.length}</span>
         </ActionButton>
-        <ActionButton onClick={() => notify('Share link copied to clipboard.', 'info')}>
+        <ActionButton onClick={share}>
           <Share2 size={18} />
           <span className="hidden sm:inline">Share</span>
         </ActionButton>

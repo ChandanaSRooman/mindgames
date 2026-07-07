@@ -8,7 +8,7 @@ import {
   Plus,
   Search,
   Settings,
-  Sparkles,
+  ShieldCheck,
   User as UserIcon,
 } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
@@ -17,7 +17,7 @@ import { Avatar } from '../ui'
 import { NotificationsDropdown } from './NotificationsDropdown'
 
 export function Navbar() {
-  const { currentUser, query, setQuery, unreadNotifications, unreadMessages, notify } = useApp()
+  const { currentUser, query, setQuery, unreadNotifications, unreadMessages, signOut } = useApp()
   const { openComposer, toggleChat } = useLayout()
   const navigate = useNavigate()
 
@@ -48,7 +48,7 @@ export function Navbar() {
         </span>
       </Link>
 
-      {/* Search + Ask AI */}
+      {/* Search */}
       <div className="mx-auto flex w-full max-w-2xl items-center">
         <div className="flex w-full items-center rounded-full border border-[#edeff1] bg-[#f6f7f8] pl-4 focus-within:border-[#ff4500] focus-within:ring-2 focus-within:ring-orange-100">
           <Search size={18} className="text-[#878a8c]" />
@@ -58,12 +58,6 @@ export function Navbar() {
             placeholder="Search alumni, jobs, mentors, posts..."
             className="w-full bg-transparent px-3 py-2 text-sm text-[#1c1c1c] outline-none placeholder:text-[#878a8c]"
           />
-          <button
-            onClick={() => notify('Ask AI is a demo — coming soon!', 'info')}
-            className="m-1 hidden items-center gap-1.5 rounded-full bg-[#ff4500] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#ff6534] sm:flex"
-          >
-            <Sparkles size={14} /> Ask AI
-          </button>
         </div>
       </div>
 
@@ -109,8 +103,11 @@ export function Navbar() {
                 </div>
               </div>
               <MenuItem icon={<UserIcon size={16} />} label="View Profile" onClick={() => { setShowProfile(false); navigate('/profile') }} />
-              <MenuItem icon={<Settings size={16} />} label="Settings" onClick={() => { setShowProfile(false); notify('Settings is a demo.', 'info') }} />
-              <MenuItem icon={<LogOut size={16} />} label="Sign out" onClick={() => { setShowProfile(false); navigate('/') }} />
+              {currentUser.isAdmin && (
+                <MenuItem icon={<ShieldCheck size={16} />} label="Admin Console" onClick={() => { setShowProfile(false); navigate('/admin') }} />
+              )}
+              <MenuItem icon={<Settings size={16} />} label="Settings" onClick={() => { setShowProfile(false); navigate('/settings') }} />
+              <MenuItem icon={<LogOut size={16} />} label="Sign out" onClick={() => { setShowProfile(false); signOut(); navigate('/') }} />
             </div>
           )}
         </div>

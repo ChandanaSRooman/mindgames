@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '../store/AppStore'
 import { CreatePostBox } from '../components/feed/CreatePostBox'
 import { PostCard } from '../components/feed/PostCard'
@@ -10,6 +10,17 @@ const SORTS: Sort[] = ['Latest', 'Top', 'For You']
 export function Home() {
   const { posts, users, currentUser, query } = useApp()
   const [sort, setSort] = useState<Sort>('Latest')
+
+  // Shared post links (/home#post-<id>) scroll to the post once the feed is in.
+  useEffect(() => {
+    if (!window.location.hash || posts.length === 0) return
+    const el = document.getElementById(window.location.hash.slice(1))
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.classList.add('ring-2', 'ring-[#ff4500]')
+      setTimeout(() => el.classList.remove('ring-2', 'ring-[#ff4500]'), 2500)
+    }
+  }, [posts.length])
 
   const visible = useMemo(() => {
     let list = posts.filter((p) => matchesPostQuery(p, users, query))
