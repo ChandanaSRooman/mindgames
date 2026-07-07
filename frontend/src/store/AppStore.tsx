@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -19,20 +20,8 @@ import type {
   User,
   Visibility,
 } from '../types'
-import {
-  CURRENT_USER_ID,
-  communities as seedCommunities,
-  connectedIds as seedConnected,
-  messageThreads as seedThreads,
-  mentorshipSessions as seedSessions,
-  notifications as seedNotifications,
-  pendingMentorApplicationIds as seedMentorApplications,
-  pendingRequestIds as seedPending,
-  posts as seedPosts,
-  startups as seedStartups,
-  suggestionIds as seedSuggestions,
-  users as seedUsers,
-} from '../data/mockData'
+import { api, getToken, setToken } from '../lib/api'
+import { googleSignIn } from '../lib/google'
 
 // ---- Toasts ----------------------------------------------------------------
 export type ToastKind = 'success' | 'error' | 'info'
@@ -43,50 +32,30 @@ export interface Toast {
 }
 
 let toastSeq = 0
-let idSeq = 1000
-const nextId = () => `gen-${idSeq++}`
 
-// ---- Session persistence (localStorage — no backend needed) ----------------
-// Ported from the teammate's account-persistence work and adapted to the
-// richer User model. The signed-in profile + auth flag survive a refresh.
 export type AuthMethod = 'google' | 'linkedin' | 'email'
 
-const SESSION_KEY = 'rooman.session'
-
-interface PersistedSession {
-  user: User
-  authenticated: boolean
-}
-
-function loadSession(): PersistedSession | null {
-  try {
-    const raw = localStorage.getItem(SESSION_KEY)
-    return raw ? (JSON.parse(raw) as PersistedSession) : null
-  } catch {
-    return null
-  }
-}
-
-function saveSession(session: PersistedSession | null) {
-  try {
-    if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session))
-    else localStorage.removeItem(SESSION_KEY)
-  } catch {
-    /* storage unavailable (private mode) — stay in-memory only */
-  }
-}
-
-// Derive a friendly display name from an email local-part, else a sensible default.
-function nameFromEmail(email: string, method: AuthMethod): string {
-  if (email) {
-    const local = email.split('@')[0]
-    return local
-      .split(/[._-]+/)
-      .filter(Boolean)
-      .map((w) => w[0].toUpperCase() + w.slice(1))
-      .join(' ')
-  }
-  return method === 'google' ? 'Google User' : method === 'linkedin' ? 'LinkedIn User' : 'New Member'
+// A placeholder used before bootstrap / when signed out so components that read
+// `currentUser` synchronously never hit undefined.
+const GUEST: User = {
+  id: 'guest',
+  name: 'Guest',
+  email: '',
+  avatar: 'Guest',
+  batchYear: new Date().getFullYear(),
+  course: '',
+  company: '',
+  designation: '',
+  experienceYears: 0,
+  domain: 'Web Dev',
+  employmentType: 'Employed',
+  city: '',
+  bio: '',
+  expertise: [],
+  willingToMentor: false,
+  interestedInStartup: false,
+  connectionsCount: 0,
+  isMentor: false,
 }
 
 export interface NewPostInput {
@@ -106,9 +75,13 @@ interface AppContextValue {
   // auth / profile
   currentUser: User
   isAuthenticated: boolean
-  setAuthenticated: (v: boolean) => void
-  updateProfile: (patch: Partial<User>) => void
-  signIn: (method: AuthMethod, email?: string, name?: string) => void
+  loading: boolean
+  /** True when real Google OAuth is configured; false = demo-account fallback. */
+  googleReady: boolean
+  login: (email: string, password: string) => Promise<User>
+  signup: (name: string, email: string, password: string) => Promise<User>
+  social: (provider: 'google' | 'linkedin') => Promise<User>
+  updateProfile: (patch: Partial<User>) => Promise<void>
   signOut: () => void
 
   // people
@@ -121,6 +94,7 @@ interface AppContextValue {
   sendConnect: (id: string) => void
   acceptRequest: (id: string) => void
   ignoreRequest: (id: string) => void
+  refreshNetwork: () => Promise<void>
 
   // posts
   posts: Post[]
@@ -128,6 +102,7 @@ interface AppContextValue {
   toggleLike: (id: string) => void
   toggleSave: (id: string) => void
   addComment: (postId: string, text: string) => void
+  applyToJob: (postId: string) => void
 
   // communities
   communities: Community[]
@@ -136,14 +111,21 @@ interface AppContextValue {
 
   // mentorship + startups
   sessions: MentorshipSession[]
-  bookSession: (mentorId: string, topic: string) => void
+  bookSession: (mentorId: string, topic: string, date: string, time: string) => void
+  acceptSession: (id: string) => void
+  declineSession: (id: string) => void
+  completeSession: (id: string) => void
   becomeMentor: (rate: number) => void
   startups: Startup[]
-  submitStartup: (s: { name: string; domain: Startup['domain']; stage: Startup['stage']; teamSize: number; description: string }) => void
+  submitStartup: (
+    s: { name: string; domain: Startup['domain']; stage: Startup['stage']; teamSize: number; description: string },
+    shareToFeed?: boolean,
+  ) => void
 
   // admin: announcements + mentor approvals
   pinnedPostIds: string[]
-  announce: (text: string) => void
+  announce: (text: string, pin?: boolean) => void
+  unpinAnnouncement: (id: string) => void
   pendingMentorIds: string[]
   approveMentor: (id: string) => void
   declineMentor: (id: string) => void
@@ -152,11 +134,15 @@ interface AppContextValue {
   notifications: AppNotification[]
   unreadNotifications: number
   markNotificationsRead: () => void
+  markNotificationRead: (id: string) => void
 
   // messages
   threads: MessageThread[]
   unreadMessages: number
   sendMessage: (threadId: string, text: string) => void
+  markThreadRead: (threadId: string) => void
+  messageUser: (userId: string) => Promise<string>
+  refreshThreads: () => Promise<void>
 
   // search
   query: string
@@ -173,25 +159,22 @@ const AppContext = createContext<AppContextValue | null>(null)
 export function AppProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
 
-  // Rehydrate the signed-in profile + auth flag from localStorage if present.
-  const persisted = loadSession()
-  const [isAuthenticated, setAuthenticated] = useState(persisted?.authenticated ?? false)
-  const [users, setUsers] = useState<User[]>(() =>
-    persisted?.user ? seedUsers.map((u) => (u.id === CURRENT_USER_ID ? persisted.user : u)) : seedUsers,
-  )
+  // ---- auth + server-backed data ------------------------------------------
+  const [token, setTokenState] = useState<string | null>(() => getToken())
+  const [bootstrapped, setBootstrapped] = useState(false)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
-  const [posts, setPosts] = useState<Post[]>(seedPosts)
-  const [communities, setCommunities] = useState<Community[]>(seedCommunities)
-  const [sessions, setSessions] = useState<MentorshipSession[]>(seedSessions)
-  const [startups, setStartups] = useState<Startup[]>(seedStartups)
-  const [notifications, setNotifications] = useState<AppNotification[]>(seedNotifications)
-  const [threads, setThreads] = useState<MessageThread[]>(seedThreads)
-
-  const [connectionIds, setConnectionIds] = useState<string[]>(seedConnected)
-  const [suggestionIds, setSuggestionIds] = useState<string[]>(seedSuggestions)
-  const [pendingRequestIds, setPendingRequestIds] = useState<string[]>(seedPending)
+  const [users, setUsers] = useState<User[]>([])
+  const [posts, setPosts] = useState<Post[]>([])
+  const [connectionIds, setConnectionIds] = useState<string[]>([])
   const [sentRequestIds, setSentRequestIds] = useState<string[]>([])
-  const [pendingMentorIds, setPendingMentorIds] = useState<string[]>(seedMentorApplications)
+  const [pendingRequestIds, setPendingRequestIds] = useState<string[]>([])
+  const [threads, setThreads] = useState<MessageThread[]>([])
+  const [communities, setCommunities] = useState<Community[]>([])
+  const [sessions, setSessions] = useState<MentorshipSession[]>([])
+  const [startups, setStartups] = useState<Startup[]>([])
+  const [notifications, setNotifications] = useState<AppNotification[]>([])
+  const [pendingMentorIds, setPendingMentorIds] = useState<string[]>([])
 
   const [query, setQuery] = useState('')
 
@@ -209,42 +192,161 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [dismissToast],
   )
 
-  // ---- profile -------------------------------------------------------------
-  const currentUser = useMemo(() => users.find((u) => u.id === CURRENT_USER_ID)!, [users])
+  // ---- bootstrap: load users, feed & connections for the signed-in user ---
+  const bootstrap = useCallback(async () => {
+    try {
+      const [me, allUsers, feed, graph, msgThreads, comms, sess, sups, notifs] = await Promise.all([
+        api.me(),
+        api.getUsers(),
+        api.getFeed(),
+        api.getConnections(),
+        api.getThreads(),
+        api.getCommunities(),
+        api.getSessions(),
+        api.getStartups(),
+        api.getNotifications(),
+      ])
+      setUsers(allUsers.some((u) => u.id === me.id) ? allUsers : [me, ...allUsers])
+      setCurrentUserId(me.id)
+      setPosts(feed)
+      setConnectionIds(graph.connectionIds)
+      setSentRequestIds(graph.sentRequestIds)
+      setPendingRequestIds(graph.pendingRequestIds)
+      setThreads(msgThreads)
+      setCommunities(comms)
+      setSessions(sess)
+      setStartups(sups)
+      setNotifications(notifs)
+      // Mentor approvals are an admin-only view.
+      if (me.isAdmin) {
+        api.getMentorApplications().then(setPendingMentorIds, () => {})
+      }
+    } catch {
+      // Token missing/expired — drop it so the app falls back to signed-out.
+      setToken(null)
+      setTokenState(null)
+      setCurrentUserId(null)
+    } finally {
+      setBootstrapped(true)
+    }
+  }, [])
 
-  // Persist the signed-in profile + auth flag whenever they change.
+  // Which social providers are real (backend reports GOOGLE_CLIENT_ID).
+  const [googleClientId, setGoogleClientId] = useState<string | null>(null)
+
+  // Run once on mount: if we have a token, hydrate from the API.
   useEffect(() => {
-    saveSession({ user: currentUser, authenticated: isAuthenticated })
-  }, [currentUser, isAuthenticated])
-
-  const updateProfile = useCallback((patch: Partial<User>) => {
-    setUsers((list) => list.map((u) => (u.id === CURRENT_USER_ID ? { ...u, ...patch } : u)))
+    if (getToken()) bootstrap()
+    else setBootstrapped(true)
+    api.getAuthConfig().then((c) => setGoogleClientId(c.googleClientId), () => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Sign in (from the OAuth / email invite page). Seeds the profile name/email.
-  // A provided name (e.g. the email-signup Full Name field) wins; else derive from email.
-  const signIn = useCallback((method: AuthMethod, email = '', name = '') => {
-    setUsers((list) =>
-      list.map((u) =>
-        u.id === CURRENT_USER_ID
-          ? {
-              ...u,
-              name: name.trim() || (u.name && u.name !== 'You' ? u.name : nameFromEmail(email, method)),
-              email: email || u.email,
-            }
-          : u,
-      ),
-    )
-    setAuthenticated(true)
+  const isAuthenticated = !!currentUserId
+  const loading = !!token && !bootstrapped
+
+  // ---- profile -------------------------------------------------------------
+  const currentUser = useMemo(
+    () => users.find((u) => u.id === currentUserId) ?? GUEST,
+    [users, currentUserId],
+  )
+
+  async function afterAuth(auth: { token: string; user: User }) {
+    setToken(auth.token)
+    setTokenState(auth.token)
+    setBootstrapped(false)
+    await bootstrap()
+  }
+
+  const login = useCallback(async (email: string, password: string) => {
+    const res = await api.login(email, password)
+    await afterAuth(res)
+    return res.user
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const signup = useCallback(async (name: string, email: string, password: string) => {
+    const res = await api.signup(name, email, password)
+    await afterAuth(res)
+    return res.user
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const social = useCallback(async (provider: 'google' | 'linkedin') => {
+    // Real Google OAuth when the backend has a client id; simulated otherwise.
+    if (provider === 'google' && googleClientId) {
+      const accessToken = await googleSignIn(googleClientId)
+      const res = await api.googleAuth(accessToken)
+      await afterAuth(res)
+      return res.user
+    }
+    const res = await api.social(provider)
+    await afterAuth(res)
+    return res.user
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [googleClientId])
 
   const signOut = useCallback(() => {
-    setUsers((list) => list.map((u) => (u.id === CURRENT_USER_ID ? seedUsers.find((s) => s.id === CURRENT_USER_ID)! : u)))
-    setAuthenticated(false)
-    saveSession(null)
+    setToken(null)
+    setTokenState(null)
+    setCurrentUserId(null)
+    setUsers([])
+    setPosts([])
+    setConnectionIds([])
+    setSentRequestIds([])
+    setPendingRequestIds([])
+    setThreads([])
+    setCommunities([])
+    setSessions([])
+    setStartups([])
+    setNotifications([])
+    setPendingMentorIds([])
   }, [])
 
+  const updateProfile = useCallback(
+    async (patch: Partial<User>) => {
+      const updated = await api.updateProfile(patch)
+      setUsers((list) => list.map((u) => (u.id === updated.id ? updated : u)))
+    },
+    [],
+  )
+
   const userById = useCallback((id: string) => users.find((u) => u.id === id), [users])
+
+  // Re-pull the social state (connection graph, notifications, directory) so
+  // requests sent by OTHER users show up without a full reload. Called when
+  // My Network mounts and by a background poll.
+  const refreshNetwork = useCallback(async () => {
+    if (!getToken()) return
+    try {
+      const [graph, notifs, allUsers] = await Promise.all([
+        api.getConnections(),
+        api.getNotifications(),
+        api.getUsers(),
+      ])
+      setConnectionIds(graph.connectionIds)
+      setSentRequestIds(graph.sentRequestIds)
+      setPendingRequestIds(graph.pendingRequestIds)
+      setNotifications(notifs)
+      setUsers((prev) => {
+        const me = prev.find((u) => u.id === currentUserId)
+        // Keep my own row from local state (it may hold an in-flight edit).
+        return allUsers.map((u) => (u.id === currentUserId && me ? me : u))
+      })
+      await refreshThreads() // incoming chat messages + unread badge
+    } catch {
+      /* transient network failure — next poll retries */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUserId])
+
+  // Background poll (30s) while signed in, so incoming requests/notifications
+  // appear live. ponytail: replace with websockets/SSE for true realtime.
+  useEffect(() => {
+    if (!isAuthenticated) return
+    const interval = setInterval(refreshNetwork, 30_000)
+    return () => clearInterval(interval)
+  }, [isAuthenticated, refreshNetwork])
 
   // ---- connections ---------------------------------------------------------
   const connectionState = useCallback(
@@ -256,14 +358,63 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [connectionIds, sentRequestIds],
   )
 
+  // People-you-may-know: everyone who isn't me, an admin/org account, or
+  // already linked.
+  const suggestionIds = useMemo(
+    () =>
+      users
+        .filter(
+          (u) =>
+            u.id !== currentUserId &&
+            !u.isAdmin &&
+            u.id !== 'rooman' &&
+            !connectionIds.includes(u.id) &&
+            !sentRequestIds.includes(u.id) &&
+            !pendingRequestIds.includes(u.id),
+        )
+        .map((u) => u.id),
+    [users, currentUserId, connectionIds, sentRequestIds, pendingRequestIds],
+  )
+
+  // Bump the displayed connection count for me + the other user after an
+  // accepted connection (mirrors the DB-side increment).
+  const bumpCounts = useCallback(
+    (otherId: string) => {
+      setUsers((list) =>
+        list.map((u) =>
+          u.id === otherId || u.id === currentUserId
+            ? { ...u, connectionsCount: u.connectionsCount + 1 }
+            : u,
+        ),
+      )
+    },
+    [currentUserId],
+  )
+
   const sendConnect = useCallback(
     (id: string) => {
       setSentRequestIds((s) => (s.includes(id) ? s : [...s, id]))
-      setSuggestionIds((s) => s.filter((x) => x !== id))
       const u = users.find((x) => x.id === id)
-      notify(`Connection request sent to ${u?.name ?? 'member'}.`)
+      api.connect(id).then(
+        (r) => {
+          if (r.state === 'connected') {
+            // The other side had already requested me — instantly connected.
+            setSentRequestIds((s) => s.filter((x) => x !== id))
+            setPendingRequestIds((p) => p.filter((x) => x !== id))
+            setConnectionIds((c) => (c.includes(id) ? c : [...c, id]))
+            bumpCounts(id)
+            notify(`You are now connected with ${u?.name ?? 'member'}.`)
+          } else {
+            notify(`Connection request sent to ${u?.name ?? 'member'}.`)
+          }
+        },
+        () => {
+          setSentRequestIds((s) => s.filter((x) => x !== id))
+          notify('Could not send request. Try again.', 'error')
+        },
+      )
     },
-    [notify, users],
+    [notify, users, bumpCounts],
   )
 
   const acceptRequest = useCallback(
@@ -271,29 +422,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setPendingRequestIds((p) => p.filter((x) => x !== id))
       setConnectionIds((c) => (c.includes(id) ? c : [...c, id]))
       const u = users.find((x) => x.id === id)
-      notify(`You are now connected with ${u?.name ?? 'member'}.`)
+      api.acceptConnection(id).then(
+        () => {
+          bumpCounts(id)
+          notify(`You are now connected with ${u?.name ?? 'member'}.`)
+        },
+        () => notify('Could not accept the request.', 'error'),
+      )
     },
-    [notify, users],
+    [notify, users, bumpCounts],
   )
 
   const ignoreRequest = useCallback((id: string) => {
     setPendingRequestIds((p) => p.filter((x) => x !== id))
+    api.ignoreConnection(id).catch(() => {})
   }, [])
 
   // ---- posts ---------------------------------------------------------------
   const createPost = useCallback(
     (input: NewPostInput) => {
-      const post: Post = {
-        id: nextId(),
-        authorId: CURRENT_USER_ID,
+      api.createPost({
         type: input.type,
         content: input.content.trim(),
         image: input.image,
-        createdAt: new Date().toISOString(),
-        likes: 0,
-        likedByMe: false,
-        saved: false,
-        comments: [],
         visibility: input.visibility,
         communityId: input.communityId,
         domain: input.domain,
@@ -301,197 +452,386 @@ export function AppProvider({ children }: { children: ReactNode }) {
         batch: input.batch,
         role: input.role,
         company: input.company,
-      }
-      setPosts((p) => [post, ...p])
-      notify('Your post is live.')
+      }).then(
+        (created) => {
+          setPosts((p) => [created, ...p])
+          notify('Your post is live.')
+        },
+        () => notify('Could not publish your post.', 'error'),
+      )
     },
     [notify],
   )
 
-  const toggleLike = useCallback((id: string) => {
-    setPosts((list) =>
-      list.map((p) =>
-        p.id === id
-          ? { ...p, likedByMe: !p.likedByMe, likes: p.likes + (p.likedByMe ? -1 : 1) }
-          : p,
-      ),
-    )
-  }, [])
+  const toggleLike = useCallback(
+    (id: string) => {
+      const post = posts.find((p) => p.id === id)
+      if (!post) return
+      const liking = !post.likedByMe
+      // optimistic
+      setPosts((list) =>
+        list.map((p) =>
+          p.id === id ? { ...p, likedByMe: liking, likes: p.likes + (liking ? 1 : -1) } : p,
+        ),
+      )
+      const call = liking ? api.likePost(id) : api.unlikePost(id)
+      call.then(
+        (r) =>
+          setPosts((list) =>
+            list.map((p) => (p.id === id ? { ...p, likedByMe: r.likedByMe, likes: r.likes } : p)),
+          ),
+        () => {
+          // revert to the server truth we knew before
+          setPosts((list) =>
+            list.map((p) =>
+              p.id === id ? { ...p, likedByMe: post.likedByMe, likes: post.likes } : p,
+            ),
+          )
+          notify('Could not update like.', 'error')
+        },
+      )
+    },
+    [posts, notify],
+  )
 
   const toggleSave = useCallback(
     (id: string) => {
-      setPosts((list) => list.map((p) => (p.id === id ? { ...p, saved: !p.saved } : p)))
-      const p = posts.find((x) => x.id === id)
-      notify(p?.saved ? 'Removed from saved.' : 'Saved to your bookmarks.', 'info')
+      const post = posts.find((p) => p.id === id)
+      if (!post) return
+      const saving = !post.saved
+      setPosts((list) => list.map((p) => (p.id === id ? { ...p, saved: saving } : p)))
+      const call = saving ? api.savePost(id) : api.unsavePost(id)
+      call.then(
+        () => notify(saving ? 'Saved to your bookmarks.' : 'Removed from saved.', 'info'),
+        () => {
+          setPosts((list) => list.map((p) => (p.id === id ? { ...p, saved: post.saved } : p)))
+          notify('Could not update saved.', 'error')
+        },
+      )
     },
-    [notify, posts],
+    [posts, notify],
   )
 
-  const addComment = useCallback((postId: string, text: string) => {
-    if (!text.trim()) return
-    setPosts((list) =>
-      list.map((p) =>
-        p.id === postId
-          ? {
-              ...p,
-              comments: [
-                ...p.comments,
-                { id: nextId(), authorId: CURRENT_USER_ID, text: text.trim(), createdAt: new Date().toISOString() },
-              ],
-            }
-          : p,
-      ),
-    )
-  }, [])
+  const addComment = useCallback(
+    (postId: string, text: string) => {
+      if (!text.trim()) return
+      api.addComment(postId, text.trim()).then(
+        (comment) =>
+          setPosts((list) =>
+            list.map((p) =>
+              p.id === postId ? { ...p, comments: [...p.comments, comment] } : p,
+            ),
+          ),
+        () => notify('Could not post your comment.', 'error'),
+      )
+    },
+    [notify],
+  )
 
-  // ---- communities ---------------------------------------------------------
-  const toggleJoin = useCallback(
-    (id: string) => {
-      setCommunities((list) =>
-        list.map((c) =>
-          c.id === id
-            ? { ...c, joined: !c.joined, memberCount: c.memberCount + (c.joined ? -1 : 1) }
-            : c,
+  const applyToJob = useCallback(
+    (postId: string) => {
+      const post = posts.find((p) => p.id === postId)
+      if (!post || post.appliedByMe) return
+      // optimistic
+      setPosts((list) =>
+        list.map((p) =>
+          p.id === postId
+            ? { ...p, appliedByMe: true, applicantsCount: (p.applicantsCount ?? 0) + 1 }
+            : p,
         ),
       )
+      api.applyToJob(postId).then(
+        (r) => {
+          setPosts((list) =>
+            list.map((p) =>
+              p.id === postId ? { ...p, appliedByMe: true, applicantsCount: r.applicantsCount } : p,
+            ),
+          )
+          const author = users.find((u) => u.id === post.authorId)
+          notify(`Application sent to ${author?.name ?? 'the poster'} for "${post.role ?? 'the role'}".`)
+        },
+        (err) => {
+          setPosts((list) =>
+            list.map((p) =>
+              p.id === postId
+                ? { ...p, appliedByMe: post.appliedByMe, applicantsCount: post.applicantsCount }
+                : p,
+            ),
+          )
+          notify(err instanceof Error ? err.message : 'Could not send your application.', 'error')
+        },
+      )
+    },
+    [posts, users, notify],
+  )
+
+  // ---- communities (RDS-backed) --------------------------------------------
+  const toggleJoin = useCallback(
+    (id: string) => {
       const c = communities.find((x) => x.id === id)
-      notify(c?.joined ? `Left ${c.name}.` : `Joined ${c?.name}.`, 'info')
+      if (!c) return
+      const joining = !c.joined
+      // optimistic flip
+      setCommunities((list) =>
+        list.map((x) =>
+          x.id === id
+            ? { ...x, joined: joining, memberCount: x.memberCount + (joining ? 1 : -1) }
+            : x,
+        ),
+      )
+      const call = joining ? api.joinCommunity(id) : api.leaveCommunity(id)
+      call.then(
+        (updated) => {
+          setCommunities((list) => list.map((x) => (x.id === id ? updated : x)))
+          notify(joining ? `Joined ${c.name}.` : `Left ${c.name}.`, 'info')
+        },
+        () => {
+          setCommunities((list) => list.map((x) => (x.id === id ? c : x)))
+          notify('Could not update membership.', 'error')
+        },
+      )
     },
     [communities, notify],
   )
 
   const createCommunity = useCallback(
     (c: { name: string; description: string; category: Community['category']; tag: string }) => {
-      const community: Community = {
-        id: nextId(),
-        name: c.name,
-        description: c.description,
-        category: c.category,
-        tag: c.tag,
-        memberCount: 1,
-        joined: true,
-        color: 'from-orange-500 to-rose-600',
-      }
-      setCommunities((list) => [community, ...list])
-      notify(`Community "${c.name}" created.`)
+      api.createCommunity(c).then(
+        (created) => {
+          setCommunities((list) => [created, ...list])
+          notify(
+            created.status === 'pending'
+              ? `"${created.name}" submitted — it goes live once the Rooman team approves it.`
+              : `Community "${created.name}" created.`,
+          )
+        },
+        () => notify('Could not create the community.', 'error'),
+      )
     },
     [notify],
   )
 
-  // ---- mentorship + startups ----------------------------------------------
+  // ---- mentorship + startups (RDS-backed) ----------------------------------
   const bookSession = useCallback(
-    (mentorId: string, topic: string) => {
-      const session: MentorshipSession = {
-        id: nextId(),
-        mentorId,
-        menteeName: 'You',
-        topic: topic || 'Mentorship session',
-        date: 'To be scheduled',
-        time: 'TBD',
-        status: 'upcoming',
-      }
-      setSessions((s) => [session, ...s])
-      const m = users.find((u) => u.id === mentorId)
-      notify(`Session requested with ${m?.name ?? 'mentor'}.`)
+    (mentorId: string, topic: string, date: string, time: string) => {
+      api.bookSession(mentorId, topic, date, time).then(
+        (session) => {
+          setSessions((s) => [session, ...s])
+          const m = users.find((u) => u.id === mentorId)
+          notify(`Session requested with ${m?.name ?? 'mentor'} for ${date} at ${time}.`)
+        },
+        (err) =>
+          notify(err instanceof Error ? err.message : 'Could not book the session.', 'error'),
+      )
     },
     [notify, users],
+  )
+
+  // Mentor actions on a session request; each returns the updated session.
+  const sessionAction = useCallback(
+    (call: Promise<MentorshipSession>, successMsg: string) => {
+      call.then(
+        (updated) => {
+          setSessions((list) => list.map((s) => (s.id === updated.id ? updated : s)))
+          notify(successMsg)
+        },
+        (err) => notify(err instanceof Error ? err.message : 'Could not update the session.', 'error'),
+      )
+    },
+    [notify],
+  )
+
+  const acceptSession = useCallback(
+    (id: string) => sessionAction(api.acceptSession(id), 'Session confirmed. The mentee has been notified.'),
+    [sessionAction],
+  )
+  const declineSession = useCallback(
+    (id: string) => sessionAction(api.declineSession(id), 'Session declined.'),
+    [sessionAction],
+  )
+  const completeSession = useCallback(
+    (id: string) => {
+      sessionAction(api.completeSession(id), 'Session marked completed. 🎓')
+      // reflect the mentor's new session count locally
+      setUsers((list) =>
+        list.map((u) =>
+          u.id === currentUserId ? { ...u, sessionsConducted: (u.sessionsConducted ?? 0) + 1 } : u,
+        ),
+      )
+    },
+    [sessionAction, currentUserId],
   )
 
   const becomeMentor = useCallback(
     (rate: number) => {
       updateProfile({ isMentor: true, willingToMentor: true, mentorRate: rate, sessionsConducted: 0 })
-      notify('You are now listed as a mentor. 🎉')
+        .then(() => notify('You are now listed as a mentor. 🎉'))
+        .catch(() => notify('Could not update your mentor status.', 'error'))
     },
     [notify, updateProfile],
   )
 
   const submitStartup = useCallback(
-    (s: { name: string; domain: Startup['domain']; stage: Startup['stage']; teamSize: number; description: string }) => {
-      const startup: Startup = { id: nextId(), founderId: CURRENT_USER_ID, ...s }
-      setStartups((list) => [startup, ...list])
-      notify('StartupVarsity application submitted.')
+    (
+      s: { name: string; domain: Startup['domain']; stage: Startup['stage']; teamSize: number; description: string },
+      shareToFeed = false,
+    ) => {
+      api.submitStartup(s).then(
+        (created) => {
+          setStartups((list) => [created, ...list])
+          notify('StartupVarsity application submitted.')
+          // Optionally announce the idea to the whole network as a feed post.
+          if (shareToFeed) {
+            api
+              .createPost({
+                type: 'StartupVarsity',
+                content: `🚀 ${s.name} — ${s.description}\n\nStage: ${s.stage} · Team of ${s.teamSize} · ${s.domain}. Just applied to StartupVarsity!`,
+                domain: s.domain,
+                visibility: 'All Alumni',
+              })
+              .then((post) => setPosts((p) => [post, ...p]))
+              .catch(() => notify('Idea saved, but sharing to the feed failed.', 'error'))
+          }
+        },
+        () => notify('Could not submit your application.', 'error'),
+      )
     },
     [notify],
   )
 
-  // ---- admin: announcements + mentor approvals -----------------------------
+  // ---- admin: announcements + mentor approvals (RDS-backed) ---------------
   const pinnedPostIds = posts.filter((p) => p.pinned).map((p) => p.id)
 
   const announce = useCallback(
-    (text: string) => {
+    (text: string, pin = true) => {
       if (!text.trim()) return
-      const post: Post = {
-        id: nextId(),
-        authorId: 'rooman',
-        type: 'Update',
-        content: text.trim(),
-        createdAt: new Date().toISOString(),
-        likes: 0,
-        likedByMe: false,
-        saved: false,
-        comments: [],
-        visibility: 'All Alumni',
-        pinned: true,
-      }
-      setPosts((p) => [post, ...p])
-      setNotifications((list) => [
-        { id: nextId(), type: 'announcement', text: `📢 Rooman: ${text.trim()}`, createdAt: new Date().toISOString(), read: false },
-        ...list,
-      ])
-      notify('Announcement pinned to the feed.')
+      api.announce(text.trim(), pin).then(
+        (post) => {
+          setPosts((p) => [post, ...p])
+          notify(pin ? 'Announcement pinned to the feed.' : 'News update published.')
+        },
+        () => notify('Could not publish.', 'error'),
+      )
+    },
+    [notify],
+  )
+
+  const unpinAnnouncement = useCallback(
+    (id: string) => {
+      api.unpinPost(id).then(
+        () => {
+          setPosts((list) => list.map((p) => (p.id === id ? { ...p, pinned: undefined } : p)))
+          notify('Announcement unpinned.', 'info')
+        },
+        () => notify('Could not unpin the announcement.', 'error'),
+      )
     },
     [notify],
   )
 
   const approveMentor = useCallback(
     (id: string) => {
-      setUsers((list) => list.map((u) => (u.id === id ? { ...u, isMentor: true, willingToMentor: true, mentorRate: u.mentorRate ?? 1000, sessionsConducted: u.sessionsConducted ?? 0 } : u)))
-      setPendingMentorIds((p) => p.filter((x) => x !== id))
       const u = users.find((x) => x.id === id)
-      notify(`${u?.name ?? 'Alumnus'} approved as a mentor.`)
+      api.approveMentor(id).then(
+        () => {
+          setUsers((list) => list.map((x) => (x.id === id ? { ...x, isMentor: true, willingToMentor: true, mentorRate: x.mentorRate ?? 1000, sessionsConducted: x.sessionsConducted ?? 0 } : x)))
+          setPendingMentorIds((p) => p.filter((x) => x !== id))
+          notify(`${u?.name ?? 'Alumnus'} approved as a mentor.`)
+        },
+        () => notify('Could not approve the application.', 'error'),
+      )
     },
     [notify, users],
   )
 
   const declineMentor = useCallback(
     (id: string) => {
-      setPendingMentorIds((p) => p.filter((x) => x !== id))
       const u = users.find((x) => x.id === id)
-      notify(`${u?.name ?? 'Application'} declined.`, 'info')
+      api.declineMentor(id).then(
+        () => {
+          setPendingMentorIds((p) => p.filter((x) => x !== id))
+          notify(`${u?.name ?? 'Application'} declined.`, 'info')
+        },
+        () => notify('Could not decline the application.', 'error'),
+      )
     },
     [notify, users],
   )
 
-  // ---- notifications -------------------------------------------------------
+  // ---- notifications (RDS-backed) ------------------------------------------
   const unreadNotifications = notifications.filter((n) => !n.read).length
   const markNotificationsRead = useCallback(() => {
+    if (!notifications.some((n) => !n.read)) return
     setNotifications((list) => list.map((n) => ({ ...n, read: true })))
+    api.markAllNotificationsRead().catch(() => {})
+  }, [notifications])
+
+  const markNotificationRead = useCallback((id: string) => {
+    setNotifications((list) => list.map((n) => (n.id === id ? { ...n, read: true } : n)))
+    api.markNotificationRead(id).catch(() => {})
   }, [])
 
-  // ---- messages ------------------------------------------------------------
+  // ---- messages / chats (RDS-backed) --------------------------------------
   const unreadMessages = threads.reduce((sum, t) => sum + t.unread, 0)
-  const sendMessage = useCallback((threadId: string, text: string) => {
-    if (!text.trim()) return
-    setThreads((list) =>
-      list.map((t) =>
-        t.id === threadId
-          ? {
-              ...t,
-              unread: 0,
-              lastMessage: text.trim(),
-              messages: [...t.messages, { id: nextId(), fromMe: true, text: text.trim(), time: 'Now' }],
-            }
-          : t,
-      ),
-    )
+
+  // Skip applying poll results while a send is in flight so a just-sent
+  // message can't briefly vanish (poll snapshot may predate the send).
+  const sendsInFlight = useRef(0)
+
+  const refreshThreads = useCallback(async () => {
+    if (!getToken() || sendsInFlight.current > 0) return
+    try {
+      const fresh = await api.getThreads()
+      if (sendsInFlight.current === 0) setThreads(fresh)
+    } catch {
+      /* transient — next poll retries */
+    }
+  }, [])
+
+  const sendMessage = useCallback(
+    (threadId: string, text: string) => {
+      if (!text.trim()) return
+      sendsInFlight.current++
+      api.sendMessage(threadId, text.trim())
+        .then(
+          (msg) =>
+            setThreads((list) =>
+              list.map((t) =>
+                t.id === threadId
+                  ? { ...t, unread: 0, lastMessage: msg.text, messages: [...t.messages, msg] }
+                  : t,
+              ),
+            ),
+          () => notify('Message failed to send.', 'error'),
+        )
+        .finally(() => {
+          sendsInFlight.current--
+        })
+    },
+    [notify],
+  )
+
+  const markThreadRead = useCallback((threadId: string) => {
+    setThreads((list) => list.map((t) => (t.id === threadId ? { ...t, unread: 0 } : t)))
+    api.markThreadRead(threadId).catch(() => {})
+  }, [])
+
+  // Open (or create) a conversation with a user; returns the thread id.
+  const messageUser = useCallback(async (userId: string) => {
+    const thread = await api.startThread(userId)
+    setThreads((list) => (list.some((t) => t.id === thread.id) ? list : [thread, ...list]))
+    return thread.id
   }, [])
 
   const value: AppContextValue = {
     currentUser,
     isAuthenticated,
-    setAuthenticated,
+    loading,
+    googleReady: !!googleClientId,
+    login,
+    signup,
+    social,
     updateProfile,
-    signIn,
     signOut,
     users,
     userById,
@@ -502,30 +842,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
     sendConnect,
     acceptRequest,
     ignoreRequest,
+    refreshNetwork,
     posts,
     createPost,
     toggleLike,
     toggleSave,
     addComment,
+    applyToJob,
     communities,
     toggleJoin,
     createCommunity,
     sessions,
     bookSession,
+    acceptSession,
+    declineSession,
+    completeSession,
     becomeMentor,
     startups,
     submitStartup,
     pinnedPostIds,
     announce,
+    unpinAnnouncement,
     pendingMentorIds,
     approveMentor,
     declineMentor,
     notifications,
     unreadNotifications,
     markNotificationsRead,
+    markNotificationRead,
     threads,
     unreadMessages,
     sendMessage,
+    markThreadRead,
+    messageUser,
+    refreshThreads,
     query,
     setQuery,
     toasts,

@@ -60,6 +60,7 @@ export interface User {
   isMentor: boolean
   mentorRate?: number // ₹ / hr
   sessionsConducted?: number
+  isAdmin?: boolean
 }
 
 export interface Comment {
@@ -89,8 +90,20 @@ export interface Post {
   // Hiring / role specific
   role?: string
   company?: string
+  appliedByMe?: boolean
+  applicantsCount?: number
   // Pinned Rooman announcement (set from the Admin panel)
   pinned?: boolean
+}
+
+// A member who applied to a Hiring post (poster-only view).
+export interface JobApplicant {
+  id: string
+  name: string
+  designation: string
+  company: string
+  city: string
+  appliedAt: string // ISO
 }
 
 export type CommunityCategory = 'Domain' | 'City' | 'Batch' | 'General'
@@ -104,13 +117,23 @@ export interface Community {
   memberCount: number
   joined: boolean
   color: string // tailwind gradient seed
+  /** pending = awaiting admin acceptance (visible only to its creator). */
+  status?: 'pending' | 'approved' | 'rejected'
+  createdBy?: string
 }
 
-export type SessionStatus = 'upcoming' | 'past'
+// Admin review queue entry.
+export interface PendingCommunity extends Community {
+  creatorName: string
+}
+
+// requested → (mentor accepts) upcoming → (mentor completes) past; or declined.
+export type SessionStatus = 'requested' | 'upcoming' | 'declined' | 'past'
 
 export interface MentorshipSession {
   id: string
   mentorId: string
+  menteeId: string
   menteeName: string
   topic: string
   date: string // human readable
@@ -128,6 +151,14 @@ export interface Startup {
   stage: StartupStage
   teamSize: number
   description: string
+}
+
+// Admin review view: application + founder contact details.
+export interface StartupApplication extends Startup {
+  founderName: string
+  founderEmail: string
+  founderPhone?: string
+  appliedAt: string // ISO
 }
 
 export type NotificationType =

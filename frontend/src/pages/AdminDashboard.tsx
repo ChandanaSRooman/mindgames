@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, CheckCircle2, ExternalLink, Megaphone, Pin, X, XCircle } from 'lucide-react'
-import type { Alumni, ContactRow } from '../types'
+import type { Alumni, ContactRow, PendingCommunity, StartupApplication } from '../types'
 import { api } from '../lib/api'
 import { useApp } from '../store/AppStore'
 import { AdminLayout, type AdminView } from '../components/admin/AdminLayout'
@@ -62,6 +62,7 @@ export function AdminDashboard() {
     >
       {view === 'dashboard' && (
         <div className="space-y-6">
+          <OverviewPanel />
           <div className="grid gap-6 lg:grid-cols-3">
             <Card className="p-5 lg:col-span-2">
               <h2 className="mb-1 text-base font-bold text-[#1c1c1c]">Bulk Upload (CSV)</h2>
@@ -89,26 +90,51 @@ export function AdminDashboard() {
 
       {view === 'mentors' && <MentorApprovalsPanel />}
 
+      {view === 'startups' && <StartupApplicationsPanel />}
+
+      {view === 'communities' && <CommunityApprovalsPanel />}
+
       {view === 'settings' && <SettingsPanel />}
     </AdminLayout>
   )
 }
 
-// Pin announcements to the alumni feed (wired to the app's mock feed/notifications).
+// Publish official Rooman content: pinned announcements (broadcast) or quiet
+// news updates. Only admin-authored posts appear on News & Updates.
 function AnnouncementsPanel() {
-  const { announce, posts, userById } = useApp()
+  const { announce, unpinAnnouncement, posts, userById } = useApp()
   const [text, setText] = useState('')
+  const [mode, setMode] = useState<'announcement' | 'news'>('announcement')
   const pinned = posts.filter((p) => p.pinned)
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <Card className="p-5">
         <h2 className="flex items-center gap-2 text-base font-bold text-[#1c1c1c]">
-          <Megaphone size={18} className="text-[#ff4500]" /> Pin an Announcement
+          <Megaphone size={18} className="text-[#ff4500]" /> Publish to the Network
         </h2>
-        <p className="mb-4 mt-1 text-sm text-[#878a8c]">
-          Posts to the top of every alumnus's feed and sends an announcement notification.
+        <p className="mb-3 mt-1 text-sm text-[#878a8c]">
+          Official content shows on News &amp; Updates. Member posts never do.
         </p>
+
+        {/* Mode */}
+        <div className="mb-3 flex flex-col gap-2">
+          <label className={`flex cursor-pointer items-start gap-2 rounded-lg border p-3 ${mode === 'announcement' ? 'border-[#ff4500] bg-orange-50' : 'border-[#edeff1]'}`}>
+            <input type="radio" className="mt-0.5 accent-[#ff4500]" checked={mode === 'announcement'} onChange={() => setMode('announcement')} />
+            <span>
+              <span className="block text-sm font-semibold text-[#1c1c1c]">📌 Announcement</span>
+              <span className="block text-xs text-[#878a8c]">Pinned to the top of every feed + notification to all members. For important news.</span>
+            </span>
+          </label>
+          <label className={`flex cursor-pointer items-start gap-2 rounded-lg border p-3 ${mode === 'news' ? 'border-[#ff4500] bg-orange-50' : 'border-[#edeff1]'}`}>
+            <input type="radio" className="mt-0.5 accent-[#ff4500]" checked={mode === 'news'} onChange={() => setMode('news')} />
+            <span>
+              <span className="block text-sm font-semibold text-[#1c1c1c]">📰 News update</span>
+              <span className="block text-xs text-[#878a8c]">Appears on News &amp; Updates and in the feed — no pin, no notification blast.</span>
+            </span>
+          </label>
+        </div>
+
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -116,8 +142,13 @@ function AnnouncementsPanel() {
           placeholder="e.g. Alumni Summit 2026 registrations are now open!"
           className="w-full resize-none rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
         />
-        <Button className="mt-3" icon={<Pin size={15} />} disabled={!text.trim()} onClick={() => { announce(text); setText('') }}>
-          Pin to Feed
+        <Button
+          className="mt-3"
+          icon={<Pin size={15} />}
+          disabled={!text.trim()}
+          onClick={() => { announce(text, mode === 'announcement'); setText('') }}
+        >
+          {mode === 'announcement' ? 'Pin Announcement' : 'Publish News Update'}
         </Button>
       </Card>
 
@@ -127,7 +158,15 @@ function AnnouncementsPanel() {
           {pinned.map((p) => (
             <div key={p.id} className="rounded-lg border border-orange-100 bg-orange-50 p-3">
               <p className="text-sm text-[#1c1c1c]">{p.content}</p>
-              <p className="mt-1 text-xs text-[#878a8c]">{userById(p.authorId)?.name} · {timeAgo(p.createdAt)}</p>
+              <div className="mt-1 flex items-center justify-between">
+                <p className="text-xs text-[#878a8c]">{userById(p.authorId)?.name} · {timeAgo(p.createdAt)}</p>
+                <button
+                  onClick={() => unpinAnnouncement(p.id)}
+                  className="text-xs font-semibold text-[#ff4500] hover:underline"
+                >
+                  Unpin
+                </button>
+              </div>
             </div>
           ))}
           {pinned.length === 0 && <p className="text-sm text-[#878a8c]">No announcements pinned yet.</p>}
@@ -139,9 +178,9 @@ function AnnouncementsPanel() {
 
 // Approve / decline alumni who applied to become mentors.
 function MentorApprovalsPanel() {
-  const { pendingMentorIds, userById, approveMentor, declineMentor, users } = useApp()
+  const { pendingMentorIds, userById, approveMentor, declineMentor, users, currentUser } = useApp()
   const pending = pendingMentorIds.map(userById).filter(Boolean) as NonNullable<ReturnType<typeof userById>>[]
-  const activeMentors = users.filter((u) => u.isMentor && u.id !== 'me' && u.id !== 'rooman')
+  const activeMentors = users.filter((u) => u.isMentor && u.id !== currentUser.id && u.id !== 'rooman')
 
   return (
     <div className="flex flex-col gap-6">
@@ -181,6 +220,200 @@ function MentorApprovalsPanel() {
           ))}
         </div>
       </Card>
+    </div>
+  )
+}
+
+type AdminStats = Awaited<ReturnType<typeof api.getAdminStats>>
+
+// Network-wide overview: who joined, engagement, and what needs attention.
+function OverviewPanel() {
+  const [stats, setStats] = useState<AdminStats | null>(null)
+
+  useEffect(() => {
+    api.getAdminStats().then(setStats, () => {})
+  }, [])
+
+  if (!stats) return null
+
+  const tiles: Array<{ label: string; value: string | number; hint?: string }> = [
+    { label: 'Members joined', value: stats.members, hint: `+${stats.membersThisWeek} this week` },
+    { label: 'Invites sent', value: `${stats.invited}/${stats.invitees}`, hint: 'invited / directory' },
+    { label: 'Posts', value: stats.posts, hint: `${stats.comments} comments` },
+    { label: 'Communities', value: stats.communities },
+    { label: 'Sessions', value: stats.sessions.upcoming + stats.sessions.completed, hint: `${stats.sessions.requested} awaiting mentor` },
+    { label: 'Startup applications', value: stats.startups },
+    { label: 'Job applications', value: stats.jobApplications },
+    { label: 'Mentor approvals pending', value: stats.pendingMentorApps },
+  ]
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {tiles.map((t) => (
+          <Card key={t.label} className="p-4">
+            <p className="text-2xl font-extrabold text-[#ff4500]">{t.value}</p>
+            <p className="mt-0.5 text-sm font-medium text-[#1c1c1c]">{t.label}</p>
+            {t.hint && <p className="text-xs text-[#878a8c]">{t.hint}</p>}
+          </Card>
+        ))}
+      </div>
+
+      <Card className="p-5">
+        <h2 className="mb-3 text-base font-bold text-[#1c1c1c]">Recently Joined</h2>
+        <div className="flex flex-col gap-2">
+          {stats.recentMembers.map((m) => (
+            <div key={m.id} className="flex items-center gap-3 rounded-lg border border-[#edeff1] p-2.5">
+              <Avatar name={m.name} size={36} />
+              <div className="min-w-0 flex-1">
+                <Link to={`/profile/${m.id}`} className="text-sm font-semibold text-[#1c1c1c] hover:underline">
+                  {m.name}
+                </Link>
+                <p className="truncate text-xs text-[#878a8c]">
+                  {m.email}{m.city ? ` · ${m.city}` : ''}
+                </p>
+              </div>
+              <span className="text-xs text-[#878a8c]">joined {timeAgo(m.joinedAt)}</span>
+            </div>
+          ))}
+          {stats.recentMembers.length === 0 && (
+            <p className="text-sm text-[#878a8c]">No members yet — send some invites below.</p>
+          )}
+        </div>
+      </Card>
+    </div>
+  )
+}
+
+// Member-created communities awaiting acceptance.
+function CommunityApprovalsPanel() {
+  const { notify } = useApp()
+  const [pending, setPending] = useState<PendingCommunity[] | null>(null)
+
+  useEffect(() => {
+    api.getPendingCommunities().then(setPending, () => setPending([]))
+  }, [])
+
+  function act(id: string, action: 'approve' | 'reject') {
+    const call = action === 'approve' ? api.approveCommunity(id) : api.rejectCommunity(id)
+    call.then(
+      () => {
+        setPending((list) => (list ?? []).filter((c) => c.id !== id))
+        notify(action === 'approve' ? 'Community approved — it is now live.' : 'Community request declined.', action === 'approve' ? 'success' : 'info')
+      },
+      () => notify('Could not update the community.', 'error'),
+    )
+  }
+
+  if (pending === null) return <p className="text-sm text-[#878a8c]">Loading pending communities…</p>
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card className="p-5">
+        <h2 className="text-base font-bold text-[#1c1c1c]">Pending Communities ({pending.length})</h2>
+        <p className="mt-1 text-sm text-[#878a8c]">
+          Member-created communities go live only after your approval. Creators are notified either way.
+        </p>
+      </Card>
+
+      {pending.map((c) => (
+        <Card key={c.id} className="p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className={`flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br ${c.color} text-lg font-black text-white`}>
+                {c.name[0]}
+              </span>
+              <div>
+                <p className="font-bold text-[#1c1c1c]">{c.name}</p>
+                <p className="text-xs text-[#878a8c]">{c.category} · #{c.tag} · requested by {c.creatorName}</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button className="!px-4 !py-2 text-xs" onClick={() => act(c.id, 'approve')}>
+                <Check size={14} /> Approve
+              </Button>
+              <Button variant="subtle" className="!px-4 !py-2 text-xs" onClick={() => act(c.id, 'reject')}>
+                <X size={14} /> Decline
+              </Button>
+            </div>
+          </div>
+          <p className="mt-3 text-sm text-[#1c1c1c]">{c.description}</p>
+        </Card>
+      ))}
+      {pending.length === 0 && (
+        <Card className="py-12 text-center text-sm text-[#878a8c]">No pending communities. 🎉</Card>
+      )}
+    </div>
+  )
+}
+
+// StartupVarsity applications with founder contact details for follow-up.
+function StartupApplicationsPanel() {
+  const [apps, setApps] = useState<StartupApplication[] | null>(null)
+
+  useEffect(() => {
+    api.getStartupApplications().then(setApps, () => setApps([]))
+  }, [])
+
+  if (apps === null) return <p className="text-sm text-[#878a8c]">Loading applications…</p>
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card className="p-5">
+        <h2 className="text-base font-bold text-[#1c1c1c]">
+          StartupVarsity Applications ({apps.length})
+        </h2>
+        <p className="mt-1 text-sm text-[#878a8c]">
+          Ideas submitted from the network. Reach out to founders directly, or process them at{' '}
+          <a href="https://www.startupvarsity.com" target="_blank" rel="noopener noreferrer" className="font-medium text-[#ff4500] hover:underline">
+            startupvarsity.com
+          </a>.
+        </p>
+      </Card>
+
+      {apps.map((a) => (
+        <Card key={a.id} className="p-5">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="text-lg font-bold text-[#1c1c1c]">{a.name}</p>
+              <p className="text-xs text-[#878a8c]">
+                {a.domain} · {a.stage} · team of {a.teamSize} · applied {timeAgo(a.appliedAt)}
+              </p>
+            </div>
+            <span className="rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-semibold text-purple-700">{a.stage}</span>
+          </div>
+          <p className="mt-3 text-sm text-[#1c1c1c]">{a.description}</p>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#edeff1] pt-3">
+            <div className="flex items-center gap-2">
+              <Avatar name={a.founderName} size={36} />
+              <div>
+                <p className="text-sm font-semibold text-[#1c1c1c]">{a.founderName}</p>
+                <p className="text-xs text-[#878a8c]">
+                  {a.founderEmail}
+                  {a.founderPhone ? ` · ${a.founderPhone}` : ''}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <a
+                href={`mailto:${a.founderEmail}?subject=${encodeURIComponent(`StartupVarsity — ${a.name}`)}`}
+                className="rounded-full border border-[#edeff1] px-4 py-2 text-sm font-semibold text-[#1c1c1c] hover:border-[#ff4500] hover:text-[#ff4500]"
+              >
+                Email founder
+              </a>
+              <Link
+                to={`/profile/${a.founderId}`}
+                className="rounded-full bg-[#ff4500] px-4 py-2 text-sm font-semibold text-white hover:bg-[#ff6534]"
+              >
+                View profile
+              </Link>
+            </div>
+          </div>
+        </Card>
+      ))}
+      {apps.length === 0 && (
+        <Card className="py-12 text-center text-sm text-[#878a8c]">No applications yet.</Card>
+      )}
     </div>
   )
 }
@@ -244,20 +477,38 @@ function PreviewTable({
 }
 
 function SettingsPanel() {
+  const [integrations, setIntegrations] = useState<{ google: boolean; smtp: boolean; ai: boolean } | null>(null)
+
+  useEffect(() => {
+    api.getAdminStats().then((s) => setIntegrations(s.integrations), () => {})
+  }, [])
+
   return (
     <div className="space-y-6">
       <Card className="p-6">
-        <h2 className="mb-1 text-base font-bold text-[#1c1c1c]">Network Settings</h2>
-        <p className="text-sm text-[#878a8c]">Configuration placeholders — wired for demo purposes.</p>
-        <div className="mt-5 space-y-4">
-          {['Allow public profile discovery', 'Auto-approve incubation applicants', 'Send weekly digest emails'].map(
-            (label, i) => (
-              <label key={label} className="flex items-center justify-between rounded-lg border border-[#edeff1] bg-[#f6f7f8] px-4 py-3">
-                <span className="text-sm text-[#1c1c1c]">{label}</span>
-                <input type="checkbox" defaultChecked={i === 0} className="h-5 w-5 cursor-pointer rounded accent-[#ff4500]" />
-              </label>
-            ),
-          )}
+        <h2 className="mb-1 text-base font-bold text-[#1c1c1c]">Integrations</h2>
+        <p className="text-sm text-[#878a8c]">
+          Configured via <code className="rounded bg-[#f6f7f8] px-1">backend/.env</code> — restart the API after changes.
+        </p>
+        <div className="mt-5 space-y-3">
+          <IntegrationRow
+            label="Google sign-in"
+            ok={!!integrations?.google}
+            okText="Live — real Google OAuth"
+            offText="Demo mode — set GOOGLE_CLIENT_ID to enable"
+          />
+          <IntegrationRow
+            label="Invite emails (SMTP)"
+            ok={!!integrations?.smtp}
+            okText="Live — real email"
+            offText="Simulated — set SMTP_HOST/USER/PASS to send real email"
+          />
+          <IntegrationRow
+            label="AI resume parsing (Claude)"
+            ok={!!integrations?.ai}
+            okText="Live — Claude parsing"
+            offText="Mock result — set ANT_KEY to enable"
+          />
         </div>
       </Card>
       <Card className="p-6">
@@ -267,6 +518,17 @@ function SettingsPanel() {
           Open invitation page <ExternalLink size={15} />
         </Link>
       </Card>
+    </div>
+  )
+}
+
+function IntegrationRow({ label, ok, okText, offText }: { label: string; ok: boolean; okText: string; offText: string }) {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-[#edeff1] px-4 py-3">
+      <span className="text-sm font-medium text-[#1c1c1c]">{label}</span>
+      <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${ok ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+        {ok ? okText : offText}
+      </span>
     </div>
   )
 }

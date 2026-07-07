@@ -27,18 +27,21 @@ function toBase64(file: File): Promise<string> {
 }
 
 export function Onboarding() {
-  const { updateProfile, setAuthenticated, notify } = useApp()
+  const { updateProfile, notify, currentUser } = useApp()
   const navigate = useNavigate()
   const fileRef = useRef<HTMLInputElement>(null)
 
   const [step, setStep] = useState(0)
   const [photo, setPhoto] = useState<string>()
+  const [saving, setSaving] = useState(false)
   const [parsing, setParsing] = useState(false)
 
   const [form, setForm] = useState({
-    name: '',
-    email: '',
-    phone: '',
+    // Prefilled from the account created at signup. Email is the login
+    // identity and can't be changed here.
+    name: currentUser.name === 'You' ? '' : currentUser.name,
+    email: currentUser.email,
+    phone: currentUser.phone ?? '',
     batchYear: '',
     course: '',
     company: '',
@@ -89,31 +92,36 @@ export function Onboarding() {
     return true
   }
 
-  function finish() {
-    updateProfile({
-      name: form.name || 'You',
-      email: form.email,
-      phone: form.phone,
-      batchYear: Number(form.batchYear) || new Date().getFullYear(),
-      course: form.course,
-      company: form.company,
-      designation: form.designation,
-      experienceYears: Number(form.experienceYears) || 0,
-      domain: (form.domain || 'Web Dev') as Domain,
-      employmentType: (form.employmentType || 'Employed') as EmploymentType,
-      linkedin: form.linkedin,
-      bio: form.bio || 'Rooman alumnus.',
-      city: form.city,
-      willingToMentor: form.willingToMentor,
-      interestedInStartup: form.interestedInStartup,
-      isMentor: form.willingToMentor,
-      expertise: form.expertise
-        ? form.expertise.split(',').map((s) => s.trim()).filter(Boolean)
-        : ['Rooman Alumni'],
-    })
-    setAuthenticated(true)
-    notify('Welcome to the Rooman Alumni Network! 🎉')
-    navigate('/home')
+  async function finish() {
+    setSaving(true)
+    try {
+      await updateProfile({
+        name: form.name || 'You',
+        phone: form.phone,
+        batchYear: Number(form.batchYear) || new Date().getFullYear(),
+        course: form.course,
+        company: form.company,
+        designation: form.designation,
+        experienceYears: Number(form.experienceYears) || 0,
+        domain: (form.domain || 'Web Dev') as Domain,
+        employmentType: (form.employmentType || 'Employed') as EmploymentType,
+        linkedin: form.linkedin,
+        bio: form.bio || 'Rooman alumnus.',
+        city: form.city,
+        willingToMentor: form.willingToMentor,
+        interestedInStartup: form.interestedInStartup,
+        isMentor: form.willingToMentor,
+        ...(form.willingToMentor ? { sessionsConducted: 0 } : {}),
+        expertise: form.expertise
+          ? form.expertise.split(',').map((s) => s.trim()).filter(Boolean)
+          : ['Rooman Alumni'],
+      })
+      notify('Welcome to the Rooman Alumni Network! 🎉')
+      navigate('/home')
+    } catch {
+      notify('Could not save your profile. Please try again.', 'error')
+      setSaving(false)
+    }
   }
 
   const next = () => (step < STEPS.length - 1 ? setStep((s) => s + 1) : finish())
@@ -140,7 +148,16 @@ export function Onboarding() {
         {step === 0 && (
           <div className="flex flex-col gap-3">
             <Field label="Full Name" value={form.name} onChange={(v) => set('name', v)} placeholder="Aarav Sharma" />
-            <Field label="Email" value={form.email} onChange={(v) => set('email', v)} placeholder="you@example.com" type="email" />
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[#1c1c1c]">Email</label>
+              <input
+                type="email"
+                value={form.email}
+                disabled
+                className="w-full cursor-not-allowed rounded-lg border border-[#edeff1] bg-[#f6f7f8] px-3 py-2 text-sm text-[#878a8c]"
+              />
+              <p className="mt-1 text-xs text-[#878a8c]">This is your sign-in email (set at signup).</p>
+            </div>
             <Field label="Phone" value={form.phone} onChange={(v) => set('phone', v)} placeholder="+91 …" />
             <div className="grid grid-cols-2 gap-3">
               <Field label="Batch Year" value={form.batchYear} onChange={(v) => set('batchYear', v.replace(/\D/g, '').slice(0, 4))} placeholder="2019" />
@@ -242,11 +259,11 @@ export function Onboarding() {
           </button>
           <button
             onClick={next}
-            disabled={!canNext()}
+            disabled={!canNext() || saving}
             className="flex items-center gap-2 rounded-full bg-[#ff4500] px-6 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#ff6534] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {step === STEPS.length - 1 ? (
-              <>Finish <Check size={16} /></>
+              <>{saving ? 'Saving…' : 'Finish'} <Check size={16} /></>
             ) : (
               <>Continue <ArrowRight size={16} /></>
             )}

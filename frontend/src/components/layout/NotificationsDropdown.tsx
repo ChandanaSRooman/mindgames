@@ -1,7 +1,8 @@
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   Bell,
   Briefcase,
+  CheckCheck,
   Heart,
   MessageCircle,
   Megaphone,
@@ -22,25 +23,48 @@ const ICONS: Record<NotificationType, typeof Bell> = {
   announcement: Megaphone,
 }
 
+// Where each notification type takes you when clicked.
+export const NOTIFICATION_ROUTES: Record<NotificationType, string> = {
+  connection: '/network',
+  like: '/home',
+  comment: '/home',
+  job: '/jobs',
+  mentorship: '/mentorship',
+  community: '/explore',
+  announcement: '/home',
+}
+
 export function NotificationsDropdown({ onClose }: { onClose: () => void }) {
-  const { notifications, markNotificationsRead } = useApp()
-  const recent = notifications.slice(0, 5)
+  const { notifications, markNotificationsRead, markNotificationRead } = useApp()
+  const navigate = useNavigate()
+
+  // The bell shows only what still needs attention; history lives on /notifications.
+  const unread = notifications.filter((n) => !n.read).slice(0, 8)
+
+  function open(id: string, type: NotificationType) {
+    markNotificationRead(id)
+    onClose()
+    navigate(NOTIFICATION_ROUTES[type])
+  }
 
   return (
     <div className="animate-fadein absolute right-0 mt-2 w-80 overflow-hidden rounded-xl border border-[#edeff1] bg-white shadow-lg">
       <div className="flex items-center justify-between border-b border-[#edeff1] px-4 py-3">
         <h3 className="font-bold text-[#1c1c1c]">Notifications</h3>
-        <button onClick={markNotificationsRead} className="text-xs font-semibold text-[#ff4500] hover:underline">
-          Mark all read
-        </button>
+        {unread.length > 0 && (
+          <button onClick={markNotificationsRead} className="text-xs font-semibold text-[#ff4500] hover:underline">
+            Mark all read
+          </button>
+        )}
       </div>
       <div className="max-h-96 overflow-y-auto">
-        {recent.map((n) => {
+        {unread.map((n) => {
           const Icon = ICONS[n.type]
           return (
-            <div
+            <button
               key={n.id}
-              className={`flex gap-3 px-4 py-3 hover:bg-gray-50 ${n.read ? '' : 'bg-orange-50/60'}`}
+              onClick={() => open(n.id, n.type)}
+              className="flex w-full gap-3 bg-orange-50/60 px-4 py-3 text-left hover:bg-orange-50"
             >
               <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-orange-100 text-[#ff4500]">
                 <Icon size={16} />
@@ -49,9 +73,15 @@ export function NotificationsDropdown({ onClose }: { onClose: () => void }) {
                 <p className="text-sm text-[#1c1c1c]">{n.text}</p>
                 <p className="mt-0.5 text-xs text-[#878a8c]">{timeAgo(n.createdAt)}</p>
               </div>
-            </div>
+            </button>
           )
         })}
+        {unread.length === 0 && (
+          <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
+            <CheckCheck size={22} className="text-green-600" />
+            <p className="text-sm text-[#878a8c]">You're all caught up.</p>
+          </div>
+        )}
       </div>
       <Link
         to="/notifications"

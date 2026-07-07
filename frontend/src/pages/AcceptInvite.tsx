@@ -1,14 +1,13 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { GraduationCap, Briefcase, Rocket, ShieldCheck } from 'lucide-react'
-import { api } from '../lib/api'
 import { useApp } from '../store/AppStore'
 import { isValidEmail } from '../lib/csv'
 import { Button, Card } from '../components/ui'
 import { GoogleIcon, LinkedInIcon } from '../components/icons/Brand'
 
-// NOTE: Restyled to the light RooConnect theme. The auth/invite LOGIC FLOW
-// (api.social / api.signup / validation / navigation) is unchanged.
+// Real signup: creates a Postgres-backed account + JWT session via the store,
+// then continues to onboarding. Social buttons use simulated OAuth (see backend).
 
 const BENEFITS = [
   { icon: <Briefcase size={18} />, title: 'Paid Mentorship', desc: 'Earn by guiding juniors, or get matched with a senior mentor.' },
@@ -18,7 +17,7 @@ const BENEFITS = [
 
 export function AcceptInvite() {
   const navigate = useNavigate()
-  const { notify, signIn } = useApp()
+  const { notify, signup, social: socialSignup, googleReady } = useApp()
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -28,8 +27,7 @@ export function AcceptInvite() {
   async function social(provider: 'google' | 'linkedin') {
     setLoading(provider)
     try {
-      await api.social(provider)
-      signIn(provider)
+      await socialSignup(provider)
       notify(`Signed up with ${provider === 'google' ? 'Google' : 'LinkedIn'}.`, 'success')
       navigate('/onboarding')
     } catch {
@@ -46,11 +44,10 @@ export function AcceptInvite() {
     setError(null)
     setLoading('email')
     try {
-      await api.signup(email, password)
-      signIn('email', email, fullName)
+      await signup(fullName, email, password)
       navigate('/onboarding')
-    } catch {
-      notify('Sign-up failed. Try again.', 'error')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign-up failed. Try again.')
       setLoading(null)
     }
   }
@@ -115,6 +112,12 @@ export function AcceptInvite() {
               >
                 Sign up with LinkedIn
               </Button>
+              {!googleReady && (
+                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  Social sign-up is in <strong>demo mode</strong> — it uses a shared demo
+                  account. To create <em>your own</em> account, use the email form below.
+                </p>
+              )}
             </div>
 
             <div className="my-6 flex items-center gap-3 text-xs text-[#878a8c]">
@@ -135,6 +138,12 @@ export function AcceptInvite() {
 
             <p className="mt-4 text-center text-xs text-[#878a8c]">
               By continuing you agree to the network's community guidelines.
+            </p>
+            <p className="mt-3 text-center text-sm text-[#878a8c]">
+              Already have an account?{' '}
+              <Link to="/login" className="font-semibold text-[#ff4500] hover:underline">
+                Sign in
+              </Link>
             </p>
           </Card>
         </div>

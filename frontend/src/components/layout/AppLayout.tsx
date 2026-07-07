@@ -12,17 +12,18 @@ export function AppLayout() {
   const [composer, setComposer] = useState<{ open: boolean; type?: PostType; communityId?: string }>({
     open: false,
   })
-  const [chatOpen, setChatOpen] = useState(false)
+  const [chat, setChat] = useState<{ open: boolean; userId?: string }>({ open: false })
 
   const openComposer = useCallback(
     (prefill?: { type?: PostType; communityId?: string }) =>
       setComposer({ open: true, type: prefill?.type, communityId: prefill?.communityId }),
     [],
   )
-  const toggleChat = useCallback(() => setChatOpen((v) => !v), [])
+  const toggleChat = useCallback(() => setChat((c) => ({ open: !c.open })), [])
+  const openChatWith = useCallback((userId: string) => setChat({ open: true, userId }), [])
 
   return (
-    <LayoutContext.Provider value={{ openComposer, toggleChat }}>
+    <LayoutContext.Provider value={{ openComposer, toggleChat, openChatWith }}>
       <Navbar />
       <LeftSidebar />
       <RightSidebar />
@@ -39,7 +40,9 @@ export function AppLayout() {
           onClose={() => setComposer({ open: false })}
         />
       )}
-      {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
+      {chat.open && (
+        <ChatPanel initialUserId={chat.userId} onClose={() => setChat({ open: false })} />
+      )}
     </LayoutContext.Provider>
   )
 }

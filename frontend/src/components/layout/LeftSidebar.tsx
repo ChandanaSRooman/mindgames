@@ -7,6 +7,7 @@ import {
   Newspaper,
   Plus,
   Rocket,
+  ShieldCheck,
   Users,
 } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
@@ -22,7 +23,7 @@ const NAV = [
 ]
 
 export function LeftSidebar() {
-  const { communities } = useApp()
+  const { communities, currentUser } = useApp()
   const navigate = useNavigate()
   const joined = communities.filter((c) => c.joined)
 
@@ -57,6 +58,17 @@ export function LeftSidebar() {
           <Plus size={20} className="text-[#878a8c]" />
           Start a Community
         </button>
+
+        {/* Console entry — admins only */}
+        {currentUser.isAdmin && (
+          <NavLink
+            to="/admin"
+            className="mt-1 flex items-center gap-3 rounded-lg border-l-[3px] border-transparent bg-orange-50/60 px-3 py-2 text-sm font-semibold text-[#ff4500] hover:bg-orange-50"
+          >
+            <ShieldCheck size={20} />
+            Admin Console
+          </NavLink>
+        )}
       </nav>
 
       <div className="my-4 border-t border-[#edeff1]" />

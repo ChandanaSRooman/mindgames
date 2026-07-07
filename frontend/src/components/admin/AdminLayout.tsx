@@ -1,15 +1,17 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { LayoutDashboard, Users, Megaphone, GraduationCap, Settings, ArrowLeft } from 'lucide-react'
+import { Compass, LayoutDashboard, Users, Megaphone, GraduationCap, Rocket, Settings, ArrowLeft } from 'lucide-react'
 import { cx } from '../ui'
 
-export type AdminView = 'dashboard' | 'directory' | 'announcements' | 'mentors' | 'settings'
+export type AdminView = 'dashboard' | 'directory' | 'announcements' | 'mentors' | 'startups' | 'communities' | 'settings'
 
 const NAV: Array<{ key: AdminView; label: string; icon: ReactNode }> = [
   { key: 'dashboard', label: 'Invitations', icon: <LayoutDashboard size={18} /> },
   { key: 'directory', label: 'Alumni Directory', icon: <Users size={18} /> },
-  { key: 'announcements', label: 'Announcements', icon: <Megaphone size={18} /> },
+  { key: 'announcements', label: 'News & Announcements', icon: <Megaphone size={18} /> },
   { key: 'mentors', label: 'Mentor Approvals', icon: <GraduationCap size={18} /> },
+  { key: 'startups', label: 'Startup Applications', icon: <Rocket size={18} /> },
+  { key: 'communities', label: 'Community Approvals', icon: <Compass size={18} /> },
   { key: 'settings', label: 'Settings', icon: <Settings size={18} /> },
 ]
 

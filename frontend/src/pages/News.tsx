@@ -6,15 +6,16 @@ import { PostCard } from '../components/feed/PostCard'
 import { roomanStats } from '../data/mockData'
 
 export function News() {
-  const { posts } = useApp()
+  const { posts, userById } = useApp()
 
-  // News feed = official Rooman posts + general "Update" achievements.
+  // News & Updates = OFFICIAL content only: posts authored by admin accounts
+  // (pinned announcements + news updates). Member posts live on the Home feed.
   const news = useMemo(
     () =>
       posts
-        .filter((p) => p.pinned || p.authorId === 'rooman' || p.type === 'Update' || p.type === 'StartupVarsity')
+        .filter((p) => p.authorId === 'rooman' || userById(p.authorId)?.isAdmin)
         .sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false) || +new Date(b.createdAt) - +new Date(a.createdAt)),
-    [posts],
+    [posts, userById],
   )
 
   return (

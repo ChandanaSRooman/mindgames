@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Bell,
   Briefcase,
@@ -9,6 +10,7 @@ import {
   Users,
 } from 'lucide-react'
 import { useApp } from '../store/AppStore'
+import { NOTIFICATION_ROUTES } from '../components/layout/NotificationsDropdown'
 import { Avatar, Button, Card } from '../components/ui'
 import { timeAgo } from '../lib/format'
 import type { NotificationType } from '../types'
@@ -25,6 +27,7 @@ const ICONS: Record<NotificationType, typeof Bell> = {
 
 export function Notifications() {
   const { notifications, markNotificationsRead, userById, pendingRequestIds, acceptRequest, ignoreRequest } = useApp()
+  const navigate = useNavigate()
 
   // Mark everything read once the page is opened.
   useEffect(() => {
@@ -68,10 +71,16 @@ export function Notifications() {
           return (
             <div
               key={n.id}
-              className={`flex gap-3 px-4 py-3.5 ${i < notifications.length - 1 ? 'border-b border-[#edeff1]' : ''}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => navigate(NOTIFICATION_ROUTES[n.type])}
+              onKeyDown={(e) => e.key === 'Enter' && navigate(NOTIFICATION_ROUTES[n.type])}
+              className={`flex cursor-pointer gap-3 px-4 py-3.5 hover:bg-gray-50 ${i < notifications.length - 1 ? 'border-b border-[#edeff1]' : ''}`}
             >
               {actor ? (
-                <Avatar name={actor.name} size={40} to={`/profile/${actor.id}`} />
+                <span onClick={(e) => e.stopPropagation()}>
+                  <Avatar name={actor.name} size={40} to={`/profile/${actor.id}`} />
+                </span>
               ) : (
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-100 text-[#ff4500]">
                   <Icon size={18} />
