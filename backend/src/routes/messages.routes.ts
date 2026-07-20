@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { query } from '../db/pool.js'
 import { requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
+import { emitTo } from '../realtime.js'
 import { formatMsgTime } from '../mappers.js'
 
 export const messagesRouter = Router()
@@ -151,6 +152,16 @@ messagesRouter.post(
        ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = now()`,
       [convId, me],
     )
+    // Poke the other participant's open tabs so the chat updates instantly.
+    const conv = await query<{ user_lo: string; user_hi: string }>(
+      `SELECT user_lo, user_hi FROM conversations WHERE id = $1`,
+      [convId],
+    )
+    if (conv.rowCount) {
+      const other = conv.rows[0].user_lo === me ? conv.rows[0].user_hi : conv.rows[0].user_lo
+      emitTo(other, 'message')
+    }
+
     res.status(201).json({
       id: ins.rows[0].id,
       fromMe: true,

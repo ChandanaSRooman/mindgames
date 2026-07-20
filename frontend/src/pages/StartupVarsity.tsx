@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Building2, ExternalLink, FlaskConical, Rocket, Users2, Wallet } from 'lucide-react'
+import { Building2, ExternalLink, FlaskConical, Globe, Lock, Rocket, Users2, Wallet } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { Avatar, Button, Card, SectionTitle } from '../components/ui'
 import { DOMAINS, type Domain, type StartupStage } from '../types'
@@ -20,6 +20,7 @@ const STAGE_STYLES: Record<StartupStage, string> = {
 export function StartupVarsity() {
   const { startups, userById, submitStartup } = useApp()
   const [form, setForm] = useState({ name: '', domain: '' as Domain | '', stage: '' as StartupStage | '', teamSize: '', description: '' })
+  const [visibility, setVisibility] = useState<'network' | 'admin'>('network')
   const [shareToFeed, setShareToFeed] = useState(true)
 
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }))
@@ -34,10 +35,13 @@ export function StartupVarsity() {
         stage: form.stage as StartupStage,
         teamSize: Number(form.teamSize) || 1,
         description: form.description,
+        visibility,
       },
-      shareToFeed,
+      // A confidential application is never shared to the feed.
+      visibility === 'network' && shareToFeed,
     )
     setForm({ name: '', domain: '', stage: '', teamSize: '', description: '' })
+    setVisibility('network')
   }
 
   return (
@@ -87,15 +91,61 @@ export function StartupVarsity() {
           </select>
         </div>
         <textarea value={form.description} onChange={(e) => set('description', e.target.value)} rows={3} placeholder="Describe your idea…" className="mt-3 w-full resize-none rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]" />
-        <label className="mt-3 flex items-center gap-2 text-sm text-[#1c1c1c]">
-          <input
-            type="checkbox"
-            className="h-4 w-4 accent-[#ff4500]"
-            checked={shareToFeed}
-            onChange={(e) => setShareToFeed(e.target.checked)}
-          />
-          Also share my idea as a post so the network can see it
-        </label>
+        {/* Who can see the idea */}
+        <div className="mt-4">
+          <p className="mb-1.5 text-sm font-semibold text-[#1c1c1c]">Who can see this idea?</p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              onClick={() => setVisibility('network')}
+              className={`flex flex-1 items-start gap-2.5 rounded-xl border p-3 text-left transition-colors ${
+                visibility === 'network'
+                  ? 'border-[#ff4500] bg-orange-50'
+                  : 'border-[#edeff1] hover:bg-gray-50'
+              }`}
+            >
+              <Globe size={18} className={visibility === 'network' ? 'mt-0.5 text-[#ff4500]' : 'mt-0.5 text-[#878a8c]'} />
+              <span>
+                <span className="block text-sm font-semibold text-[#1c1c1c]">Everyone in the network</span>
+                <span className="block text-xs text-[#878a8c]">
+                  Listed under "Startups from the Network" for all alumni.
+                </span>
+              </span>
+            </button>
+            <button
+              onClick={() => setVisibility('admin')}
+              className={`flex flex-1 items-start gap-2.5 rounded-xl border p-3 text-left transition-colors ${
+                visibility === 'admin'
+                  ? 'border-[#ff4500] bg-orange-50'
+                  : 'border-[#edeff1] hover:bg-gray-50'
+              }`}
+            >
+              <Lock size={18} className={visibility === 'admin' ? 'mt-0.5 text-[#ff4500]' : 'mt-0.5 text-[#878a8c]'} />
+              <span>
+                <span className="block text-sm font-semibold text-[#1c1c1c]">Only Rooman admins</span>
+                <span className="block text-xs text-[#878a8c]">
+                  Confidential — reviewed by the StartupVarsity team; hidden from other alumni.
+                </span>
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {visibility === 'network' ? (
+          <label className="mt-3 flex items-center gap-2 text-sm text-[#1c1c1c]">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-[#ff4500]"
+              checked={shareToFeed}
+              onChange={(e) => setShareToFeed(e.target.checked)}
+            />
+            Also share my idea as a post so the network can see it
+          </label>
+        ) : (
+          <p className="mt-3 flex items-center gap-1.5 text-xs text-[#878a8c]">
+            <Lock size={13} /> Your idea stays between you and the Rooman admins. It won't appear
+            in the startup list or the feed.
+          </p>
+        )}
         <Button className="mt-3" disabled={!canSubmit} onClick={submit}>Submit Application</Button>
       </Card>
 
@@ -107,6 +157,11 @@ export function StartupVarsity() {
             const founder = userById(s.founderId)
             return (
               <Card key={s.id} className="p-5">
+                {s.visibility === 'admin' && (
+                  <p className="mb-2 flex items-center gap-1.5 rounded-lg bg-[#f6f7f8] px-2.5 py-1.5 text-xs font-medium text-[#878a8c]">
+                    <Lock size={12} /> Private — only you and Rooman admins can see this.
+                  </p>
+                )}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-100 text-purple-700">
@@ -122,7 +177,7 @@ export function StartupVarsity() {
                 <p className="mt-3 text-sm text-[#1c1c1c]">{s.description}</p>
                 <div className="mt-4 flex items-center justify-between border-t border-[#edeff1] pt-3">
                   <Link to={`/profile/${founder?.id}`} className="flex items-center gap-2 text-sm hover:underline">
-                    <Avatar name={founder?.name ?? '?'} size={28} />
+                    <Avatar name={founder?.name ?? '?'} src={founder?.photo} size={28} />
                     <span className="text-[#878a8c]">{founder?.name}</span>
                   </Link>
                   <span className="flex items-center gap-1 text-xs text-[#878a8c]"><Users2 size={14} /> {s.teamSize} members</span>

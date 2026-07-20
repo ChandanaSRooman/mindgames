@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { GraduationCap } from 'lucide-react'
 import { useApp } from '../store/AppStore'
+import { needsOnboarding, type User } from '../types'
 import { isValidEmail } from '../lib/csv'
 import { Button, Card } from '../components/ui'
 import { GoogleIcon, LinkedInIcon } from '../components/icons/Brand'
@@ -16,11 +17,19 @@ export function Login() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState<'google' | 'linkedin' | 'email' | null>(null)
 
+  // Admins land on the console; members with unfinished setup resume the
+  // onboarding wizard; everyone else lands on their feed.
+  function landingRoute(user: User): string {
+    if (user.isAdmin) return '/admin'
+    if (needsOnboarding(user)) return '/onboarding'
+    return '/home'
+  }
+
   async function social(provider: 'google' | 'linkedin') {
     setLoading(provider)
     try {
       const user = await socialLogin(provider)
-      navigate(user.isAdmin ? '/admin' : '/home')
+      navigate(landingRoute(user))
     } catch {
       notify('Sign-in failed. Try again.', 'error')
       setLoading(null)
@@ -35,8 +44,7 @@ export function Login() {
     setLoading('email')
     try {
       const user = await login(email, password)
-      // Admins land on the console; members land on their feed.
-      navigate(user.isAdmin ? '/admin' : '/home')
+      navigate(landingRoute(user))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign-in failed. Try again.')
       setLoading(null)
@@ -96,6 +104,11 @@ export function Login() {
           <input className={field} type="email" placeholder="Email address" value={email} onChange={(e) => setEmail(e.target.value)} />
           <input className={field} type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
           {error && <p className="text-sm text-red-500">{error}</p>}
+          <div className="flex justify-end">
+            <Link to="/forgot-password" className="text-xs font-semibold text-[#ff4500] hover:underline">
+              Forgot password?
+            </Link>
+          </div>
           <Button type="submit" className="w-full" loading={loading === 'email'}>
             Sign in
           </Button>

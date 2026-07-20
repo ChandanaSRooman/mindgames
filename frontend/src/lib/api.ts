@@ -1,6 +1,8 @@
 import type {
   Alumni,
+  AppEvent,
   AppNotification,
+  Badge,
   Comment,
   Community,
   ContactRow,
@@ -8,6 +10,7 @@ import type {
   MentorshipSession,
   MessageThread,
   PendingCommunity,
+  PendingEvent,
   Post,
   ResumeParseResult,
   Startup,
@@ -99,6 +102,27 @@ export const api = {
 
   me: () => http<{ user: User }>('/api/auth/me').then((r) => r.user),
 
+  forgotPassword: (email: string) =>
+    http<{ ok: boolean; message: string; devResetLink?: string }>('/api/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+  resetPassword: (token: string, password: string) =>
+    http<{ ok: boolean }>('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
+    }),
+  verifyEmail: (token: string) =>
+    http<{ ok: boolean }>('/api/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    }),
+  resendVerification: () =>
+    http<{ ok: boolean; alreadyVerified?: boolean; devVerifyLink?: string }>(
+      '/api/auth/resend-verification',
+      { method: 'POST' },
+    ),
+
   changePassword: (currentPassword: string, newPassword: string) =>
     http<{ ok: boolean }>('/api/auth/change-password', {
       method: 'POST',
@@ -115,6 +139,8 @@ export const api = {
   getFeed: () => http<Post[]>('/api/posts'),
   createPost: (input: Partial<Post>) =>
     http<Post>('/api/posts', { method: 'POST', body: JSON.stringify(input) }),
+  updatePost: (id: string, patch: Partial<Post>) =>
+    http<Post>(`/api/posts/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   likePost: (id: string) =>
     http<{ likes: number; likedByMe: boolean }>(`/api/posts/${id}/like`, { method: 'POST' }),
   unlikePost: (id: string) =>
@@ -130,11 +156,28 @@ export const api = {
     }),
 
   // jobs (Hiring posts)
-  applyToJob: (postId: string) =>
+  applyToJob: (
+    postId: string,
+    answers?: string[],
+    resume?: { name: string; dataBase64: string; mediaType: string },
+  ) =>
     http<{ applied: boolean; applicantsCount: number }>(`/api/posts/${postId}/apply`, {
       method: 'POST',
+      body: JSON.stringify({ answers: answers ?? [], resume }),
     }),
   getApplicants: (postId: string) => http<JobApplicant[]>(`/api/posts/${postId}/applicants`),
+  // Binary download — bypasses the JSON helper; caller turns the blob into a file.
+  downloadApplicantResume: async (postId: string, applicantId: string): Promise<Blob> => {
+    const token = getToken()
+    const res = await fetch(`/api/posts/${postId}/applicants/${applicantId}/resume`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.error || `Download failed (${res.status})`)
+    }
+    return res.blob()
+  },
 
   // connections
   getConnections: () => http<ConnectionGraph>('/api/connections'),
@@ -181,8 +224,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ mentorId, topic, date, time }),
     }),
-  acceptSession: (id: string) =>
-    http<MentorshipSession>(`/api/mentorship/sessions/${id}/accept`, { method: 'POST' }),
+  acceptSession: (id: string, meetingLink?: string) =>
+    http<MentorshipSession>(`/api/mentorship/sessions/${id}/accept`, {
+      method: 'POST',
+      body: JSON.stringify({ meetingLink }),
+    }),
+  rateSession: (id: string, rating: number, review?: string) =>
+    http<MentorshipSession>(`/api/mentorship/sessions/${id}/rate`, {
+      method: 'POST',
+      body: JSON.stringify({ rating, review }),
+    }),
+  getMentorRatings: () =>
+    http<Array<{ mentorId: string; avg: number; count: number }>>('/api/mentorship/ratings'),
   declineSession: (id: string) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/decline`, { method: 'POST' }),
   completeSession: (id: string) =>
@@ -196,7 +249,7 @@ export const api = {
   // startups
   getStartups: () => http<Startup[]>('/api/startups'),
   getStartupApplications: () => http<StartupApplication[]>('/api/startups/applications'),
-  submitStartup: (s: { name: string; domain: Startup['domain']; stage: Startup['stage']; teamSize: number; description: string }) =>
+  submitStartup: (s: { name: string; domain: Startup['domain']; stage: Startup['stage']; teamSize: number; description: string; visibility: 'network' | 'admin' }) =>
     http<Startup>('/api/startups', { method: 'POST', body: JSON.stringify(s) }),
 
   // notifications
@@ -245,6 +298,62 @@ export const api = {
       '/api/invites/batch',
       { method: 'POST', body: JSON.stringify({ invites }) },
     ),
+
+  // events
+  getEvents: () => http<AppEvent[]>('/api/events'),
+  createEvent: (e: { title: string; description: string; location: string; meetingLink?: string; startsAt: string; isPaid?: boolean; price?: number }) =>
+    http<AppEvent>('/api/events', { method: 'POST', body: JSON.stringify(e) }),
+  rsvpEvent: (id: string) => http<AppEvent>(`/api/events/${id}/rsvp`, { method: 'POST' }),
+  unrsvpEvent: (id: string) => http<AppEvent>(`/api/events/${id}/rsvp`, { method: 'DELETE' }),
+  cancelEvent: (id: string) => http<{ ok: boolean }>(`/api/events/${id}`, { method: 'DELETE' }),
+  getPendingEvents: () => http<PendingEvent[]>('/api/events/pending'),
+  approveEvent: (id: string) => http<{ ok: boolean }>(`/api/events/${id}/approve`, { method: 'POST' }),
+  rejectEvent: (id: string) => http<{ ok: boolean }>(`/api/events/${id}/reject`, { method: 'POST' }),
+  getEventAttendees: (id: string) =>
+    http<Array<{ id: string; name: string; designation: string; photo?: string }>>(`/api/events/${id}/attendees`),
+
+  // badges
+  getBadges: (userId: string) => http<{ points: number; badges: Badge[] }>(`/api/users/${userId}/badges`),
+
+  // reports / moderation
+  report: (targetType: 'post' | 'user', targetId: string, reason: string) =>
+    http<{ ok: boolean; already?: boolean }>('/api/reports', {
+      method: 'POST',
+      body: JSON.stringify({ targetType, targetId, reason }),
+    }),
+  getReports: () =>
+    http<Array<{ id: string; targetType: 'post' | 'user'; targetId: string; reason: string; status: string; reporterName: string; summary: string; createdAt: string }>>('/api/reports'),
+  resolveReport: (id: string, removePost: boolean) =>
+    http<{ ok: boolean }>(`/api/reports/${id}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ removePost }),
+    }),
+  dismissReport: (id: string) =>
+    http<{ ok: boolean }>(`/api/reports/${id}/dismiss`, { method: 'POST' }),
+
+  // leaderboard
+  getLeaderboard: () =>
+    http<Array<{ id: string; name: string; photo?: string; designation: string; points: number }>>('/api/users/leaderboard'),
+
+  // event calendar file
+  downloadEventIcs: async (id: string): Promise<Blob> => {
+    const token = getToken()
+    const res = await fetch(`/api/events/${id}/ics`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) throw new Error(`Download failed (${res.status})`)
+    return res.blob()
+  },
+
+  // Ask Roo
+  askRoo: (question: string, history: Array<{ role: 'user' | 'assistant'; content: string }>) =>
+    http<{ answer: string }>('/api/ai/ask', {
+      method: 'POST',
+      body: JSON.stringify({ question, history }),
+    }),
+
+  // admin digest
+  sendDigest: () => http<{ recipients: number; simulated: boolean }>('/api/admin/digest', { method: 'POST' }),
 
   // resume parsing
   parseResume: (dataBase64?: string, mediaType?: string) =>

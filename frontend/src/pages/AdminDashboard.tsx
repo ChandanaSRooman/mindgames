@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, CheckCircle2, ExternalLink, Megaphone, Pin, X, XCircle } from 'lucide-react'
-import type { Alumni, ContactRow, PendingCommunity, StartupApplication } from '../types'
+import type { Alumni, ContactRow, PendingCommunity, PendingEvent, StartupApplication } from '../types'
 import { api } from '../lib/api'
 import { useApp } from '../store/AppStore'
 import { AdminLayout, type AdminView } from '../components/admin/AdminLayout'
@@ -94,6 +94,9 @@ export function AdminDashboard() {
 
       {view === 'communities' && <CommunityApprovalsPanel />}
 
+      {view === 'events' && <EventApprovalsPanel />}
+
+      {view === 'reports' && <ReportsPanel />}
       {view === 'settings' && <SettingsPanel />}
     </AdminLayout>
   )
@@ -347,6 +350,85 @@ function CommunityApprovalsPanel() {
   )
 }
 
+// Member-created events awaiting acceptance.
+function EventApprovalsPanel() {
+  const { notify } = useApp()
+  const [pending, setPending] = useState<PendingEvent[] | null>(null)
+
+  useEffect(() => {
+    api.getPendingEvents().then(setPending, () => setPending([]))
+  }, [])
+
+  function act(id: string, action: 'approve' | 'reject') {
+    const call = action === 'approve' ? api.approveEvent(id) : api.rejectEvent(id)
+    call.then(
+      () => {
+        setPending((list) => (list ?? []).filter((e) => e.id !== id))
+        notify(
+          action === 'approve' ? 'Event approved — the network has been notified.' : 'Event request declined.',
+          action === 'approve' ? 'success' : 'info',
+        )
+      },
+      () => notify('Could not update the event.', 'error'),
+    )
+  }
+
+  if (pending === null) return <p className="text-sm text-[#878a8c]">Loading pending events…</p>
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card className="p-5">
+        <h2 className="text-base font-bold text-[#1c1c1c]">Pending Events ({pending.length})</h2>
+        <p className="mt-1 text-sm text-[#878a8c]">
+          Member-created events go live only after your approval. Hosts are notified either way.
+        </p>
+      </Card>
+
+      {pending.map((e) => {
+        const start = new Date(e.startsAt)
+        return (
+          <Card key={e.id} className="p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl bg-orange-50 text-[#ff4500]">
+                  <span className="text-[10px] font-bold uppercase">{start.toLocaleDateString('en-IN', { month: 'short' })}</span>
+                  <span className="text-lg leading-none font-extrabold">{start.getDate()}</span>
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-bold text-[#1c1c1c]">{e.title}</p>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${e.isPaid ? 'bg-orange-100 text-[#ff4500]' : 'bg-green-100 text-green-700'}`}>
+                      {e.isPaid ? `Paid · ₹${(e.price ?? 0).toLocaleString('en-IN')}` : 'Free'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#878a8c]">
+                    {start.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                    {' · '}
+                    {start.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}
+                    {e.location ? ` · ${e.location}` : ''} · requested by {e.creatorName}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button className="!px-4 !py-2 text-xs" onClick={() => act(e.id, 'approve')}>
+                  <Check size={14} /> Approve
+                </Button>
+                <Button variant="subtle" className="!px-4 !py-2 text-xs" onClick={() => act(e.id, 'reject')}>
+                  <X size={14} /> Decline
+                </Button>
+              </div>
+            </div>
+            {e.description && <p className="mt-3 text-sm text-[#1c1c1c]">{e.description}</p>}
+          </Card>
+        )
+      })}
+      {pending.length === 0 && (
+        <Card className="py-12 text-center text-sm text-[#878a8c]">No pending events. 🎉</Card>
+      )}
+    </div>
+  )
+}
+
 // StartupVarsity applications with founder contact details for follow-up.
 function StartupApplicationsPanel() {
   const [apps, setApps] = useState<StartupApplication[] | null>(null)
@@ -512,6 +594,13 @@ function SettingsPanel() {
         </div>
       </Card>
       <Card className="p-6">
+        <h2 className="mb-1 text-base font-bold text-[#1c1c1c]">Weekly Digest</h2>
+        <p className="mb-4 text-sm text-[#878a8c]">
+          Goes out automatically every Monday morning to opted-in members. You can also trigger it now.
+        </p>
+        <DigestButton />
+      </Card>
+      <Card className="p-6">
         <h2 className="mb-2 text-base font-bold text-[#1c1c1c]">Invitation Landing Page</h2>
         <p className="mb-4 text-sm text-[#878a8c]">Preview what an invited alumnus sees after clicking their link.</p>
         <Link to="/accept-invite" className="inline-flex items-center gap-2 text-sm font-medium text-[#ff4500] hover:underline">
@@ -529,6 +618,106 @@ function IntegrationRow({ label, ok, okText, offText }: { label: string; ok: boo
       <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${ok ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
         {ok ? okText : offText}
       </span>
+    </div>
+  )
+}
+
+function DigestButton() {
+  const [state, setState] = useState<'idle' | 'sending' | 'done'>('idle')
+  const [result, setResult] = useState('')
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Button
+        disabled={state === 'sending'}
+        onClick={async () => {
+          setState('sending')
+          try {
+            const r = await api.sendDigest()
+            setResult(
+              r.simulated
+                ? `Simulated for ${r.recipients} member(s) — configure SMTP to send real email.`
+                : `Sent to ${r.recipients} member(s).`,
+            )
+            setState('done')
+          } catch {
+            setResult('Failed — check the server logs.')
+            setState('done')
+          }
+        }}
+      >
+        {state === 'sending' ? 'Sending…' : 'Send digest now'}
+      </Button>
+      {result && <span className="text-sm text-[#878a8c]">{result}</span>}
+    </div>
+  )
+}
+
+function ReportsPanel() {
+  const [reports, setReports] = useState<Awaited<ReturnType<typeof api.getReports>> | null>(null)
+  const load = () => api.getReports().then(setReports, () => setReports([]))
+  useEffect(() => {
+    load()
+  }, [])
+
+  async function act(id: string, action: 'dismiss' | 'resolve' | 'remove') {
+    if (action === 'dismiss') await api.dismissReport(id)
+    else await api.resolveReport(id, action === 'remove')
+    load()
+  }
+
+  const open = reports?.filter((r) => r.status === 'open') ?? []
+  const handled = reports?.filter((r) => r.status !== 'open') ?? []
+
+  return (
+    <div className="space-y-6">
+      <Card className="p-6">
+        <h2 className="mb-1 text-base font-bold text-[#1c1c1c]">Open Reports ({open.length})</h2>
+        <p className="mb-4 text-sm text-[#878a8c]">Content flagged by members, newest first.</p>
+        {reports === null ? (
+          <p className="text-sm text-[#878a8c]">Loading…</p>
+        ) : open.length === 0 ? (
+          <p className="text-sm text-[#878a8c]">Nothing to review. 🎉</p>
+        ) : (
+          <div className="space-y-3">
+            {open.map((r) => (
+              <div key={r.id} className="rounded-lg border border-[#edeff1] p-4">
+                <p className="text-sm text-[#1c1c1c]">{r.summary}</p>
+                <p className="mt-1 text-xs text-[#878a8c]">
+                  Reported by {r.reporterName}: “{r.reason}”
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {r.targetType === 'post' && (
+                    <Button className="!bg-red-500 !px-3 !py-1.5 text-xs hover:!bg-red-600" onClick={() => act(r.id, 'remove')}>
+                      Remove post & resolve
+                    </Button>
+                  )}
+                  <Button variant="outline" className="!px-3 !py-1.5 text-xs" onClick={() => act(r.id, 'resolve')}>
+                    Resolve (keep content)
+                  </Button>
+                  <Button variant="ghost" className="!px-3 !py-1.5 text-xs" onClick={() => act(r.id, 'dismiss')}>
+                    Dismiss
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+      {handled.length > 0 && (
+        <Card className="p-6">
+          <h2 className="mb-3 text-base font-bold text-[#1c1c1c]">Recently handled</h2>
+          <div className="space-y-2">
+            {handled.slice(0, 10).map((r) => (
+              <p key={r.id} className="text-sm text-[#878a8c]">
+                <span className={`mr-2 rounded-full px-2 py-0.5 text-xs font-semibold ${r.status === 'resolved' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-[#878a8c]'}`}>
+                  {r.status}
+                </span>
+                {r.summary}
+              </p>
+            ))}
+          </div>
+        </Card>
+      )}
     </div>
   )
 }

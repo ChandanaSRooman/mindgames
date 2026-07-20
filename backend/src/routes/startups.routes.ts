@@ -15,6 +15,7 @@ interface StartupRow {
   stage: string
   team_size: number
   description: string
+  visibility: string
 }
 
 function mapStartup(r: StartupRow) {
@@ -26,17 +27,24 @@ function mapStartup(r: StartupRow) {
     stage: r.stage,
     teamSize: r.team_size,
     description: r.description,
+    visibility: r.visibility,
   }
 }
 
-// GET /api/startups — all StartupVarsity listings, newest first.
+// GET /api/startups — network-visible listings, newest first. Admin-only
+// (confidential) ideas are shown only to their founder here; admins review
+// them via /applications.
 startupsRouter.get(
   '/',
   optionalAuth,
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
+    const uid = req.user?.sub ?? null
     const result = await query<StartupRow>(
-      `SELECT id, founder_id, name, domain, stage, team_size, description
-       FROM startups ORDER BY created_at DESC`,
+      `SELECT id, founder_id, name, domain, stage, team_size, description, visibility
+       FROM startups
+       WHERE visibility = 'network' OR founder_id = $1
+       ORDER BY created_at DESC`,
+      [uid],
     )
     res.json(result.rows.map(mapStartup))
   }),
@@ -52,7 +60,7 @@ startupsRouter.get(
     const result = await query<
       StartupRow & { founder_name: string; founder_email: string; founder_phone: string | null; created_at: Date }
     >(
-      `SELECT s.id, s.founder_id, s.name, s.domain, s.stage, s.team_size, s.description, s.created_at,
+      `SELECT s.id, s.founder_id, s.name, s.domain, s.stage, s.team_size, s.description, s.visibility, s.created_at,
               u.name AS founder_name, u.email AS founder_email, u.phone AS founder_phone
        FROM startups s JOIN users u ON u.id = s.founder_id
        ORDER BY s.created_at DESC`,
@@ -75,6 +83,8 @@ const createSchema = z.object({
   stage: z.enum(['Idea', 'MVP', 'Early Revenue', 'Scaling']).default('Idea'),
   teamSize: z.number().int().min(1).default(1),
   description: z.string().trim().default(''),
+  // 'network' = everyone can see it; 'admin' = confidential application.
+  visibility: z.enum(['network', 'admin']).default('network'),
 })
 
 // POST /api/startups — submit a StartupVarsity application.
@@ -87,10 +97,10 @@ startupsRouter.post(
     const s = parsed.data
 
     const result = await query<StartupRow>(
-      `INSERT INTO startups (founder_id, name, domain, stage, team_size, description)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       RETURNING id, founder_id, name, domain, stage, team_size, description`,
-      [req.user!.sub, s.name, s.domain, s.stage, s.teamSize, s.description],
+      `INSERT INTO startups (founder_id, name, domain, stage, team_size, description, visibility)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING id, founder_id, name, domain, stage, team_size, description, visibility`,
+      [req.user!.sub, s.name, s.domain, s.stage, s.teamSize, s.description, s.visibility],
     )
 
     // Let the Rooman admins know a new incubation application arrived.

@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS users (
   name                TEXT NOT NULL,
   email               TEXT NOT NULL UNIQUE,
   phone               TEXT,
+  -- Profile photo as a small data URL (client downscales to ~256px JPEG).
+  photo               TEXT,
   password_hash       TEXT,                          -- null for the official 'rooman' account
   is_admin            BOOLEAN NOT NULL DEFAULT FALSE,
   avatar              TEXT NOT NULL DEFAULT '',       -- initials seed rendered by <Avatar>
@@ -43,6 +45,19 @@ CREATE INDEX IF NOT EXISTS idx_users_domain ON users (domain);
 -- ---------------------------------------------------------------------------
 -- posts: feed items authored by a user.
 -- ---------------------------------------------------------------------------
+ALTER TABLE users ADD COLUMN IF NOT EXISTS photo TEXT;
+
+-- Profile status tag shown on the profile header ('Mentor'/'Hiring'/'Open to Work').
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_tag TEXT;
+-- Set when the user clicks the verification link emailed at signup.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+-- Weekly digest email opt-out (Settings toggle).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_digest BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_profile_tag_check;
+ALTER TABLE users
+  ADD CONSTRAINT users_profile_tag_check
+  CHECK (profile_tag IS NULL OR profile_tag IN ('Mentor','Hiring','Open to Work'));
+
 CREATE TABLE IF NOT EXISTS posts (
   id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   author_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -58,12 +73,24 @@ CREATE TABLE IF NOT EXISTS posts (
   batch        INTEGER,
   role         TEXT,
   company      TEXT,
+  -- Hiring posts: questions the poster wants every applicant to answer
+  -- (JSON array of strings, max 5 enforced in the route).
+  questions    JSONB NOT NULL DEFAULT '[]'::jsonb,
+  -- Hiring posts: whether applicants must attach a resume when applying.
+  wants_resume BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Hiring posts: FALSE = closed, no longer accepting applications.
+  active       BOOLEAN NOT NULL DEFAULT TRUE,
   pinned       BOOLEAN NOT NULL DEFAULT FALSE,
   -- Denormalised like counter. post_likes tracks *who* liked (for likedByMe);
   -- this column carries the displayed total and is kept in sync on like/unlike.
   likes        INTEGER NOT NULL DEFAULT 0,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Upgrade path for databases created before application questions existed.
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS questions JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS wants_resume BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE INDEX IF NOT EXISTS idx_posts_author ON posts (author_id);
 CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts (created_at DESC);
@@ -218,6 +245,13 @@ ALTER TABLE mentorship_sessions
   ADD CONSTRAINT mentorship_sessions_status_check
   CHECK (status IN ('requested','upcoming','declined','past'));
 ALTER TABLE mentorship_sessions ALTER COLUMN status SET DEFAULT 'requested';
+-- Meeting link the mentor shares on acceptance + the mentee's post-session rating.
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS meeting_link TEXT;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS rating INTEGER;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS review TEXT;
+ALTER TABLE mentorship_sessions DROP CONSTRAINT IF EXISTS mentorship_sessions_rating_check;
+ALTER TABLE mentorship_sessions
+  ADD CONSTRAINT mentorship_sessions_rating_check CHECK (rating IS NULL OR rating BETWEEN 1 AND 5);
 
 CREATE INDEX IF NOT EXISTS idx_sessions_mentee ON mentorship_sessions (mentee_id, status);
 
@@ -239,8 +273,16 @@ CREATE TABLE IF NOT EXISTS startups (
   stage       TEXT NOT NULL DEFAULT 'Idea' CHECK (stage IN ('Idea','MVP','Early Revenue','Scaling')),
   team_size   INTEGER NOT NULL DEFAULT 1,
   description TEXT NOT NULL DEFAULT '',
+  -- Who may see the idea: the whole network, or only Rooman admins (+ founder).
+  visibility  TEXT NOT NULL DEFAULT 'network' CHECK (visibility IN ('network','admin')),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Upgrade path for databases created before idea visibility existed.
+ALTER TABLE startups ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'network';
+ALTER TABLE startups DROP CONSTRAINT IF EXISTS startups_visibility_check;
+ALTER TABLE startups
+  ADD CONSTRAINT startups_visibility_check CHECK (visibility IN ('network','admin'));
 
 -- ---------------------------------------------------------------------------
 -- job applications: an alumnus applying to a Hiring post. One row per
@@ -249,11 +291,106 @@ CREATE TABLE IF NOT EXISTS startups (
 CREATE TABLE IF NOT EXISTS job_applications (
   post_id      TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
   applicant_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- Answers to the post's application questions (JSON array of strings,
+  -- index-aligned with posts.questions).
+  answers      JSONB NOT NULL DEFAULT '[]'::jsonb,
+  -- Attached resume (when the post asks for one). Stored inline — files are
+  -- capped at ~5MB in the route, fine at this network's scale.
+  resume_name  TEXT,
+  resume_type  TEXT,
+  resume_data  BYTEA,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (post_id, applicant_id)
 );
 
+-- Upgrade path for databases created before application questions existed.
+ALTER TABLE job_applications ADD COLUMN IF NOT EXISTS answers JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE job_applications ADD COLUMN IF NOT EXISTS resume_name TEXT;
+ALTER TABLE job_applications ADD COLUMN IF NOT EXISTS resume_type TEXT;
+ALTER TABLE job_applications ADD COLUMN IF NOT EXISTS resume_data BYTEA;
+
 CREATE INDEX IF NOT EXISTS idx_job_applications_post ON job_applications (post_id, created_at);
+
+-- ---------------------------------------------------------------------------
+-- events: alumni meetups, webinars and reunions, with RSVP.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS events (
+  id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  creator_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title        TEXT NOT NULL,
+  description  TEXT NOT NULL DEFAULT '',
+  location     TEXT NOT NULL DEFAULT '',
+  meeting_link TEXT,
+  starts_at    TIMESTAMPTZ NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_starts_at ON events (starts_at);
+
+-- 24h-before reminder bookkeeping.
+ALTER TABLE events ADD COLUMN IF NOT EXISTS reminded BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Acceptance flow: member-created events start 'pending' and are visible only to
+-- their creator until an admin approves. Admin-created ones are 'approved'. The
+-- default is 'approved' so events created before this column keep showing.
+ALTER TABLE events ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'approved';
+ALTER TABLE events DROP CONSTRAINT IF EXISTS events_status_check;
+ALTER TABLE events
+  ADD CONSTRAINT events_status_check CHECK (status IN ('pending','approved','rejected'));
+
+-- Paid events: is_paid flags a ticketed event; price is the amount in whole
+-- rupees. Display only — payment is collected offline / at the venue.
+ALTER TABLE events ADD COLUMN IF NOT EXISTS is_paid BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS price INTEGER NOT NULL DEFAULT 0;
+
+-- Notification types are re-checked here so upgrades pick up new ones.
+ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_type_check;
+ALTER TABLE notifications
+  ADD CONSTRAINT notifications_type_check
+  CHECK (type IN ('connection','like','comment','job','mentorship','community','announcement','event'));
+
+CREATE TABLE IF NOT EXISTS event_rsvps (
+  event_id   TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (event_id, user_id)
+);
+
+-- ---------------------------------------------------------------------------
+-- auth_tokens: single-use, hashed email tokens (password reset + verification).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS auth_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  purpose    TEXT NOT NULL CHECK (purpose IN ('reset','verify')),
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens (user_id, purpose);
+
+-- ---------------------------------------------------------------------------
+-- reports: members flagging posts/users for the admin team to review.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS reports (
+  id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  reporter_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target_type TEXT NOT NULL CHECK (target_type IN ('post','user')),
+  target_id   TEXT NOT NULL,
+  reason      TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','dismissed')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_reports_status ON reports (status, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- app_meta: tiny key/value store (e.g. when the weekly digest last went out).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS app_meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 
 -- ---------------------------------------------------------------------------
 -- notifications: one row per recipient. Generated on like/comment/connect/
@@ -262,8 +399,7 @@ CREATE INDEX IF NOT EXISTS idx_job_applications_post ON job_applications (post_i
 CREATE TABLE IF NOT EXISTS notifications (
   id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  type       TEXT NOT NULL
-               CHECK (type IN ('connection','like','comment','job','mentorship','community','announcement')),
+  type       TEXT NOT NULL,
   text       TEXT NOT NULL,
   actor_id   TEXT REFERENCES users(id) ON DELETE SET NULL,
   read       BOOLEAN NOT NULL DEFAULT FALSE,

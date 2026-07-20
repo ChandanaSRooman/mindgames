@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   Briefcase,
+  Calendar,
   Compass,
   GraduationCap,
   Home,
@@ -15,6 +16,7 @@ import { useApp } from '../../store/AppStore'
 const NAV = [
   { to: '/home', label: 'Home', icon: Home },
   { to: '/network', label: 'My Network', icon: Users },
+  { to: '/events', label: 'Events', icon: Calendar },
   { to: '/jobs', label: 'Jobs & Opportunities', icon: Briefcase },
   { to: '/mentorship', label: 'Mentorship', icon: GraduationCap },
   { to: '/startupvarsity', label: 'StartupVarsity', icon: Rocket },

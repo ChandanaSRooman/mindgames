@@ -43,16 +43,19 @@ export function Home() {
       <CreatePostBox />
 
       {/* Sort bar */}
-      <div className="flex items-center gap-1 rounded-xl border border-[#edeff1] bg-white px-2 py-1.5 shadow-sm">
+      <div className="flex items-center rounded-xl border border-[#edeff1] bg-white px-2 shadow-sm">
         {SORTS.map((s) => (
           <button
             key={s}
             onClick={() => setSort(s)}
-            className={`rounded-full px-3.5 py-1.5 text-sm font-semibold transition-colors ${
-              sort === s ? 'bg-orange-50 text-[#ff4500]' : 'text-[#878a8c] hover:bg-gray-100'
+            className={`relative px-4 py-3 text-sm font-semibold transition-colors ${
+              sort === s ? 'text-[#ff4500]' : 'text-[#878a8c] hover:text-[#1c1c1c]'
             }`}
           >
             {s}
+            {sort === s && (
+              <span className="absolute inset-x-3 bottom-0 h-[3px] rounded-t-full bg-[#ff4500]" />
+            )}
           </button>
         ))}
       </div>

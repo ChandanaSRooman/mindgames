@@ -16,6 +16,11 @@ import { inviteesRouter } from './routes/invitees.routes.js'
 import { adminRouter } from './routes/admin.routes.js'
 import { invitesRouter } from './routes/invites.routes.js'
 import { resumeRouter } from './routes/resume.routes.js'
+import { eventsRouter, startEventReminderScheduler } from './routes/events.routes.js'
+import { startDigestScheduler } from './digest.js'
+import { sseHandler } from './realtime.js'
+import { aiRouter } from './routes/ai.routes.js'
+import { reportsRouter } from './routes/reports.routes.js'
 
 const app = express()
 app.use(cors())
@@ -46,9 +51,16 @@ app.use('/api/admin', adminRouter) // admin console stats
 
 app.use('/api/invites', invitesRouter)
 app.use('/api/resume', resumeRouter)
+app.use('/api/events', eventsRouter)
+app.get('/api/stream', sseHandler)
+app.use('/api/ai', aiRouter)
+app.use('/api/reports', reportsRouter)
 
 // --- Terminal error handler -------------------------------------------------
 app.use(errorHandler)
+
+startDigestScheduler()
+startEventReminderScheduler()
 
 app.listen(config.port, () => {
   console.log(`Rooman Alumni API listening on http://localhost:${config.port}`)

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Send, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { ArrowLeft, MessagesSquare, Send, Users, X } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { Avatar } from '../ui'
 
@@ -15,6 +16,7 @@ export function ChatPanel({
   onClose: () => void
 }) {
   const { threads, userById, sendMessage, markThreadRead, messageUser, refreshThreads } = useApp()
+  const navigate = useNavigate()
   const [activeId, setActiveId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -75,6 +77,28 @@ export function ChatPanel({
         {/* List or conversation */}
         {!active ? (
           <div className="flex-1 overflow-y-auto">
+            {threads.length === 0 && (
+              <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
+                <div className="grid h-16 w-16 place-items-center rounded-full bg-orange-50 text-[#ff4500]">
+                  <MessagesSquare size={28} />
+                </div>
+                <p className="font-semibold text-[#1c1c1c]">No messages yet</p>
+                <p className="text-sm leading-relaxed text-[#878a8c]">
+                  Chats with fellow alumni appear here. Open someone's profile and hit{' '}
+                  <span className="font-semibold text-[#1c1c1c]">Message</span> to start a
+                  conversation.
+                </p>
+                <button
+                  onClick={() => {
+                    onClose()
+                    navigate('/network')
+                  }}
+                  className="mt-2 inline-flex items-center gap-2 rounded-full bg-[#ff4500] px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#ff6534]"
+                >
+                  <Users size={16} /> Find people to connect
+                </button>
+              </div>
+            )}
             {threads.map((t) => {
               const u = userById(t.withUserId)
               return (
@@ -83,7 +107,7 @@ export function ChatPanel({
                   onClick={() => setActiveId(t.id)}
                   className="flex w-full items-center gap-3 border-b border-[#edeff1] px-4 py-3 text-left hover:bg-gray-50"
                 >
-                  <Avatar name={u?.name ?? '?'} size={44} />
+                  <Avatar name={u?.name ?? '?'} src={u?.photo} size={44} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-semibold text-[#1c1c1c]">{u?.name}</p>
                     <p className="truncate text-sm text-[#878a8c]">{t.lastMessage}</p>
@@ -100,6 +124,15 @@ export function ChatPanel({
         ) : (
           <>
             <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto bg-[#f6f7f8] p-4">
+              {active.messages.length === 0 && (
+                <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+                  <Avatar name={activeUser?.name ?? '?'} src={activeUser?.photo} size={56} />
+                  <p className="mt-1 font-semibold text-[#1c1c1c]">{activeUser?.name}</p>
+                  <p className="text-sm text-[#878a8c]">
+                    This is the start of your conversation. Say hello! 👋
+                  </p>
+                </div>
+              )}
               {active.messages.map((m) => (
                 <div key={m.id} className={`flex ${m.fromMe ? 'justify-end' : 'justify-start'}`}>
                   <div

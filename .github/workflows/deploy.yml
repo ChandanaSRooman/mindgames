@@ -1,0 +1,220 @@
+# CI / Deploy to production
+#
+# On every push or PR to main, run the full quality-gate suite (typecheck, lint,
+# self-check, build). On a real merge/push to main, and only if the gates pass,
+# deploy the built output to the production EC2 box via AWS SSM (no SSH).
+#
+# How the deploy works (no .pem / no SSH, box uses SSM Session Manager):
+#   1. Runner packages backend/dist + frontend/dist into a tarball.
+#   2. Uploads it to S3 and makes a short-lived presigned download URL.
+#   3. Sends an SSM Run Command telling the instance to curl the tarball,
+#      drop it into place, `npm ci --omit=dev`, `db:migrate:prod`, and restart.
+#   4. Health-checks /api/health.
+# The presigned URL carries its own auth, so the instance needs NO S3 role —
+# only the SSM agent it already has.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUIRED GITHUB SECRETS (Settings → Secrets and variables → Actions → Secrets):
+#   AWS_ACCESS_KEY_ID      IAM user key for the runner (policy in the PR notes:
+#   AWS_SECRET_ACCESS_KEY  s3:PutObject/GetObject on the deploy bucket +
+#                          ssm:SendCommand on the instance + ssm:GetCommandInvocation)
+#
+# REQUIRED GITHUB VARIABLE (same page → Variables tab):
+#   DEPLOY_S3_BUCKET       Name of an S3 bucket for build artifacts, e.g.
+#                          rooconnect-deploy-artifacts (create once:
+#                          `aws s3 mb s3://rooconnect-deploy-artifacts --region ap-south-1`)
+#
+# The instance must be SSM-managed (it already is — you connect via SSM) and have
+# node/npm available to the `ubuntu` user (the deploy runs `npm` as `ubuntu`).
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: CI / Deploy to production
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  # ───────────────────────────── Quality gates ─────────────────────────────
+  test:
+    name: Test & build (all gates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      # ---- Backend: typecheck + build (build also copies schema.sql → dist) ----
+      - name: Backend — install
+        working-directory: backend
+        run: npm ci
+      - name: Backend — typecheck
+        working-directory: backend
+        run: npx tsc --noEmit
+      - name: Backend — build
+        working-directory: backend
+        run: npm run build
+
+      # ---- Frontend: lint + csv self-check + build (build also typechecks) ----
+      - name: Frontend — install
+        working-directory: frontend
+        run: npm ci
+      - name: Frontend — lint
+        working-directory: frontend
+        run: npm run lint
+      - name: Frontend — csv self-check
+        working-directory: frontend
+        run: npm run check
+      - name: Frontend — build
+        working-directory: frontend
+        run: npm run build
+
+      # ---- Hand the built output to the deploy job (no rebuild needed) ----
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          retention-days: 3
+          if-no-files-found: error
+          path: |
+            backend/dist
+            backend/package.json
+            backend/package-lock.json
+            frontend/dist
+
+  # ─────────────────────────── Deploy (via SSM) ────────────────────────────
+  deploy:
+    name: Deploy to EC2 (SSM)
+    needs: test
+    # Only on a real merge/push to main — never on pull requests or forks.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    # Serialize deploys so two runs never race on the same instance.
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    env:
+      # Production target (from the deployment notes). Verify the instance id if
+      # the box was ever replaced; update DEPLOY_HOST when a domain/TLS is added.
+      AWS_REGION: ap-south-1
+      INSTANCE_ID: i-097cc672e9a49a72e
+      DEPLOY_HOST: 3.110.33.45
+      S3_BUCKET: ${{ vars.DEPLOY_S3_BUCKET }}
+      BACKEND_DIR: /opt/rooconnect
+      FRONTEND_DIR: /var/www/rooconnect
+      SERVICE: rooconnect
+    steps:
+      - name: Download build output
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Package build into a tarball
+        run: |
+          set -euo pipefail
+          if [ -z "${S3_BUCKET}" ]; then
+            echo "::error::Set the DEPLOY_S3_BUCKET repository variable to an S3 bucket name."
+            exit 1
+          fi
+          # Tarball root holds backend/{dist,package.json,package-lock.json} + frontend/dist.
+          tar czf deploy.tgz \
+            backend/dist backend/package.json backend/package-lock.json \
+            frontend/dist
+          ls -la deploy.tgz
+
+      - name: Deploy via SSM Run Command
+        run: |
+          set -euo pipefail
+          KEY="deploys/${GITHUB_SHA}.tgz"
+
+          echo "Uploading build to s3://${S3_BUCKET}/${KEY}"
+          aws s3 cp deploy.tgz "s3://${S3_BUCKET}/${KEY}" --only-show-errors
+          URL="$(aws s3 presign "s3://${S3_BUCKET}/${KEY}" --expires-in 900)"
+
+          # Remote script — runs as root via SSM. POSIX sh (no pipefail); the npm
+          # steps run as the `ubuntu` service user via a login shell to get PATH.
+          cat > remote.sh <<REMOTE
+          set -eu
+          URL='${URL}'
+          BACKEND_DIR='${BACKEND_DIR}'
+          FRONTEND_DIR='${FRONTEND_DIR}'
+          SERVICE='${SERVICE}'
+          TMP="\$(mktemp -d)"
+          trap 'rm -rf "\$TMP"' EXIT
+          echo "Downloading build artifact…"
+          curl -fsSL "\$URL" -o "\$TMP/deploy.tgz"
+          mkdir -p "\$TMP/x"
+          tar xzf "\$TMP/deploy.tgz" -C "\$TMP/x"
+          echo "Placing backend…"
+          rm -rf "\$BACKEND_DIR/dist"
+          cp -a "\$TMP/x/backend/dist" "\$BACKEND_DIR/dist"
+          cp -a "\$TMP/x/backend/package.json" "\$TMP/x/backend/package-lock.json" "\$BACKEND_DIR/"
+          echo "Placing frontend…"
+          mkdir -p "\$FRONTEND_DIR"
+          find "\$FRONTEND_DIR" -mindepth 1 -delete
+          cp -a "\$TMP/x/frontend/dist/." "\$FRONTEND_DIR/"
+          chown -R ubuntu:ubuntu "\$BACKEND_DIR/dist" "\$BACKEND_DIR/package.json" "\$BACKEND_DIR/package-lock.json" "\$FRONTEND_DIR"
+          echo "Installing prod deps + migrating (as ubuntu)…"
+          sudo -u ubuntu bash -lc "cd '\$BACKEND_DIR' && npm ci --omit=dev --no-audit --no-fund && npm run db:migrate:prod"
+          echo "Restarting service…"
+          systemctl restart "\$SERVICE"
+          echo "Deploy complete."
+          REMOTE
+
+          echo "Sending SSM command to ${INSTANCE_ID}…"
+          jq -Rs '{commands: [.]}' remote.sh > params.json
+          CMD_ID="$(aws ssm send-command \
+            --document-name AWS-RunShellScript \
+            --instance-ids "${INSTANCE_ID}" \
+            --comment "Deploy ${GITHUB_SHA:0:7}" \
+            --timeout-seconds 900 \
+            --parameters file://params.json \
+            --query 'Command.CommandId' --output text)"
+          echo "SSM command id: ${CMD_ID}"
+
+          # Poll for completion (up to ~10 min).
+          STATUS=Pending
+          for _ in $(seq 1 120); do
+            STATUS="$(aws ssm get-command-invocation \
+              --command-id "${CMD_ID}" --instance-id "${INSTANCE_ID}" \
+              --query Status --output text 2>/dev/null || echo Pending)"
+            case "${STATUS}" in Success|Failed|Cancelled|TimedOut) break ;; esac
+            sleep 5
+          done
+
+          echo "----- remote stdout -----"
+          aws ssm get-command-invocation --command-id "${CMD_ID}" --instance-id "${INSTANCE_ID}" \
+            --query StandardOutputContent --output text || true
+          echo "----- remote stderr -----"
+          aws ssm get-command-invocation --command-id "${CMD_ID}" --instance-id "${INSTANCE_ID}" \
+            --query StandardErrorContent --output text || true
+          echo "Final status: ${STATUS}"
+          [ "${STATUS}" = "Success" ]
+
+      - name: Health check
+        run: |
+          set -euo pipefail
+          echo "Waiting for the API to come back up…"
+          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors "http://${DEPLOY_HOST}/api/health"
+          echo
+          echo "✓ Deploy verified — /api/health is up."

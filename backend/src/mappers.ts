@@ -7,6 +7,10 @@ export interface UserRow {
   name: string
   email: string
   phone: string | null
+  photo: string | null
+  profile_tag: string | null
+  email_verified_at: Date | string | null
+  email_digest: boolean
   avatar: string
   batch_year: number
   course: string
@@ -34,6 +38,10 @@ export function mapUser(r: UserRow) {
     name: r.name,
     email: r.email,
     phone: r.phone ?? undefined,
+    photo: r.photo ?? undefined,
+    profileTag: r.profile_tag ?? undefined,
+    emailVerified: !!r.email_verified_at,
+    emailDigest: r.email_digest,
     avatar: r.avatar,
     batchYear: r.batch_year,
     course: r.course,
@@ -85,6 +93,9 @@ export interface PostRow {
   batch: number | null
   role: string | null
   company: string | null
+  questions: string[] | null
+  wants_resume: boolean
+  active: boolean
   pinned: boolean
   likes: number
   created_at: Date | string
@@ -116,6 +127,9 @@ export function mapPost(r: PostRow) {
     batch: r.batch ?? undefined,
     role: r.role ?? undefined,
     company: r.company ?? undefined,
+    questions: r.questions ?? [],
+    wantsResume: r.wants_resume || undefined,
+    active: r.active,
     pinned: r.pinned || undefined,
   }
 }

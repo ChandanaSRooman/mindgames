@@ -37,11 +37,23 @@ export const EMPLOYMENT_TYPES: EmploymentType[] = [
 
 export type Visibility = 'All Alumni' | 'My Network' | 'Specific Community'
 
+export type ProfileTag = 'Mentor' | 'Hiring' | 'Open to Work'
+
+export const PROFILE_TAGS: ProfileTag[] = ['Mentor', 'Hiring', 'Open to Work']
+
 export interface User {
   id: string
   name: string
   email: string
   phone?: string
+  // Small data-URL profile photo; absent → initials avatar.
+  photo?: string | null
+  // Status tag shown on the profile header.
+  profileTag?: ProfileTag | null
+  // Set once the user clicks the verification link emailed at signup.
+  emailVerified?: boolean
+  // Weekly digest email preference (Settings toggle).
+  emailDigest?: boolean
   avatar: string // initials-based color seed; rendered by <Avatar>
   batchYear: number
   course: string
@@ -61,6 +73,12 @@ export interface User {
   mentorRate?: number // ₹ / hr
   sessionsConducted?: number
   isAdmin?: boolean
+}
+
+// True until the member finishes the onboarding wizard. The wizard can't be
+// completed without a course, so an empty course means setup never finished.
+export function needsOnboarding(user: Pick<User, 'course' | 'isAdmin'>): boolean {
+  return !user.isAdmin && !user.course
 }
 
 export interface Comment {
@@ -90,6 +108,12 @@ export interface Post {
   // Hiring / role specific
   role?: string
   company?: string
+  // What the poster wants every applicant to answer (Hiring posts).
+  questions?: string[]
+  // Whether applicants must attach a resume (Hiring posts).
+  wantsResume?: boolean
+  // Hiring posts: false = closed, not accepting applications.
+  active?: boolean
   appliedByMe?: boolean
   applicantsCount?: number
   // Pinned Rooman announcement (set from the Admin panel)
@@ -100,10 +124,48 @@ export interface Post {
 export interface JobApplicant {
   id: string
   name: string
+  photo?: string | null
   designation: string
   company: string
   city: string
+  // Question+answer pairs snapshotted at apply time.
+  answers: { q: string; a: string }[]
+  // Filename of the attached resume (null when none was attached).
+  resumeName: string | null
   appliedAt: string // ISO
+}
+
+// An alumni meetup, webinar or reunion with RSVPs.
+export interface AppEvent {
+  id: string
+  creatorId: string
+  title: string
+  description: string
+  location: string
+  meetingLink?: string
+  startsAt: string // ISO
+  // pending = awaiting admin acceptance (visible only to its host).
+  status?: 'pending' | 'approved' | 'rejected'
+  // Paid (ticketed) event + price in whole rupees. Payment is collected offline.
+  isPaid?: boolean
+  price?: number
+  rsvpCount: number
+  rsvpedByMe: boolean
+  attendeeIds: string[]
+}
+
+// Admin review queue entry for events.
+export interface PendingEvent extends AppEvent {
+  creatorName: string
+}
+
+// A computed profile achievement.
+export interface Badge {
+  id: string
+  emoji: string
+  label: string
+  description: string
+  earned: boolean
 }
 
 export type CommunityCategory = 'Domain' | 'City' | 'Batch' | 'General'
@@ -139,6 +201,10 @@ export interface MentorshipSession {
   date: string // human readable
   time: string
   status: SessionStatus
+  // Shared by the mentor on acceptance (Meet/Zoom/…).
+  meetingLink?: string
+  // Mentee's post-session rating (1-5), once given.
+  rating?: number
 }
 
 export type StartupStage = 'Idea' | 'MVP' | 'Early Revenue' | 'Scaling'
@@ -151,6 +217,8 @@ export interface Startup {
   stage: StartupStage
   teamSize: number
   description: string
+  // 'network' = visible to everyone; 'admin' = confidential (admins + founder only).
+  visibility?: 'network' | 'admin'
 }
 
 // Admin review view: application + founder contact details.
@@ -169,6 +237,7 @@ export type NotificationType =
   | 'mentorship'
   | 'community'
   | 'announcement'
+  | 'event'
 
 export interface AppNotification {
   id: string
@@ -225,9 +294,21 @@ export interface Experience {
 
 export interface ResumeParseResult {
   name: string
+  email: string
+  phone: string
+  linkedin: string
+  city: string
   headline: string
+  bio: string
+  batchYear: string
+  course: string
+  experienceYears: string
+  domain: string
+  employmentType: string
   experience: Experience[]
   skills: string[]
+  // 'ai' = real Claude extraction; 'fallback' = server demo data (no API key).
+  source: 'ai' | 'fallback'
 }
 
 // Light-theme styling for status tags (Admin directory pills).

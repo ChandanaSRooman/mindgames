@@ -1,10 +1,15 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type { ReactNode } from 'react'
+import { needsOnboarding } from './types'
 import { AppProvider, useApp } from './store/AppStore'
 import { Toaster } from './components/ui/Toaster'
 import { AppLayout } from './components/layout/AppLayout'
 import { Landing } from './pages/Landing'
 import { Login } from './pages/Login'
+import { ForgotPassword } from './pages/ForgotPassword'
+import { ResetPassword } from './pages/ResetPassword'
+import { VerifyEmail } from './pages/VerifyEmail'
+import { Events } from './pages/Events'
 import { AcceptInvite } from './pages/AcceptInvite'
 import { Onboarding } from './pages/Onboarding'
 import { Home } from './pages/Home'
@@ -43,6 +48,14 @@ function RequireAdmin({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
+// Members who never finished account setup are sent back to the onboarding
+// wizard before they can use the app shell.
+function RequireOnboarded({ children }: { children: ReactNode }) {
+  const { currentUser } = useApp()
+  if (needsOnboarding(currentUser)) return <Navigate to="/onboarding" replace />
+  return <>{children}</>
+}
+
 export default function App() {
   return (
     <AppProvider>
@@ -51,6 +64,9 @@ export default function App() {
           {/* Public / full-screen (no app chrome) */}
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/accept-invite" element={<AcceptInvite />} />
           <Route path="/onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
           <Route
@@ -64,16 +80,19 @@ export default function App() {
             }
           />
 
-          {/* App shell (navbar + sidebars) — requires a session */}
+          {/* App shell (navbar + sidebars) — requires a session + finished setup */}
           <Route
             element={
               <RequireAuth>
-                <AppLayout />
+                <RequireOnboarded>
+                  <AppLayout />
+                </RequireOnboarded>
               </RequireAuth>
             }
           >
             <Route path="/home" element={<Home />} />
             <Route path="/network" element={<MyNetwork />} />
+            <Route path="/events" element={<Events />} />
             <Route path="/jobs" element={<Jobs />} />
             <Route path="/mentorship" element={<Mentorship />} />
             <Route path="/startupvarsity" element={<StartupVarsity />} />

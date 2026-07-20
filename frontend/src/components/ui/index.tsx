@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { Loader2 } from 'lucide-react'
+import { BadgeCheck, Loader2 } from 'lucide-react'
 import { avatarGradient, initials } from '../../lib/format'
 import type { PostType, StatusTag } from '../../types'
 import { POST_TYPE_STYLES, STATUS_STYLES } from '../../types'
@@ -13,14 +13,25 @@ export function cx(...parts: Array<string | false | null | undefined>): string {
 // ---- Avatar ----------------------------------------------------------------
 export function Avatar({
   name,
+  src,
   size = 40,
   to,
 }: {
   name: string
+  /** Profile photo (data URL). Falls back to initials when absent. */
+  src?: string | null
   size?: number
   to?: string
 }) {
-  const inner = (
+  const inner = src ? (
+    <img
+      src={src}
+      alt={name}
+      title={name}
+      className="inline-block shrink-0 rounded-full object-cover select-none"
+      style={{ width: size, height: size }}
+    />
+  ) : (
     <span
       className={`inline-flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${avatarGradient(
         name,
@@ -33,6 +44,18 @@ export function Avatar({
   )
   if (to) return <Link to={to}>{inner}</Link>
   return inner
+}
+
+// ---- Verified badge --------------------------------------------------------
+// Auto-shown next to a member's name once their email is verified. Purely a
+// signal — driven by user.emailVerified (see mappers.ts / email_verified_at).
+export function VerifiedBadge({ verified, size = 16 }: { verified?: boolean; size?: number }) {
+  if (!verified) return null
+  return (
+    <span title="Verified member" className="inline-flex shrink-0" aria-label="Verified member">
+      <BadgeCheck size={size} className="text-[#1d9bf0]" />
+    </span>
+  )
 }
 
 // ---- Button ----------------------------------------------------------------

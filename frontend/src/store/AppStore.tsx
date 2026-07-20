@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import type {
+  AppEvent,
   AppNotification,
   Community,
   ConnectionState,
@@ -69,6 +70,8 @@ export interface NewPostInput {
   communityId?: string
   role?: string
   company?: string
+  questions?: string[]
+  wantsResume?: boolean
 }
 
 interface AppContextValue {
@@ -99,10 +102,11 @@ interface AppContextValue {
   // posts
   posts: Post[]
   createPost: (input: NewPostInput) => void
+  updatePost: (id: string, patch: Partial<Post>) => void
   toggleLike: (id: string) => void
   toggleSave: (id: string) => void
   addComment: (postId: string, text: string) => void
-  applyToJob: (postId: string) => void
+  applyToJob: (postId: string, answers?: string[], resume?: { name: string; dataBase64: string; mediaType: string }) => void
 
   // communities
   communities: Community[]
@@ -112,15 +116,22 @@ interface AppContextValue {
   // mentorship + startups
   sessions: MentorshipSession[]
   bookSession: (mentorId: string, topic: string, date: string, time: string) => void
-  acceptSession: (id: string) => void
+  acceptSession: (id: string, meetingLink?: string) => void
+  rateSession: (id: string, rating: number, review?: string) => void
   declineSession: (id: string) => void
   completeSession: (id: string) => void
   becomeMentor: (rate: number) => void
   startups: Startup[]
   submitStartup: (
-    s: { name: string; domain: Startup['domain']; stage: Startup['stage']; teamSize: number; description: string },
+    s: { name: string; domain: Startup['domain']; stage: Startup['stage']; teamSize: number; description: string; visibility: 'network' | 'admin' },
     shareToFeed?: boolean,
   ) => void
+
+  // events
+  events: AppEvent[]
+  createEvent: (e: { title: string; description: string; location: string; meetingLink?: string; startsAt: string; isPaid?: boolean; price?: number }) => Promise<void>
+  toggleRsvp: (id: string) => void
+  cancelEvent: (id: string) => void
 
   // admin: announcements + mentor approvals
   pinnedPostIds: string[]
@@ -173,6 +184,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [communities, setCommunities] = useState<Community[]>([])
   const [sessions, setSessions] = useState<MentorshipSession[]>([])
   const [startups, setStartups] = useState<Startup[]>([])
+  const [events, setEvents] = useState<AppEvent[]>([])
   const [notifications, setNotifications] = useState<AppNotification[]>([])
   const [pendingMentorIds, setPendingMentorIds] = useState<string[]>([])
 
@@ -195,7 +207,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ---- bootstrap: load users, feed & connections for the signed-in user ---
   const bootstrap = useCallback(async () => {
     try {
-      const [me, allUsers, feed, graph, msgThreads, comms, sess, sups, notifs] = await Promise.all([
+      const [me, allUsers, feed, graph, msgThreads, comms, sess, sups, notifs, evts] = await Promise.all([
         api.me(),
         api.getUsers(),
         api.getFeed(),
@@ -205,10 +217,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         api.getSessions(),
         api.getStartups(),
         api.getNotifications(),
+        api.getEvents().catch(() => [] as AppEvent[]),
       ])
       setUsers(allUsers.some((u) => u.id === me.id) ? allUsers : [me, ...allUsers])
       setCurrentUserId(me.id)
       setPosts(feed)
+      setEvents(evts)
       setConnectionIds(graph.connectionIds)
       setSentRequestIds(graph.sentRequestIds)
       setPendingRequestIds(graph.pendingRequestIds)
@@ -340,8 +354,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUserId])
 
-  // Background poll (30s) while signed in, so incoming requests/notifications
-  // appear live. ponytail: replace with websockets/SSE for true realtime.
+  // Realtime: SSE pokes make chat + notifications update the moment they
+  // change; the 30s poll below stays as a safety net for missed events.
+  useEffect(() => {
+    if (!isAuthenticated || !token) return
+    const es = new EventSource(`/api/stream?token=${encodeURIComponent(token)}`)
+    const onNotification = () => api.getNotifications().then(setNotifications, () => {})
+    const onMessage = () => void refreshThreads()
+    es.addEventListener('notification', onNotification)
+    es.addEventListener('message', onMessage)
+    return () => es.close()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, token])
+
+  // Background poll (30s) while signed in — fallback behind the SSE stream.
   useEffect(() => {
     if (!isAuthenticated) return
     const interval = setInterval(refreshNetwork, 30_000)
@@ -452,6 +478,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         batch: input.batch,
         role: input.role,
         company: input.company,
+        questions: input.questions,
+        wantsResume: input.wantsResume,
       }).then(
         (created) => {
           setPosts((p) => [created, ...p])
@@ -528,8 +556,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [notify],
   )
 
+  const updatePost = useCallback(
+    (id: string, patch: Partial<Post>) => {
+      api.updatePost(id, patch).then(
+        (updated) => {
+          setPosts((list) => list.map((p) => (p.id === id ? updated : p)))
+          notify('Job post updated.')
+        },
+        (err) => notify(err instanceof Error ? err.message : 'Could not update the post.', 'error'),
+      )
+    },
+    [notify],
+  )
+
   const applyToJob = useCallback(
-    (postId: string) => {
+    (postId: string, answers?: string[], resume?: { name: string; dataBase64: string; mediaType: string }) => {
       const post = posts.find((p) => p.id === postId)
       if (!post || post.appliedByMe) return
       // optimistic
@@ -540,7 +581,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             : p,
         ),
       )
-      api.applyToJob(postId).then(
+      api.applyToJob(postId, answers, resume).then(
         (r) => {
           setPosts((list) =>
             list.map((p) =>
@@ -642,7 +683,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const acceptSession = useCallback(
-    (id: string) => sessionAction(api.acceptSession(id), 'Session confirmed. The mentee has been notified.'),
+    (id: string, meetingLink?: string) =>
+      sessionAction(api.acceptSession(id, meetingLink), 'Session confirmed. The mentee has been notified.'),
+    [sessionAction],
+  )
+  const rateSession = useCallback(
+    (id: string, rating: number, review?: string) =>
+      sessionAction(api.rateSession(id, rating, review), 'Thanks — your rating helps other alumni. ⭐'),
     [sessionAction],
   )
   const declineSession = useCallback(
@@ -671,9 +718,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [notify, updateProfile],
   )
 
+  const createEvent = useCallback(
+    async (e: { title: string; description: string; location: string; meetingLink?: string; startsAt: string; isPaid?: boolean; price?: number }) => {
+      const created = await api.createEvent(e)
+      setEvents((list) =>
+        [...list, created].sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt)),
+      )
+      notify(
+        created.status === 'pending'
+          ? 'Event submitted — an admin will review it before it goes live.'
+          : 'Your event is live — the network has been notified. 🎉',
+        created.status === 'pending' ? 'info' : 'success',
+      )
+    },
+    [notify],
+  )
+
+  const toggleRsvp = useCallback(
+    (id: string) => {
+      const ev = events.find((x) => x.id === id)
+      if (!ev) return
+      const call = ev.rsvpedByMe ? api.unrsvpEvent : api.rsvpEvent
+      call(id).then(
+        (updated) => setEvents((list) => list.map((x) => (x.id === id ? updated : x))),
+        () => notify('Could not update your RSVP. Try again.', 'error'),
+      )
+    },
+    [events, notify],
+  )
+
+  const cancelEvent = useCallback(
+    (id: string) => {
+      api.cancelEvent(id).then(
+        () => {
+          setEvents((list) => list.filter((x) => x.id !== id))
+          notify('Event cancelled — attendees have been notified.')
+        },
+        (err) => notify(err instanceof Error ? err.message : 'Could not cancel the event.', 'error'),
+      )
+    },
+    [notify],
+  )
+
   const submitStartup = useCallback(
     (
-      s: { name: string; domain: Startup['domain']; stage: Startup['stage']; teamSize: number; description: string },
+      s: { name: string; domain: Startup['domain']; stage: Startup['stage']; teamSize: number; description: string; visibility: 'network' | 'admin' },
       shareToFeed = false,
     ) => {
       api.submitStartup(s).then(
@@ -845,6 +934,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshNetwork,
     posts,
     createPost,
+    updatePost,
     toggleLike,
     toggleSave,
     addComment,
@@ -855,11 +945,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     sessions,
     bookSession,
     acceptSession,
+    rateSession,
     declineSession,
     completeSession,
     becomeMentor,
     startups,
     submitStartup,
+    events,
+    createEvent,
+    toggleRsvp,
+    cancelEvent,
     pinnedPostIds,
     announce,
     unpinAnnouncement,

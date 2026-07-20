@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, ArrowRight, Camera, Check } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { api } from '../lib/api'
+import { fileToPhotoDataUrl } from '../lib/image'
 import { Avatar } from '../components/ui'
 import { ResumeUpload } from '../components/onboarding/ResumeUpload'
 import {
@@ -12,7 +13,7 @@ import {
   type EmploymentType,
 } from '../types'
 
-const STEPS = ['Basic Info', 'Current Status', 'Profile Setup', 'Interests']
+const STEPS = ['Import Resume', 'Basic Info', 'Current Status', 'Profile Setup', 'Interests']
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
@@ -60,35 +61,67 @@ export function Onboarding() {
   const set = (k: keyof typeof form, v: string | boolean) =>
     setForm((f) => ({ ...f, [k]: v }))
 
-  // Real AI resume parsing (Claude Haiku via the backend). Prefills the form,
-  // including the candidate's name (the most reliable source for the display name).
+  // Real AI resume parsing (Claude via the backend). Prefills every step of the
+  // form from the extracted details; the user's own input always wins over a
+  // field the resume didn't contain.
   async function parseResume(file: File) {
     setParsing(true)
     try {
       const dataBase64 = await toBase64(file)
+      // Some platforms leave file.type empty — infer from the extension.
+      const mediaType =
+        file.type ||
+        (/\.docx$/i.test(file.name)
+          ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          : 'application/pdf')
       // Minimum ~600ms so the parsing animation doesn't flash; Claude usually takes longer.
-      const [result] = await Promise.all([api.parseResume(dataBase64, file.type), wait(600)])
+      const [result] = await Promise.all([api.parseResume(dataBase64, mediaType), wait(600)])
+
       const top = result.experience[0]
+      const pick = (parsed: string | undefined, current: string) => parsed || current
       setForm((f) => ({
         ...f,
-        name: result.name || f.name,
+        name: pick(result.name, f.name),
+        phone: pick(result.phone, f.phone),
+        batchYear: pick(result.batchYear?.replace(/\D/g, '').slice(0, 4), f.batchYear),
+        course: pick(result.course, f.course),
+        company: pick(top?.company, f.company),
         designation: top?.role || f.designation || result.headline,
-        company: top?.company || f.company,
-        bio: f.bio || result.headline,
+        experienceYears: pick(result.experienceYears?.replace(/\D/g, '').slice(0, 2), f.experienceYears),
+        domain: DOMAINS.includes(result.domain as Domain) ? (result.domain as Domain) : f.domain,
+        employmentType: EMPLOYMENT_TYPES.includes(result.employmentType as EmploymentType)
+          ? (result.employmentType as EmploymentType)
+          : f.employmentType,
+        linkedin: pick(result.linkedin, f.linkedin),
+        city: pick(result.city, f.city),
+        bio: pick(result.bio || result.headline, f.bio),
         expertise: result.skills.length ? result.skills.join(', ') : f.expertise,
       }))
-      notify('Resume parsed — review and complete your profile below.', 'success')
-    } catch {
-      notify('Could not parse resume. Is the backend running? You can fill it in manually.', 'error')
+
+      if (result.source === 'fallback') {
+        notify('AI parsing is not configured on the server — sample data filled in for demo.', 'info')
+      } else {
+        notify('Resume parsed — your details are filled in. Review each step and finish.', 'success')
+      }
+      // Jump straight into reviewing the prefilled details.
+      setStep(1)
+    } catch (err) {
+      notify(
+        err instanceof Error && err.message && !err.message.startsWith('Request failed')
+          ? err.message
+          : 'Could not parse resume. Is the backend running? You can fill it in manually.',
+        'error',
+      )
     } finally {
       setParsing(false)
     }
   }
 
   const canNext = () => {
-    if (step === 0) return form.name && form.email && form.batchYear && form.course
-    if (step === 1) return form.company && form.designation && form.domain && form.employmentType
-    if (step === 2) return form.city
+    if (step === 0) return true // resume import is optional
+    if (step === 1) return form.name && form.email && form.batchYear && form.course
+    if (step === 2) return form.company && form.designation && form.domain && form.employmentType
+    if (step === 3) return form.city
     return true
   }
 
@@ -97,6 +130,7 @@ export function Onboarding() {
     try {
       await updateProfile({
         name: form.name || 'You',
+        ...(photo ? { photo } : {}),
         phone: form.phone,
         batchYear: Number(form.batchYear) || new Date().getFullYear(),
         course: form.course,
@@ -146,6 +180,22 @@ export function Onboarding() {
 
         {/* Step content */}
         {step === 0 && (
+          <div className="flex flex-col gap-4">
+            <div className="rounded-xl border border-orange-100 bg-orange-50 p-4">
+              <p className="font-semibold text-[#1c1c1c]">
+                Welcome{form.name ? `, ${form.name.split(' ')[0]}` : ''}! 👋
+              </p>
+              <p className="mt-1 text-sm leading-relaxed text-[#1c1c1c]/70">
+                Drop your resume and AI fills in your whole profile — batch, course, company,
+                skills, everything. You review each step before it's saved. No resume handy?
+                Skip and fill it in manually.
+              </p>
+            </div>
+            <ResumeUpload parsing={parsing} onParse={parseResume} />
+          </div>
+        )}
+
+        {step === 1 && (
           <div className="flex flex-col gap-3">
             <Field label="Full Name" value={form.name} onChange={(v) => set('name', v)} placeholder="Aarav Sharma" />
             <div>
@@ -166,18 +216,8 @@ export function Onboarding() {
           </div>
         )}
 
-        {step === 1 && (
+        {step === 2 && (
           <div className="flex flex-col gap-3">
-            {/* AI accelerator: upload a resume to auto-fill the fields below. */}
-            <div className="rounded-xl border border-dashed border-[#edeff1] bg-[#f6f7f8] p-3">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#878a8c]">
-                Fast-track with AI
-              </p>
-              <ResumeUpload parsing={parsing} onParse={parseResume} />
-              <div className="my-3 flex items-center gap-3 text-xs text-[#878a8c]">
-                <div className="h-px flex-1 bg-[#edeff1]" /> or fill manually <div className="h-px flex-1 bg-[#edeff1]" />
-              </div>
-            </div>
             <Field label="Current Company" value={form.company} onChange={(v) => set('company', v)} placeholder="Amazon" />
             <Field label="Designation" value={form.designation} onChange={(v) => set('designation', v)} placeholder="Software Engineer" />
             <Field label="Years of Experience" value={form.experienceYears} onChange={(v) => set('experienceYears', v.replace(/\D/g, '').slice(0, 2))} placeholder="4" />
@@ -186,7 +226,7 @@ export function Onboarding() {
           </div>
         )}
 
-        {step === 2 && (
+        {step === 3 && (
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-4">
               <button
@@ -206,9 +246,14 @@ export function Onboarding() {
                 type="file"
                 accept="image/*"
                 hidden
-                onChange={(e) => {
+                onChange={async (e) => {
                   const f = e.target.files?.[0]
-                  if (f) setPhoto(URL.createObjectURL(f))
+                  if (!f) return
+                  try {
+                    setPhoto(await fileToPhotoDataUrl(f))
+                  } catch {
+                    notify('Could not read that image — try a different file.', 'error')
+                  }
                 }}
               />
               <div>
@@ -232,7 +277,7 @@ export function Onboarding() {
           </div>
         )}
 
-        {step === 3 && (
+        {step === 4 && (
           <div className="flex flex-col gap-3">
             <Toggle
               label="Willing to mentor juniors?"
@@ -259,11 +304,13 @@ export function Onboarding() {
           </button>
           <button
             onClick={next}
-            disabled={!canNext() || saving}
+            disabled={!canNext() || saving || (step === 0 && parsing)}
             className="flex items-center gap-2 rounded-full bg-[#ff4500] px-6 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#ff6534] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {step === STEPS.length - 1 ? (
               <>{saving ? 'Saving…' : 'Finish'} <Check size={16} /></>
+            ) : step === 0 ? (
+              <>Skip — fill manually <ArrowRight size={16} /></>
             ) : (
               <>Continue <ArrowRight size={16} /></>
             )}
