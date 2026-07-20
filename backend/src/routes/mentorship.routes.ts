@@ -16,10 +16,12 @@ interface SessionRow {
   date_label: string
   time_label: string
   status: 'requested' | 'upcoming' | 'declined' | 'past'
+  meeting_link: string | null
+  rating: number | null
 }
 
 const SESSION_SELECT = `
-  SELECT s.id, s.mentor_id, s.mentee_id, u.name AS mentee_name, s.topic, s.date_label, s.time_label, s.status
+  SELECT s.id, s.mentor_id, s.mentee_id, u.name AS mentee_name, s.topic, s.date_label, s.time_label, s.status, s.meeting_link, s.rating
   FROM mentorship_sessions s
   JOIN users u ON u.id = s.mentee_id`
 
@@ -33,6 +35,8 @@ function mapSession(r: SessionRow) {
     date: r.date_label,
     time: r.time_label,
     status: r.status,
+    meetingLink: r.meeting_link ?? undefined,
+    rating: r.rating ?? undefined,
   }
 }
 
@@ -122,12 +126,17 @@ mentorshipRouter.post(
   asyncHandler(async (req, res) => {
     const s = await sessionForMentor(req.params.id, req.user!.sub)
     if (s.status !== 'requested') throw new ApiError(400, `Session is already ${s.status}`)
-    await query(`UPDATE mentorship_sessions SET status = 'upcoming' WHERE id = $1`, [req.params.id])
+    const link = typeof req.body?.meetingLink === 'string' ? req.body.meetingLink.trim().slice(0, 500) : ''
+    await query(`UPDATE mentorship_sessions SET status = 'upcoming', meeting_link = $2 WHERE id = $1`, [
+      req.params.id,
+      link || null,
+    ])
     const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
     void pushNotification(
       s.mentee_id,
       'mentorship',
-      `${me.rows[0].name} confirmed your session "${s.topic}" — ${s.date_label} at ${s.time_label}.`,
+      `${me.rows[0].name} confirmed your session "${s.topic}" — ${s.date_label} at ${s.time_label}.` +
+        (link ? ' Meeting link attached — see My Sessions.' : ''),
       req.user!.sub,
     )
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
@@ -237,5 +246,53 @@ mentorshipRouter.post(
       [req.params.id],
     )
     res.json({ ok: true })
+  }),
+)
+
+// POST /api/mentorship/sessions/:id/rate — mentee rates a completed session.
+mentorshipRouter.post(
+  '/sessions/:id/rate',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const rating = Number(req.body?.rating)
+    const review = typeof req.body?.review === 'string' ? req.body.review.trim().slice(0, 500) : ''
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      throw new ApiError(400, 'rating must be 1-5')
+    }
+    const s = await query<{ mentor_id: string; status: string; rating: number | null; topic: string }>(
+      `SELECT mentor_id, status, rating, topic FROM mentorship_sessions WHERE id = $1 AND mentee_id = $2`,
+      [req.params.id, req.user!.sub],
+    )
+    if (!s.rowCount) throw new ApiError(404, 'Session not found (or you are not its mentee)')
+    if (s.rows[0].status !== 'past') throw new ApiError(400, 'You can rate a session once it is completed')
+    if (s.rows[0].rating) throw new ApiError(400, 'You already rated this session')
+
+    await query(`UPDATE mentorship_sessions SET rating = $2, review = $3 WHERE id = $1`, [
+      req.params.id,
+      rating,
+      review || null,
+    ])
+    const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
+    void pushNotification(
+      s.rows[0].mentor_id,
+      'mentorship',
+      `${me.rows[0].name} rated your session "${s.rows[0].topic}" ${rating}★${review ? ` — "${review.slice(0, 60)}"` : ''}`,
+      req.user!.sub,
+    )
+    const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
+    res.json(mapSession(full.rows[0]))
+  }),
+)
+
+// GET /api/mentorship/ratings — average rating per mentor (for mentor cards).
+mentorshipRouter.get(
+  '/ratings',
+  requireAuth,
+  asyncHandler(async (_req, res) => {
+    const rows = await query<{ mentor_id: string; avg: string; count: number }>(
+      `SELECT mentor_id, round(avg(rating)::numeric, 1)::text AS avg, count(*)::int AS count
+       FROM mentorship_sessions WHERE rating IS NOT NULL GROUP BY mentor_id`,
+    )
+    res.json(rows.rows.map((r) => ({ mentorId: r.mentor_id, avg: Number(r.avg), count: r.count })))
   }),
 )

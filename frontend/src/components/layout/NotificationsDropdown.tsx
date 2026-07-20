@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
-import {
+import { Calendar,
   Bell,
   Briefcase,
   CheckCheck,
@@ -21,6 +21,7 @@ const ICONS: Record<NotificationType, typeof Bell> = {
   mentorship: Users,
   community: Users,
   announcement: Megaphone,
+  event: Calendar,
 }
 
 // Where each notification type takes you when clicked.
@@ -32,6 +33,7 @@ export const NOTIFICATION_ROUTES: Record<NotificationType, string> = {
   mentorship: '/mentorship',
   community: '/explore',
   announcement: '/home',
+  event: '/events',
 }
 
 export function NotificationsDropdown({ onClose }: { onClose: () => void }) {

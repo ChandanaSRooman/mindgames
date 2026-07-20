@@ -15,8 +15,12 @@ export function ResumeUpload({
   const inputRef = useRef<HTMLInputElement>(null)
 
   function pick(f: File) {
-    if (!/\.(pdf|docx?)$/i.test(f.name)) {
-      setError('Please upload a PDF or Word (.doc/.docx) file.')
+    if (/\.doc$/i.test(f.name)) {
+      setError('Legacy .doc files are not supported — save your resume as PDF or .docx.')
+      return
+    }
+    if (!/\.(pdf|docx)$/i.test(f.name)) {
+      setError('Please upload a PDF or Word (.docx) file.')
       return
     }
     setError(null)
@@ -57,13 +61,13 @@ export function ResumeUpload({
             <p className="font-medium text-[#1c1c1c]">
               Drop your resume here, or <span className="text-[#ff4500]">browse</span>
             </p>
-            <p className="mt-1 text-xs text-[#878a8c]">PDF or Word document</p>
+            <p className="mt-1 text-xs text-[#878a8c]">PDF or Word (.docx)</p>
           </div>
         )}
         <input
           ref={inputRef}
           type="file"
-          accept=".pdf,.doc,.docx"
+          accept=".pdf,.docx"
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0]

@@ -1,4 +1,5 @@
 import { query } from './db/pool.js'
+import { emitTo, emitToAll } from './realtime.js'
 
 type NotificationType =
   | 'connection'
@@ -8,6 +9,7 @@ type NotificationType =
   | 'mentorship'
   | 'community'
   | 'announcement'
+  | 'event'
 
 /**
  * Insert a notification for one recipient. Fire-and-forget from routes —
@@ -24,6 +26,7 @@ export async function pushNotification(
       `INSERT INTO notifications (user_id, type, text, actor_id) VALUES ($1,$2,$3,$4)`,
       [userId, type, text, actorId ?? null],
     )
+    emitTo(userId, 'notification')
   } catch (err) {
     console.error('notification insert failed:', err instanceof Error ? err.message : err)
   }
@@ -41,6 +44,7 @@ export async function pushNotificationToAll(
        SELECT id, $1, $2, $3 FROM users WHERE id <> $3`,
       [type, text, actorId],
     )
+    emitToAll('notification')
   } catch (err) {
     console.error('broadcast notification failed:', err instanceof Error ? err.message : err)
   }

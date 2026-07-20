@@ -1,13 +1,19 @@
-import { useState } from 'react'
-import { X } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { Camera, Trash2, X } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
+import { fileToPhotoDataUrl } from '../../lib/image'
 import { Button } from '../ui'
+import { ProfilePhoto } from './ProfilePhoto'
 import { DOMAINS, EMPLOYMENT_TYPES, type Domain, type EmploymentType } from '../../types'
 
 // Edit the signed-in user's profile. Saves via PATCH /api/users/me (RDS).
 export function EditProfileModal({ onClose }: { onClose: () => void }) {
   const { currentUser, updateProfile, notify } = useApp()
   const [saving, setSaving] = useState(false)
+  const photoRef = useRef<HTMLInputElement>(null)
+  // undefined = unchanged; string = new photo; null = remove existing photo.
+  const [photo, setPhoto] = useState<string | null | undefined>(undefined)
+  const shownPhoto = photo === undefined ? currentUser.photo : photo
 
   const [form, setForm] = useState({
     name: currentUser.name,
@@ -36,6 +42,7 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
     try {
       await updateProfile({
         name: form.name.trim(),
+        ...(photo !== undefined ? { photo } : {}),
         designation: form.designation,
         company: form.company,
         city: form.city,
@@ -81,6 +88,50 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="flex flex-col gap-3">
+          {/* Profile photo */}
+          <div className="flex items-center gap-4">
+            <ProfilePhoto
+              name={form.name || currentUser.name}
+              photo={shownPhoto}
+              size={64}
+              canEdit
+              onChange={(p) => setPhoto(p)}
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                className="!px-3 !py-1.5 text-xs"
+                onClick={() => photoRef.current?.click()}
+              >
+                <Camera size={14} /> {shownPhoto ? 'Change photo' : 'Upload photo'}
+              </Button>
+              {shownPhoto && (
+                <Button
+                  variant="ghost"
+                  className="!px-3 !py-1.5 text-xs !text-red-500 hover:!bg-red-50"
+                  onClick={() => setPhoto(null)}
+                >
+                  <Trash2 size={14} /> Remove
+                </Button>
+              )}
+              <input
+                ref={photoRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={async (e) => {
+                  const f = e.target.files?.[0]
+                  if (!f) return
+                  try {
+                    setPhoto(await fileToPhotoDataUrl(f))
+                  } catch {
+                    notify('Could not read that image — try a different file.', 'error')
+                  }
+                }}
+              />
+            </div>
+          </div>
+
           <div>
             <label className={label}>Full Name</label>
             <input className={field} value={form.name} onChange={(e) => set('name', e.target.value)} />

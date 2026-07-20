@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Image as ImageIcon, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Image as ImageIcon, Plus, Trash2, X } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { Avatar, Button } from '../ui'
 import {
@@ -35,8 +35,39 @@ export function PostCreateModal({
     prefill?.communityId ? 'Specific Community' : 'All Alumni',
   )
   const [communityId, setCommunityId] = useState(prefill?.communityId ?? '')
+  // Hiring only: questions every applicant must answer (max 5).
+  const [questions, setQuestions] = useState<string[]>([])
+  const [questionDraft, setQuestionDraft] = useState('')
+  // Hiring only: require applicants to attach a resume.
+  const [wantsResume, setWantsResume] = useState(false)
 
   const isJob = type === 'Hiring' || type === 'Open to Work'
+
+  // Silent abuse guard only — the UI advertises no limit (backend caps at 20 too).
+  const MAX_QUESTIONS = 20
+  const QUESTION_SUGGESTIONS = [
+    'Years of relevant experience?',
+    'Current notice period?',
+    'Expected CTC?',
+    'Portfolio / GitHub link?',
+  ]
+
+  function addQuestion(text: string) {
+    const q = text.trim().slice(0, 160)
+    if (!q || questions.length >= MAX_QUESTIONS || questions.includes(q)) return
+    setQuestions((list) => [...list, q])
+    setQuestionDraft('')
+  }
+
+  function moveQuestion(index: number, dir: -1 | 1) {
+    setQuestions((list) => {
+      const j = index + dir
+      if (j < 0 || j >= list.length) return list
+      const next = [...list]
+      ;[next[index], next[j]] = [next[j], next[index]]
+      return next
+    })
+  }
 
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
@@ -56,6 +87,8 @@ export function PostCreateModal({
       communityId: visibility === 'Specific Community' ? communityId || undefined : undefined,
       role: isJob ? role || undefined : undefined,
       company: isJob ? company || undefined : undefined,
+      questions: type === 'Hiring' && questions.length ? questions : undefined,
+      wantsResume: type === 'Hiring' ? wantsResume : undefined,
     })
     onClose()
   }
@@ -74,7 +107,7 @@ export function PostCreateModal({
         <div className="max-h-[70vh] overflow-y-auto px-5 py-4">
           {/* Author */}
           <div className="mb-4 flex items-center gap-3">
-            <Avatar name={currentUser.name} size={44} />
+            <Avatar name={currentUser.name} src={currentUser.photo} size={44} />
             <div>
               <p className="font-semibold text-[#1c1c1c]">{currentUser.name}</p>
               <p className="text-xs text-[#878a8c]">{currentUser.designation}</p>
@@ -111,6 +144,110 @@ export function PostCreateModal({
                 placeholder="Company"
                 className="rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
               />
+            </div>
+          )}
+
+          {/* Application questions (Hiring only) */}
+          {type === 'Hiring' && (
+            <div className="mb-3 rounded-xl border border-dashed border-[#edeff1] bg-[#f6f7f8] p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#878a8c]">
+                Questions for applicants{' '}
+                {questions.length > 0 && <span className="font-bold normal-case">({questions.length})</span>}{' '}
+                <span className="font-normal normal-case">(optional)</span>
+              </p>
+              <p className="mt-1 text-xs text-[#878a8c]">
+                Every applicant must answer these — their answers appear next to their name in
+                your applicant list.
+              </p>
+
+              {questions.length > 0 && (
+                <ul className="mt-2 space-y-1.5">
+                  {questions.map((q, i) => (
+                    <li
+                      key={q}
+                      className="flex items-center gap-2 rounded-lg border border-[#edeff1] bg-white px-3 py-1.5 text-sm text-[#1c1c1c]"
+                    >
+                      <span className="text-xs font-bold text-[#ff4500]">{i + 1}.</span>
+                      <span className="flex-1">{q}</span>
+                      <button
+                        onClick={() => moveQuestion(i, -1)}
+                        disabled={i === 0}
+                        className="rounded-full p-1 text-[#878a8c] hover:bg-gray-100 hover:text-[#1c1c1c] disabled:cursor-not-allowed disabled:opacity-30"
+                        title="Move up"
+                        aria-label={`Move question up: ${q}`}
+                      >
+                        <ChevronUp size={15} />
+                      </button>
+                      <button
+                        onClick={() => moveQuestion(i, 1)}
+                        disabled={i === questions.length - 1}
+                        className="rounded-full p-1 text-[#878a8c] hover:bg-gray-100 hover:text-[#1c1c1c] disabled:cursor-not-allowed disabled:opacity-30"
+                        title="Move down"
+                        aria-label={`Move question down: ${q}`}
+                      >
+                        <ChevronDown size={15} />
+                      </button>
+                      <button
+                        onClick={() => setQuestions((list) => list.filter((x) => x !== q))}
+                        className="rounded-full p-1 text-[#878a8c] hover:bg-red-50 hover:text-red-500"
+                        title="Delete this question"
+                        aria-label={`Delete question: ${q}`}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="mt-2 flex gap-2">
+                <input
+                  value={questionDraft}
+                  onChange={(e) => setQuestionDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      addQuestion(questionDraft)
+                    }
+                  }}
+                  placeholder="e.g. How many years of React experience?"
+                  className="flex-1 rounded-lg border border-[#edeff1] bg-white px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
+                />
+                <button
+                  onClick={() => addQuestion(questionDraft)}
+                  disabled={!questionDraft.trim()}
+                  className="flex items-center gap-1 rounded-lg bg-[#ff4500] px-3 py-2 text-sm font-semibold text-white hover:bg-[#ff6534] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Plus size={15} /> Add
+                </button>
+              </div>
+              {QUESTION_SUGGESTIONS.some((sug) => !questions.includes(sug)) && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {QUESTION_SUGGESTIONS.filter((s) => !questions.includes(s)).map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => addQuestion(s)}
+                      className="rounded-full border border-[#edeff1] bg-white px-2.5 py-1 text-xs text-[#878a8c] hover:border-[#ff4500]/40 hover:text-[#ff4500]"
+                    >
+                      + {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Resume collection toggle */}
+              <label className="mt-3 flex cursor-pointer items-center gap-2.5 border-t border-[#edeff1] pt-3">
+                <input
+                  type="checkbox"
+                  checked={wantsResume}
+                  onChange={(e) => setWantsResume(e.target.checked)}
+                  className="h-4 w-4 accent-[#ff4500]"
+                />
+                <span className="text-sm text-[#1c1c1c]">
+                  Ask applicants to attach their <strong>resume</strong>{' '}
+                  <span className="text-xs text-[#878a8c]">(PDF or .docx, downloadable from your applicant list)</span>
+                </span>
+              </label>
             </div>
           )}
 

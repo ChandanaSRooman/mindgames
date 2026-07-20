@@ -78,3 +78,90 @@ body {
 .animate-fadein {
   animation: fadein 0.15s ease-out;
 }
+
+/* ---------------------------------------------------------------------------
+   Landing page motion
+--------------------------------------------------------------------------- */
+@keyframes floaty {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(14px, -22px) scale(1.06);
+  }
+}
+
+@keyframes floaty2 {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(-18px, 16px) scale(1.08);
+  }
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes gradient-x {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.animate-floaty {
+  animation: floaty 9s ease-in-out infinite;
+}
+.animate-floaty2 {
+  animation: floaty2 11s ease-in-out infinite;
+}
+.animate-marquee {
+  animation: marquee 28s linear infinite;
+}
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
+.animate-gradient-x {
+  background-size: 200% auto;
+  animation: gradient-x 5s ease-in-out infinite;
+}
+
+/* Scroll-reveal: elements start hidden and slide up once in view. */
+.reveal {
+  opacity: 0;
+  transform: translateY(26px);
+  transition:
+    opacity 0.7s ease,
+    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-floaty,
+  .animate-floaty2,
+  .animate-marquee,
+  .animate-gradient-x {
+    animation: none;
+  }
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}

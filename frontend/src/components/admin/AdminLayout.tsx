@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { Compass, LayoutDashboard, Users, Megaphone, GraduationCap, Rocket, Settings, ArrowLeft } from 'lucide-react'
+import { Flag, CalendarCheck, Compass, LayoutDashboard, Users, Megaphone, GraduationCap, Rocket, Settings, ArrowLeft } from 'lucide-react'
 import { cx } from '../ui'
 
-export type AdminView = 'dashboard' | 'directory' | 'announcements' | 'mentors' | 'startups' | 'communities' | 'settings'
+export type AdminView = 'dashboard' | 'directory' | 'announcements' | 'mentors' | 'startups' | 'communities' | 'events' | 'reports' | 'settings'
 
 const NAV: Array<{ key: AdminView; label: string; icon: ReactNode }> = [
   { key: 'dashboard', label: 'Invitations', icon: <LayoutDashboard size={18} /> },
@@ -12,6 +12,8 @@ const NAV: Array<{ key: AdminView; label: string; icon: ReactNode }> = [
   { key: 'mentors', label: 'Mentor Approvals', icon: <GraduationCap size={18} /> },
   { key: 'startups', label: 'Startup Applications', icon: <Rocket size={18} /> },
   { key: 'communities', label: 'Community Approvals', icon: <Compass size={18} /> },
+  { key: 'events', label: 'Event Approvals', icon: <CalendarCheck size={18} /> },
+  { key: 'reports', label: 'Reports', icon: <Flag size={18} /> },
   { key: 'settings', label: 'Settings', icon: <Settings size={18} /> },
 ]
 

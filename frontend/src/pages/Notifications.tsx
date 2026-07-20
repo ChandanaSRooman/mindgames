@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import {
+import { Calendar,
   Bell,
   Briefcase,
   Heart,
@@ -23,6 +23,7 @@ const ICONS: Record<NotificationType, typeof Bell> = {
   mentorship: Users,
   community: Users,
   announcement: Megaphone,
+  event: Calendar,
 }
 
 export function Notifications() {
@@ -50,7 +51,7 @@ export function Notifications() {
               if (!u) return null
               return (
                 <div key={rid} className="flex items-center gap-3">
-                  <Avatar name={u.name} size={40} to={`/profile/${u.id}`} />
+                  <Avatar name={u.name} src={u.photo} size={40} to={`/profile/${u.id}`} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-[#1c1c1c]">{u.name}</p>
                     <p className="truncate text-xs text-[#878a8c]">{u.designation}</p>
@@ -79,7 +80,7 @@ export function Notifications() {
             >
               {actor ? (
                 <span onClick={(e) => e.stopPropagation()}>
-                  <Avatar name={actor.name} size={40} to={`/profile/${actor.id}`} />
+                  <Avatar name={actor.name} src={actor.photo} size={40} to={`/profile/${actor.id}`} />
                 </span>
               ) : (
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-100 text-[#ff4500]">

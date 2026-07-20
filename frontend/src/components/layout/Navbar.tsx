@@ -15,6 +15,7 @@ import { useApp } from '../../store/AppStore'
 import { useLayout } from './LayoutContext'
 import { Avatar } from '../ui'
 import { NotificationsDropdown } from './NotificationsDropdown'
+import { SearchDropdown } from './SearchDropdown'
 
 export function Navbar() {
   const { currentUser, query, setQuery, unreadNotifications, unreadMessages, signOut } = useApp()
@@ -23,13 +24,16 @@ export function Navbar() {
 
   const [showNotifs, setShowNotifs] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
   const notifRef = useRef<HTMLDivElement>(null)
   const profileRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) setShowNotifs(false)
       if (profileRef.current && !profileRef.current.contains(e.target as Node)) setShowProfile(false)
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) setSearchOpen(false)
     }
     document.addEventListener('mousedown', onClick)
     return () => document.removeEventListener('mousedown', onClick)
@@ -49,16 +53,22 @@ export function Navbar() {
       </Link>
 
       {/* Search */}
-      <div className="mx-auto flex w-full max-w-2xl items-center">
+      <div ref={searchRef} className="relative mx-auto flex w-full max-w-2xl items-center">
         <div className="flex w-full items-center rounded-full border border-[#edeff1] bg-[#f6f7f8] pl-4 focus-within:border-[#ff4500] focus-within:ring-2 focus-within:ring-orange-100">
           <Search size={18} className="text-[#878a8c]" />
           <input
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setSearchOpen(true)
+            }}
+            onFocus={() => setSearchOpen(true)}
+            onKeyDown={(e) => e.key === 'Escape' && setSearchOpen(false)}
             placeholder="Search alumni, jobs, mentors, posts..."
             className="w-full bg-transparent px-3 py-2 text-sm text-[#1c1c1c] outline-none placeholder:text-[#878a8c]"
           />
         </div>
+        {searchOpen && query.trim() && <SearchDropdown onClose={() => setSearchOpen(false)} />}
       </div>
 
       {/* Right cluster */}
@@ -90,13 +100,13 @@ export function Navbar() {
             onClick={() => setShowProfile((v) => !v)}
             className="flex items-center gap-1 rounded-full p-0.5 hover:bg-gray-100"
           >
-            <Avatar name={currentUser.name} size={32} />
+            <Avatar name={currentUser.name} src={currentUser.photo} size={32} />
             <ChevronDown size={16} className="text-[#878a8c]" />
           </button>
           {showProfile && (
             <div className="animate-fadein absolute right-0 mt-2 w-60 overflow-hidden rounded-xl border border-[#edeff1] bg-white shadow-lg">
               <div className="flex items-center gap-3 border-b border-[#edeff1] p-4">
-                <Avatar name={currentUser.name} size={44} />
+                <Avatar name={currentUser.name} src={currentUser.photo} size={44} />
                 <div className="min-w-0">
                   <p className="truncate font-semibold text-[#1c1c1c]">{currentUser.name}</p>
                   <p className="truncate text-xs text-[#878a8c]">{currentUser.designation}</p>

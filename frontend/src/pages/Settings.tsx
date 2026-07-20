@@ -7,7 +7,7 @@ import { Avatar, Button, Card } from '../components/ui'
 import { EditProfileModal } from '../components/profile/EditProfileModal'
 
 export function Settings() {
-  const { currentUser, signOut, notify } = useApp()
+  const { currentUser, signOut, notify, updateProfile } = useApp()
   const navigate = useNavigate()
   const [editing, setEditing] = useState(false)
 
@@ -50,7 +50,7 @@ export function Settings() {
           <ShieldCheck size={18} className="text-[#ff4500]" /> Account
         </h2>
         <div className="flex items-center gap-4">
-          <Avatar name={currentUser.name} size={56} />
+          <Avatar name={currentUser.name} src={currentUser.photo} size={56} />
           <div className="min-w-0 flex-1">
             <p className="font-semibold text-[#1c1c1c]">{currentUser.name}</p>
             <p className="truncate text-sm text-[#878a8c]">{currentUser.email}</p>
@@ -106,6 +106,23 @@ export function Settings() {
             Update Password
           </Button>
         </form>
+      </Card>
+
+      {/* Email preferences */}
+      <Card className="p-5">
+        <h2 className="mb-1 text-base font-bold text-[#1c1c1c]">Email preferences</h2>
+        <p className="mb-3 text-sm text-[#878a8c]">
+          A short Monday summary of top posts, new jobs and upcoming events.
+        </p>
+        <label className="flex cursor-pointer items-center justify-between rounded-lg border border-[#edeff1] px-4 py-3">
+          <span className="text-sm font-medium text-[#1c1c1c]">Weekly digest email</span>
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-[#ff4500]"
+            checked={currentUser.emailDigest !== false}
+            onChange={(e) => updateProfile({ emailDigest: e.target.checked }).catch(() => notify('Could not save your preference.', 'error'))}
+          />
+        </label>
       </Card>
 
       {/* Session */}

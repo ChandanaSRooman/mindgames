@@ -56,7 +56,7 @@ export function MyNetwork() {
           <div className="flex flex-col gap-3">
             {pending.map((u) => (
               <Card key={u.id} className="flex items-center gap-3 p-4">
-                <Avatar name={u.name} size={48} to={`/profile/${u.id}`} />
+                <Avatar name={u.name} src={u.photo} size={48} to={`/profile/${u.id}`} />
                 <div className="min-w-0 flex-1">
                   <Link to={`/profile/${u.id}`} className="font-semibold text-[#1c1c1c] hover:underline">
                     {u.name}
@@ -92,7 +92,7 @@ export function MyNetwork() {
         <div className="grid gap-3 sm:grid-cols-2">
           {suggestions.map((u) => (
             <Card key={u.id} className="flex flex-col items-center p-5 text-center">
-              <Avatar name={u.name} size={64} to={`/profile/${u.id}`} />
+              <Avatar name={u.name} src={u.photo} size={64} to={`/profile/${u.id}`} />
               <Link to={`/profile/${u.id}`} className="mt-3 font-semibold text-[#1c1c1c] hover:underline">
                 {u.name}
               </Link>
@@ -122,7 +122,7 @@ export function MyNetwork() {
         <div className="flex flex-col gap-3">
           {connections.map((u) => (
             <Card key={u.id} className="flex items-center gap-3 p-4">
-              <Avatar name={u.name} size={48} to={`/profile/${u.id}`} />
+              <Avatar name={u.name} src={u.photo} size={48} to={`/profile/${u.id}`} />
               <div className="min-w-0 flex-1">
                 <Link to={`/profile/${u.id}`} className="font-semibold text-[#1c1c1c] hover:underline">
                   {u.name}

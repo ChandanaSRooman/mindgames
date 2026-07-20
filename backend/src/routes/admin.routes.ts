@@ -7,6 +7,8 @@ import { emailEnabled } from '../email.js'
 import { aiEnabled } from '../ai.js'
 
 // Network-wide overview numbers for the admin console.
+import { sendWeeklyDigest } from '../digest.js'
+
 export const adminRouter = Router()
 adminRouter.use(requireAuth, requireAdmin)
 
@@ -81,5 +83,14 @@ adminRouter.get(
         joinedAt: new Date(r.created_at).toISOString(),
       })),
     })
+  }),
+)
+
+// POST /api/admin/digest — send the weekly digest to all opted-in members now.
+adminRouter.post(
+  '/digest',
+  asyncHandler(async (_req, res) => {
+    const result = await sendWeeklyDigest()
+    res.json(result)
   }),
 )

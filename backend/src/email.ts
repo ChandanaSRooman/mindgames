@@ -48,3 +48,38 @@ export async function sendInviteEmails(
   }
   return sent
 }
+
+/**
+ * Generic single-recipient sender. Returns true when a real email went out,
+ * false when SMTP is unconfigured (the message is logged instead so dev
+ * environments keep working).
+ */
+export async function sendEmail(to: string, subject: string, text: string): Promise<boolean> {
+  if (!transport) {
+    console.log(`[email simulated] to=${to} subject="${subject}"\n${text}`)
+    return false
+  }
+  await transport.sendMail({ from: SMTP_FROM || SMTP_USER, to, subject, text })
+  return true
+}
+
+export function sendPasswordResetEmail(to: string, name: string, link: string): Promise<boolean> {
+  return sendEmail(
+    to,
+    'Reset your RooConnect password',
+    `Hi ${name},\n\nSomeone requested a password reset for your RooConnect account. ` +
+      `If this was you, set a new password here (link valid for 1 hour):\n\n${link}\n\n` +
+      `If you didn't request this, you can safely ignore this email.\n\n— The Rooman Team`,
+  )
+}
+
+export function sendVerificationEmail(to: string, name: string, link: string): Promise<boolean> {
+  return sendEmail(
+    to,
+    'Verify your email for RooConnect',
+    `Hi ${name},\n\nWelcome to the Rooman Alumni Network! Please confirm this email address ` +
+      `so we know it's really you:\n\n${link}\n\n— The Rooman Team`,
+  )
+}
+
+export const appUrl = APP_URL

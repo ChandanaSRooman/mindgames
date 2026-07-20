@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Award, Calendar, GraduationCap, Star, X } from 'lucide-react'
+import { ExternalLink, Video, Award, Calendar, GraduationCap, Star, X } from 'lucide-react'
 import { useApp } from '../store/AppStore'
+import { api } from '../lib/api'
 import { Avatar, Button, Card } from '../components/ui'
-import type { User } from '../types'
+import type { MentorshipSession, User } from '../types'
 
 type Tab = 'Find a Mentor' | 'My Sessions'
 
@@ -15,12 +16,23 @@ export function Mentorship() {
     userById,
     bookSession,
     acceptSession,
+    rateSession,
     declineSession,
     completeSession,
     becomeMentor,
     query,
   } = useApp()
   const [tab, setTab] = useState<Tab>('Find a Mentor')
+  const [accepting, setAccepting] = useState<string | null>(null)
+  const [rating, setRating] = useState<MentorshipSession | null>(null)
+  const [ratings, setRatings] = useState<Map<string, { avg: number; count: number }>>(new Map())
+
+  useEffect(() => {
+    api.getMentorRatings().then(
+      (rows) => setRatings(new Map(rows.map((r) => [r.mentorId, { avg: r.avg, count: r.count }]))),
+      () => {},
+    )
+  }, [])
   const [booking, setBooking] = useState<User | null>(null)
   const [showBecome, setShowBecome] = useState(false)
 
@@ -71,7 +83,7 @@ export function Mentorship() {
           {mentors.map((m) => (
             <Card key={m.id} className="p-5">
               <div className="flex items-center gap-3">
-                <Avatar name={m.name} size={56} to={`/profile/${m.id}`} />
+                <Avatar name={m.name} src={m.photo} size={56} to={`/profile/${m.id}`} />
                 <div className="min-w-0">
                   <Link to={`/profile/${m.id}`} className="font-semibold text-[#1c1c1c] hover:underline">{m.name}</Link>
                   <p className="truncate text-xs text-[#878a8c]">{m.designation} · {m.company}</p>
@@ -85,7 +97,10 @@ export function Mentorship() {
               </div>
               <div className="mt-3 flex items-center justify-between text-sm">
                 <span className="flex items-center gap-1 text-[#878a8c]">
-                  <Star size={14} className="fill-amber-400 text-amber-400" /> {m.sessionsConducted ?? 0} sessions
+                  <Star size={14} className="fill-amber-400 text-amber-400" />
+                  {ratings.has(m.id)
+                    ? `${ratings.get(m.id)!.avg} (${ratings.get(m.id)!.count}) · ${m.sessionsConducted ?? 0} sessions`
+                    : `${m.sessionsConducted ?? 0} sessions`}
                 </span>
                 {m.mentorRate ? (
                   <span className="font-bold text-[#1c1c1c]">₹{m.mentorRate.toLocaleString('en-IN')}<span className="text-xs font-normal text-[#878a8c]">/hr</span></span>
@@ -128,7 +143,7 @@ export function Mentorship() {
                       </div>
                       {iAmMentor ? (
                         <div className="flex gap-2">
-                          <Button className="!px-3 !py-1.5 text-xs" onClick={() => acceptSession(s.id)}>
+                          <Button className="!px-3 !py-1.5 text-xs" onClick={() => setAccepting(s.id)}>
                             Accept
                           </Button>
                           <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => declineSession(s.id)}>
@@ -164,6 +179,16 @@ export function Mentorship() {
                         {iAmMentor ? 'mentoring' : 'with'} {other} · {s.date} · {s.time}
                       </p>
                     </div>
+                    {s.meetingLink && (
+                      <a
+                        href={s.meetingLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-600 hover:bg-blue-100"
+                      >
+                        <Video size={12} /> Join <ExternalLink size={10} />
+                      </a>
+                    )}
                     <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-semibold text-green-700">Confirmed</span>
                     {iAmMentor && (
                       <Button variant="outline" className="!px-3 !py-1.5 text-xs" onClick={() => completeSession(s.id)}>
@@ -193,6 +218,16 @@ export function Mentorship() {
                       <p className="font-semibold text-[#1c1c1c]">{s.topic}</p>
                       <p className="text-xs text-[#878a8c]">{iAmMentor ? 'mentored' : 'with'} {other} · {s.date}</p>
                     </div>
+                    {!declined && s.rating && (
+                      <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-600">
+                        <Star size={11} className="fill-amber-500 text-amber-500" /> {s.rating}
+                      </span>
+                    )}
+                    {!declined && !s.rating && !iAmMentor && (
+                      <Button variant="outline" className="!px-3 !py-1.5 text-xs" onClick={() => setRating(s)}>
+                        <Star size={13} /> Rate
+                      </Button>
+                    )}
                     <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${declined ? 'bg-red-50 text-red-500' : 'bg-gray-100 text-[#878a8c]'}`}>
                       {declined ? 'Declined' : 'Completed'}
                     </span>
@@ -205,6 +240,25 @@ export function Mentorship() {
         </div>
       )}
 
+      {accepting && (
+        <AcceptModal
+          onClose={() => setAccepting(null)}
+          onAccept={(link) => {
+            acceptSession(accepting, link || undefined)
+            setAccepting(null)
+          }}
+        />
+      )}
+      {rating && (
+        <RateModal
+          session={rating}
+          onClose={() => setRating(null)}
+          onRate={(stars, review) => {
+            rateSession(rating.id, stars, review || undefined)
+            setRating(null)
+          }}
+        />
+      )}
       {booking && (
         <BookModal
           mentor={booking}
@@ -322,4 +376,84 @@ function Overlay({ children, title, onClose }: { children: React.ReactNode; titl
 
 function Empty({ label }: { label: string }) {
   return <div className="rounded-xl border border-[#edeff1] bg-white py-10 text-center text-sm text-[#878a8c] shadow-sm">{label}</div>
+}
+
+// Mentor confirms a request, optionally attaching a meeting link.
+function AcceptModal({ onClose, onAccept }: { onClose: () => void; onAccept: (link: string) => void }) {
+  const [link, setLink] = useState('')
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="animate-slidein w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <h2 className="font-bold text-[#1c1c1c]">Confirm this session</h2>
+        <p className="mt-1 text-sm text-[#878a8c]">
+          Add a meeting link (Google Meet, Zoom…) so your mentee knows where to join. You can also
+          confirm without one and share it in chat later.
+        </p>
+        <input
+          value={link}
+          onChange={(e) => setLink(e.target.value)}
+          placeholder="https://meet.google.com/… (optional)"
+          className="mt-3 w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
+        />
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => onAccept(link.trim())}>Confirm session</Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Mentee rates a completed session 1-5 stars.
+function RateModal({
+  session,
+  onClose,
+  onRate,
+}: {
+  session: MentorshipSession
+  onClose: () => void
+  onRate: (stars: number, review: string) => void
+}) {
+  const [stars, setStars] = useState(0)
+  const [hover, setHover] = useState(0)
+  const [review, setReview] = useState('')
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="animate-slidein w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <h2 className="font-bold text-[#1c1c1c]">How was "{session.topic}"?</h2>
+        <p className="mt-1 text-sm text-[#878a8c]">Your rating shows on the mentor's card and helps other alumni choose.</p>
+        <div className="mt-4 flex justify-center gap-1.5">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button
+              key={n}
+              onClick={() => setStars(n)}
+              onMouseEnter={() => setHover(n)}
+              onMouseLeave={() => setHover(0)}
+              aria-label={`${n} star${n === 1 ? '' : 's'}`}
+            >
+              <Star
+                size={30}
+                className={
+                  n <= (hover || stars) ? 'fill-amber-400 text-amber-400' : 'text-[#d6d7d8]'
+                }
+              />
+            </button>
+          ))}
+        </div>
+        <textarea
+          value={review}
+          onChange={(e) => setReview(e.target.value.slice(0, 500))}
+          rows={2}
+          placeholder="A short review (optional)"
+          className="mt-4 w-full resize-none rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
+        />
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button disabled={stars === 0} onClick={() => onRate(stars, review.trim())}>
+            Submit rating
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
 }
