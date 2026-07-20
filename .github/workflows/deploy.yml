@@ -107,11 +107,11 @@ jobs:
       group: production-deploy
       cancel-in-progress: false
     env:
-      # Production target (from the deployment notes). Verify the instance id if
-      # the box was ever replaced; update DEPLOY_HOST when a domain/TLS is added.
+      # Production target. SSM addresses the box by instance id, and the health
+      # check resolves its current public IP at runtime — so a stopped/started
+      # box (new IP) never breaks the deploy.
       AWS_REGION: ap-south-1
       INSTANCE_ID: i-097cc672e9a49a72e
-      DEPLOY_HOST: 3.110.33.45
       S3_BUCKET: ${{ vars.DEPLOY_S3_BUCKET }}
       BACKEND_DIR: /opt/rooconnect
       FRONTEND_DIR: /var/www/rooconnect
@@ -178,7 +178,14 @@ jobs:
           sudo -u ubuntu bash -lc "cd '\$BACKEND_DIR' && npm ci --omit=dev --no-audit --no-fund && npm run db:migrate:prod"
           echo "Restarting service…"
           systemctl restart "\$SERVICE"
-          echo "Deploy complete."
+          echo "Verifying /api/health…"
+          ok=0
+          for _ in \$(seq 1 15); do
+            if curl -fsS http://localhost/api/health >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+          [ "\$ok" = 1 ] || { echo "health check FAILED — /api/health did not come up"; exit 1; }
+          echo "Deploy complete and healthy."
           REMOTE
 
           echo "Sending SSM command to ${INSTANCE_ID}…"
@@ -210,11 +217,3 @@ jobs:
             --query StandardErrorContent --output text || true
           echo "Final status: ${STATUS}"
           [ "${STATUS}" = "Success" ]
-
-      - name: Health check
-        run: |
-          set -euo pipefail
-          echo "Waiting for the API to come back up…"
-          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors "http://${DEPLOY_HOST}/api/health"
-          echo
-          echo "✓ Deploy verified — /api/health is up."
