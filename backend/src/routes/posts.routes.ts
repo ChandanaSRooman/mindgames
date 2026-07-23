@@ -9,7 +9,7 @@ import { pushNotification, pushNotificationToAll } from '../notify.js'
 export const postsRouter = Router()
 
 const POST_SELECT = `
-  SELECT p.id, p.author_id, p.type, p.content, p.image, p.visibility, p.community_id,
+  SELECT p.id, p.author_id, p.type, p.content, p.image, p.visibility, p.community_id, p.event_id,
          p.domain, p.city, p.batch, p.role, p.company, p.questions, p.wants_resume, p.active, p.pinned, p.likes, p.created_at,
          EXISTS (SELECT 1 FROM post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1) AS liked_by_me,
          EXISTS (SELECT 1 FROM post_saves ps WHERE ps.post_id = p.id AND ps.user_id = $1) AS saved_by_me,
@@ -44,6 +44,7 @@ const createSchema = z.object({
   image: z.string().optional(),
   visibility: z.enum(['All Alumni', 'My Network', 'Specific Community']).default('All Alumni'),
   communityId: z.string().optional(),
+  eventId: z.string().optional(),
   domain: z.string().optional(),
   city: z.string().optional(),
   batch: z.number().int().optional(),
@@ -66,16 +67,42 @@ postsRouter.post(
     const questions = p.type === 'Hiring' ? (p.questions ?? []) : []
     const wantsResume = p.type === 'Hiring' && !!p.wantsResume
 
+    // An event-linked update may only be posted by that event's host or an admin.
+    let event: { creator_id: string; title: string } | undefined
+    if (p.eventId) {
+      const ev = await query<{ creator_id: string; title: string }>(
+        `SELECT creator_id, title FROM events WHERE id = $1`,
+        [p.eventId],
+      )
+      if (!ev.rowCount) throw new ApiError(404, 'Event not found')
+      event = ev.rows[0]
+      if (event.creator_id !== req.user!.sub && !req.user!.isAdmin) {
+        throw new ApiError(403, 'Only the host or an admin can post an update for this event')
+      }
+    }
+
     const inserted = await query<{ id: string }>(
-      `INSERT INTO posts (author_id, type, content, image, visibility, community_id,
+      `INSERT INTO posts (author_id, type, content, image, visibility, community_id, event_id,
                           domain, city, batch, role, company, questions, wants_resume)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
       [
-        req.user!.sub, p.type, p.content, p.image ?? null, p.visibility, p.communityId ?? null,
+        req.user!.sub, p.type, p.content, p.image ?? null, p.visibility, p.communityId ?? null, p.eventId ?? null,
         p.domain ?? null, p.city ?? null, p.batch ?? null, p.role ?? null, p.company ?? null,
         JSON.stringify(questions), wantsResume,
       ],
     )
+
+    // Event update: let RSVP'd attendees know, without paging the author themself.
+    if (event) {
+      const attendees = await query<{ user_id: string }>(
+        `SELECT user_id FROM event_rsvps WHERE event_id = $1 AND user_id <> $2`,
+        [p.eventId, req.user!.sub],
+      )
+      for (const a of attendees.rows) {
+        void pushNotification(a.user_id, 'event', `New update on "${event.title}": ${p.content.slice(0, 120)}`, req.user!.sub)
+      }
+    }
+
     // Job alert: tell alumni in the same domain about the new opening.
     if (p.type === 'Hiring' && p.domain) {
       const poster = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])

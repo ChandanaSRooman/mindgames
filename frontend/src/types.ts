@@ -101,6 +101,8 @@ export interface Post {
   comments: Comment[]
   visibility: Visibility
   communityId?: string
+  // Set when this post is an update/recap tied to an event (host or admin only).
+  eventId?: string
   // Tags
   domain?: Domain
   city?: string
@@ -149,14 +151,32 @@ export interface AppEvent {
   // Paid (ticketed) event + price in whole rupees. Payment is collected offline.
   isPaid?: boolean
   price?: number
+  // Max confirmed RSVPs; undefined = unlimited. Extra RSVPs waitlist.
+  capacity?: number
   rsvpCount: number
+  waitlistCount: number
   rsvpedByMe: boolean
+  waitlistedByMe: boolean
+  // Feedback (ratings), only collectible once the event has started.
+  avgRating?: number
+  feedbackCount: number
+  feedbackByMe: boolean
   attendeeIds: string[]
 }
 
 // Admin review queue entry for events.
 export interface PendingEvent extends AppEvent {
   creatorName: string
+}
+
+// One attendee's rating + comment (host/admin view of an event's feedback).
+export interface EventFeedbackEntry {
+  userId: string
+  name: string
+  photo?: string
+  rating: number
+  comment: string
+  createdAt: string // ISO
 }
 
 // A computed profile achievement.

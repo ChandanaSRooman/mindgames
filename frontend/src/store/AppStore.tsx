@@ -68,6 +68,7 @@ export interface NewPostInput {
   batch?: number
   visibility: Visibility
   communityId?: string
+  eventId?: string
   role?: string
   company?: string
   questions?: string[]
@@ -129,9 +130,19 @@ interface AppContextValue {
 
   // events
   events: AppEvent[]
-  createEvent: (e: { title: string; description: string; location: string; meetingLink?: string; startsAt: string; isPaid?: boolean; price?: number }) => Promise<void>
+  createEvent: (e: {
+    title: string
+    description: string
+    location: string
+    meetingLink?: string
+    startsAt: string
+    isPaid?: boolean
+    price?: number
+    capacity?: number
+  }) => Promise<void>
   toggleRsvp: (id: string) => void
   cancelEvent: (id: string) => void
+  submitEventFeedback: (id: string, rating: number, comment: string) => Promise<void>
 
   // admin: announcements + mentor approvals
   pinnedPostIds: string[]
@@ -473,6 +484,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         image: input.image,
         visibility: input.visibility,
         communityId: input.communityId,
+        eventId: input.eventId,
         domain: input.domain,
         city: input.city,
         batch: input.batch,
@@ -719,7 +731,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const createEvent = useCallback(
-    async (e: { title: string; description: string; location: string; meetingLink?: string; startsAt: string; isPaid?: boolean; price?: number }) => {
+    async (e: {
+      title: string
+      description: string
+      location: string
+      meetingLink?: string
+      startsAt: string
+      isPaid?: boolean
+      price?: number
+      capacity?: number
+    }) => {
       const created = await api.createEvent(e)
       setEvents((list) =>
         [...list, created].sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt)),
@@ -738,13 +759,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (id: string) => {
       const ev = events.find((x) => x.id === id)
       if (!ev) return
-      const call = ev.rsvpedByMe ? api.unrsvpEvent : api.rsvpEvent
+      const going = ev.rsvpedByMe || ev.waitlistedByMe
+      const call = going ? api.unrsvpEvent : api.rsvpEvent
       call(id).then(
         (updated) => setEvents((list) => list.map((x) => (x.id === id ? updated : x))),
         () => notify('Could not update your RSVP. Try again.', 'error'),
       )
     },
     [events, notify],
+  )
+
+  const submitEventFeedback = useCallback(
+    async (id: string, rating: number, comment: string) => {
+      const updated = await api.submitEventFeedback(id, rating, comment)
+      setEvents((list) => list.map((x) => (x.id === id ? updated : x)))
+    },
+    [],
   )
 
   const cancelEvent = useCallback(
@@ -955,6 +985,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     createEvent,
     toggleRsvp,
     cancelEvent,
+    submitEventFeedback,
     pinnedPostIds,
     announce,
     unpinAnnouncement,
