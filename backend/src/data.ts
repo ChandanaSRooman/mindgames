@@ -24,6 +24,8 @@ export interface ResumeParseResult {
   experienceYears: string
   domain: string
   employmentType: string
+  // Current college/institution name — only populated when employmentType is 'Student'.
+  college: string
   experience: Experience[]
   skills: string[]
   // 'ai' = real Claude extraction; 'fallback' = demo data (no ANT_KEY).
@@ -44,6 +46,7 @@ export const resumeParseResult: ResumeParseResult = {
   experienceYears: '5',
   domain: 'Web Dev',
   employmentType: 'Employed',
+  college: '',
   experience: [
     { role: 'Senior Software Engineer', company: 'TechNova Solutions', period: '2022 — Present', summary: 'Led a 5-person team building a React + Node.js SaaS platform serving 40k MAU. Cut API latency 35%.' },
     { role: 'Software Engineer', company: 'BluePeak Labs', period: '2019 — 2022', summary: 'Built customer-facing dashboards in React/TypeScript and REST microservices in Node. Owned CI/CD pipeline.' },

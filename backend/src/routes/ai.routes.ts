@@ -10,8 +10,19 @@ export const aiRouter = Router()
 /** Compact, fresh snapshot of the network for grounding Roo's answers. */
 async function buildContext(): Promise<string> {
   const [users, jobs, events, communities] = await Promise.all([
-    query<{ name: string; designation: string; company: string; city: string; domain: string; is_mentor: boolean; mentor_rate: number | null; batch_year: number }>(
-      `SELECT name, designation, company, city, domain, is_mentor, mentor_rate, batch_year
+    query<{
+      name: string
+      designation: string
+      company: string
+      college: string
+      employment_type: string
+      city: string
+      domain: string
+      is_mentor: boolean
+      mentor_rate: number | null
+      batch_year: number
+    }>(
+      `SELECT name, designation, company, college, employment_type, city, domain, is_mentor, mentor_rate, batch_year
        FROM users WHERE NOT is_admin ORDER BY created_at LIMIT 200`,
     ),
     query<{ role: string | null; company: string | null; city: string | null; domain: string | null; poster: string; applicants: number }>(
@@ -35,8 +46,16 @@ async function buildContext(): Promise<string> {
   const lines: string[] = []
   lines.push(`MEMBERS (${users.rowCount}):`)
   for (const u of users.rows) {
+    const status =
+      u.employment_type === 'Student'
+        ? `Student${u.college ? ` at ${u.college}` : ''}`
+        : u.employment_type === 'Looking for opportunity'
+          ? 'Looking for opportunity'
+          : u.employment_type === 'Just looking around'
+            ? 'Just looking around'
+            : `${u.designation || 'Member'} at ${u.company || '—'}`
     lines.push(
-      `- ${u.name} — ${u.designation || 'Member'} at ${u.company || '—'}, ${u.city || '—'} · ${u.domain} · Batch ${u.batch_year}` +
+      `- ${u.name} — ${status}, ${u.city || '—'} · ${u.domain} · Batch ${u.batch_year}` +
         (u.is_mentor ? ` · MENTOR${u.mentor_rate ? ` (₹${u.mentor_rate}/hr)` : ' (rate on request)'}` : ''),
     )
   }

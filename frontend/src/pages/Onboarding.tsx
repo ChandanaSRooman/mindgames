@@ -9,9 +9,19 @@ import { ResumeUpload } from '../components/onboarding/ResumeUpload'
 import {
   DOMAINS,
   EMPLOYMENT_TYPES,
+  WORKING_EMPLOYMENT_TYPES,
+  statusOf,
+  type CurrentStatus,
   type Domain,
   type EmploymentType,
 } from '../types'
+
+const STATUS_OPTIONS: CurrentStatus[] = [
+  'Working Professional',
+  'Student',
+  'Looking for opportunity',
+  'Just looking around',
+]
 
 const STEPS = ['Import Resume', 'Basic Info', 'Current Status', 'Profile Setup', 'Interests']
 
@@ -47,6 +57,7 @@ export function Onboarding() {
     course: '',
     company: '',
     designation: '',
+    college: '',
     experienceYears: '',
     domain: '' as Domain | '',
     employmentType: '' as EmploymentType | '',
@@ -60,6 +71,22 @@ export function Onboarding() {
 
   const set = (k: keyof typeof form, v: string | boolean) =>
     setForm((f) => ({ ...f, [k]: v }))
+
+  const status = statusOf(form.employmentType)
+
+  // Switching Current Status clears whatever fields no longer apply, so a
+  // stale company/designation/college doesn't ride along unfilled on save.
+  function pickStatus(s: CurrentStatus) {
+    setForm((f) => ({
+      ...f,
+      employmentType:
+        s === 'Working Professional' ? (statusOf(f.employmentType) === 'Working Professional' ? f.employmentType : 'Employed') : s,
+      company: s === 'Working Professional' ? f.company : '',
+      designation: s === 'Working Professional' ? f.designation : '',
+      college: s === 'Student' ? f.college : '',
+      experienceYears: s === 'Working Professional' || s === 'Looking for opportunity' ? f.experienceYears : '',
+    }))
+  }
 
   // Real AI resume parsing (Claude via the backend). Prefills every step of the
   // form from the extracted details; the user's own input always wins over a
@@ -87,6 +114,7 @@ export function Onboarding() {
         course: pick(result.course, f.course),
         company: pick(top?.company, f.company),
         designation: top?.role || f.designation || result.headline,
+        college: pick(result.college, f.college),
         experienceYears: pick(result.experienceYears?.replace(/\D/g, '').slice(0, 2), f.experienceYears),
         domain: DOMAINS.includes(result.domain as Domain) ? (result.domain as Domain) : f.domain,
         employmentType: EMPLOYMENT_TYPES.includes(result.employmentType as EmploymentType)
@@ -120,7 +148,7 @@ export function Onboarding() {
   const canNext = () => {
     if (step === 0) return true // resume import is optional
     if (step === 1) return form.name && form.email && form.batchYear && form.course
-    if (step === 2) return form.company && form.designation && form.domain && form.employmentType
+    if (step === 2) return true // current status is optional — fill in what applies, skip the rest
     if (step === 3) return form.city
     return true
   }
@@ -136,9 +164,12 @@ export function Onboarding() {
         course: form.course,
         company: form.company,
         designation: form.designation,
+        college: form.college,
         experienceYears: Number(form.experienceYears) || 0,
         domain: (form.domain || 'Web Dev') as Domain,
-        employmentType: (form.employmentType || 'Employed') as EmploymentType,
+        // A truly skipped step 2 means "didn't say" — default to the honest
+        // catch-all, not a guessed 'Employed'.
+        employmentType: (form.employmentType || 'Just looking around') as EmploymentType,
         linkedin: form.linkedin,
         bio: form.bio || 'Rooman alumnus.',
         city: form.city,
@@ -218,11 +249,50 @@ export function Onboarding() {
 
         {step === 2 && (
           <div className="flex flex-col gap-3">
-            <Field label="Current Company" value={form.company} onChange={(v) => set('company', v)} placeholder="Amazon" />
-            <Field label="Designation" value={form.designation} onChange={(v) => set('designation', v)} placeholder="Software Engineer" />
-            <Field label="Years of Experience" value={form.experienceYears} onChange={(v) => set('experienceYears', v.replace(/\D/g, '').slice(0, 2))} placeholder="4" />
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[#1c1c1c]">Current Status</label>
+              <div className="grid grid-cols-2 gap-2">
+                {STATUS_OPTIONS.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => pickStatus(s)}
+                    className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                      status === s
+                        ? 'border-[#ff4500] bg-orange-50 text-[#ff4500]'
+                        : 'border-[#edeff1] text-[#1c1c1c] hover:bg-gray-50'
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-xs text-[#878a8c]">Optional — pick what applies, or skip this step entirely.</p>
+            </div>
+
+            {status === 'Working Professional' && (
+              <>
+                <Select
+                  label="Employment Type"
+                  value={form.employmentType}
+                  onChange={(v) => set('employmentType', v)}
+                  options={WORKING_EMPLOYMENT_TYPES}
+                />
+                <Field label="Current Company" value={form.company} onChange={(v) => set('company', v)} placeholder="Amazon" />
+                <Field label="Designation" value={form.designation} onChange={(v) => set('designation', v)} placeholder="Software Engineer" />
+                <Field label="Years of Experience" value={form.experienceYears} onChange={(v) => set('experienceYears', v.replace(/\D/g, '').slice(0, 2))} placeholder="4" />
+              </>
+            )}
+
+            {status === 'Student' && (
+              <Field label="College / Institution" value={form.college} onChange={(v) => set('college', v)} placeholder="Rooman Technologies" />
+            )}
+
+            {status === 'Looking for opportunity' && (
+              <Field label="Years of Experience" value={form.experienceYears} onChange={(v) => set('experienceYears', v.replace(/\D/g, '').slice(0, 2))} placeholder="4" />
+            )}
+
             <Select label="Expertise Domain" value={form.domain} onChange={(v) => set('domain', v)} options={DOMAINS} />
-            <Select label="Employment Type" value={form.employmentType} onChange={(v) => set('employmentType', v)} options={EMPLOYMENT_TYPES} />
           </div>
         )}
 

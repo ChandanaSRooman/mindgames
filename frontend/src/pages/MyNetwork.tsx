@@ -5,6 +5,7 @@ import { useApp } from '../store/AppStore'
 import { useLayout } from '../components/layout/LayoutContext'
 import { Avatar, Button, Card, Pill, SectionTitle } from '../components/ui'
 import { matchesUserQuery } from '../lib/search'
+import { roleLine } from '../lib/format'
 import { DOMAINS } from '../types'
 
 export function MyNetwork() {
@@ -61,7 +62,7 @@ export function MyNetwork() {
                   <Link to={`/profile/${u.id}`} className="font-semibold text-[#1c1c1c] hover:underline">
                     {u.name}
                   </Link>
-                  <p className="truncate text-xs text-[#878a8c]">{u.designation} · {u.company}</p>
+                  {roleLine(u) && <p className="truncate text-xs text-[#878a8c]">{roleLine(u)}</p>}
                 </div>
                 <Button onClick={() => acceptRequest(u.id)} className="!px-3 !py-1.5 text-xs">
                   <Check size={15} /> Accept
@@ -96,7 +97,7 @@ export function MyNetwork() {
               <Link to={`/profile/${u.id}`} className="mt-3 font-semibold text-[#1c1c1c] hover:underline">
                 {u.name}
               </Link>
-              <p className="text-xs text-[#878a8c]">{u.designation} · {u.company}</p>
+              {roleLine(u) && <p className="text-xs text-[#878a8c]">{roleLine(u)}</p>}
               <p className="mt-0.5 flex items-center gap-1 text-xs text-[#878a8c]">
                 <MapPin size={12} /> {u.city} · Batch {u.batchYear}
               </p>
@@ -127,7 +128,7 @@ export function MyNetwork() {
                 <Link to={`/profile/${u.id}`} className="font-semibold text-[#1c1c1c] hover:underline">
                   {u.name}
                 </Link>
-                <p className="truncate text-xs text-[#878a8c]">{u.designation} · {u.company}</p>
+                {roleLine(u) && <p className="truncate text-xs text-[#878a8c]">{roleLine(u)}</p>}
               </div>
               <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => openChatWith(u.id)}>
                 <MessageSquare size={15} /> Message

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { ExternalLink, Video, Award, Calendar, GraduationCap, Star, X } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { api } from '../lib/api'
+import { roleLine } from '../lib/format'
 import { Avatar, Button, Card } from '../components/ui'
 import type { MentorshipSession, User } from '../types'
 
@@ -86,7 +87,7 @@ export function Mentorship() {
                 <Avatar name={m.name} src={m.photo} size={56} to={`/profile/${m.id}`} />
                 <div className="min-w-0">
                   <Link to={`/profile/${m.id}`} className="font-semibold text-[#1c1c1c] hover:underline">{m.name}</Link>
-                  <p className="truncate text-xs text-[#878a8c]">{m.designation} · {m.company}</p>
+                  {roleLine(m) && <p className="truncate text-xs text-[#878a8c]">{roleLine(m)}</p>}
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-1.5">
