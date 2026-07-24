@@ -65,7 +65,9 @@ export function NetworkRequests() {
                 >
                   {u.name}
                 </button>
-                <p className="truncate text-xs text-[#878a8c]">{u.designation} · {u.company}</p>
+                {(u.designation || u.company) && (
+                  <p className="truncate text-xs text-[#878a8c]">{[u.designation, u.company].filter(Boolean).join(' · ')}</p>
+                )}
                 <RequestTags requester={u} me={currentUser} posts={posts} />
               </div>
               <Button onClick={() => acceptRequest(u.id)} className="!px-3 !py-1.5 text-xs">
@@ -100,7 +102,9 @@ export function NetworkRequests() {
                 >
                   {u.name}
                 </button>
-                <p className="truncate text-xs text-[#878a8c]">{u.designation} · {u.company}</p>
+                {(u.designation || u.company) && (
+                  <p className="truncate text-xs text-[#878a8c]">{[u.designation, u.company].filter(Boolean).join(' · ')}</p>
+                )}
               </div>
               <Button
                 variant="ghost"

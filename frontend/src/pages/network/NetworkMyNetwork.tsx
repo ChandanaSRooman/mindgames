@@ -31,7 +31,9 @@ export function NetworkMyNetwork() {
               >
                 {u.name}
               </button>
-              <p className="truncate text-xs text-[#878a8c]">{u.designation} · {u.company}</p>
+              {(u.designation || u.company) && (
+                <p className="truncate text-xs text-[#878a8c]">{[u.designation, u.company].filter(Boolean).join(' · ')}</p>
+              )}
             </div>
             <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => openChatWith(u.id)}>
               <MessageSquare size={15} /> Message

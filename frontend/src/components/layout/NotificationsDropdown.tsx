@@ -26,7 +26,9 @@ const ICONS: Record<NotificationType, typeof Bell> = {
 
 // Where each notification type takes you when clicked.
 export const NOTIFICATION_ROUTES: Record<NotificationType, string> = {
-  connection: '/network',
+  // Land on Requests (not the Matches default) — a connection notification is
+  // almost always "X sent/accepted a request", which lives on the Requests tab.
+  connection: '/network/requests',
   like: '/home',
   comment: '/home',
   job: '/jobs',

@@ -50,7 +50,9 @@ export function NetworkMatches() {
             >
               {u.name}
             </button>
-            <p className="text-xs text-[#878a8c]">{u.designation} · {u.company}</p>
+            {(u.designation || u.company) && (
+              <p className="text-xs text-[#878a8c]">{[u.designation, u.company].filter(Boolean).join(' · ')}</p>
+            )}
             <p className="mt-0.5 flex items-center gap-1 text-xs text-[#878a8c]">
               <MapPin size={12} /> {u.city} · Batch {u.batchYear}
             </p>
