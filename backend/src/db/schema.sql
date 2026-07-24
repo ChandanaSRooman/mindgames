@@ -356,6 +356,40 @@ CREATE TABLE IF NOT EXISTS event_rsvps (
   PRIMARY KEY (event_id, user_id)
 );
 
+-- Links a feed post to the event it's about (host/admin update, recap, etc).
+-- `events` must exist before this ALTER runs, hence it lives down here.
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS event_id TEXT REFERENCES events(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_posts_event ON posts (event_id) WHERE event_id IS NOT NULL;
+
+-- Capacity + waitlist: NULL capacity = unlimited. RSVPs beyond capacity are
+-- flagged waitlisted and promoted in arrival order as confirmed spots free up.
+ALTER TABLE events ADD COLUMN IF NOT EXISTS capacity INTEGER;
+ALTER TABLE events DROP CONSTRAINT IF EXISTS events_capacity_check;
+ALTER TABLE events ADD CONSTRAINT events_capacity_check CHECK (capacity IS NULL OR capacity > 0);
+ALTER TABLE event_rsvps ADD COLUMN IF NOT EXISTS waitlisted BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- event_comments: a discussion/Q&A thread on the event itself (distinct from
+-- the event's linked feed posts and their comments).
+CREATE TABLE IF NOT EXISTS event_comments (
+  id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  event_id   TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  author_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  text       TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_event_comments_event ON event_comments (event_id, created_at);
+
+-- event_feedback: one rating (+ optional comment) per confirmed attendee,
+-- submitted once the event has started.
+CREATE TABLE IF NOT EXISTS event_feedback (
+  event_id   TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  rating     INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment    TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (event_id, user_id)
+);
+
 -- ---------------------------------------------------------------------------
 -- auth_tokens: single-use, hashed email tokens (password reset + verification).
 -- ---------------------------------------------------------------------------

@@ -88,6 +88,7 @@ export interface PostRow {
   image: string | null
   visibility: string
   community_id: string | null
+  event_id: string | null
   domain: string | null
   city: string | null
   batch: number | null
@@ -122,6 +123,7 @@ export function mapPost(r: PostRow) {
     comments: (r.comments ?? []).map(mapComment),
     visibility: r.visibility,
     communityId: r.community_id ?? undefined,
+    eventId: r.event_id ?? undefined,
     domain: r.domain ?? undefined,
     city: r.city ?? undefined,
     batch: r.batch ?? undefined,

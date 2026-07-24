@@ -6,6 +6,7 @@ import type {
   Comment,
   Community,
   ContactRow,
+  EventFeedbackEntry,
   JobApplicant,
   MentorshipSession,
   MessageThread,
@@ -301,8 +302,16 @@ export const api = {
 
   // events
   getEvents: () => http<AppEvent[]>('/api/events'),
-  createEvent: (e: { title: string; description: string; location: string; meetingLink?: string; startsAt: string; isPaid?: boolean; price?: number }) =>
-    http<AppEvent>('/api/events', { method: 'POST', body: JSON.stringify(e) }),
+  createEvent: (e: {
+    title: string
+    description: string
+    location: string
+    meetingLink?: string
+    startsAt: string
+    isPaid?: boolean
+    price?: number
+    capacity?: number
+  }) => http<AppEvent>('/api/events', { method: 'POST', body: JSON.stringify(e) }),
   rsvpEvent: (id: string) => http<AppEvent>(`/api/events/${id}/rsvp`, { method: 'POST' }),
   unrsvpEvent: (id: string) => http<AppEvent>(`/api/events/${id}/rsvp`, { method: 'DELETE' }),
   cancelEvent: (id: string) => http<{ ok: boolean }>(`/api/events/${id}`, { method: 'DELETE' }),
@@ -311,6 +320,20 @@ export const api = {
   rejectEvent: (id: string) => http<{ ok: boolean }>(`/api/events/${id}/reject`, { method: 'POST' }),
   getEventAttendees: (id: string) =>
     http<Array<{ id: string; name: string; designation: string; photo?: string }>>(`/api/events/${id}/attendees`),
+  getEventComments: (id: string) => http<Comment[]>(`/api/events/${id}/comments`),
+  addEventComment: (id: string, text: string) =>
+    http<Comment>(`/api/events/${id}/comments`, { method: 'POST', body: JSON.stringify({ text }) }),
+  submitEventFeedback: (id: string, rating: number, comment: string) =>
+    http<AppEvent>(`/api/events/${id}/feedback`, { method: 'POST', body: JSON.stringify({ rating, comment }) }),
+  getEventFeedback: (id: string) => http<EventFeedbackEntry[]>(`/api/events/${id}/feedback`),
+  downloadEventCertificate: async (id: string): Promise<Blob> => {
+    const token = getToken()
+    const res = await fetch(`/api/events/${id}/certificate`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) throw new Error(`Download failed (${res.status})`)
+    return res.blob()
+  },
 
   // badges
   getBadges: (userId: string) => http<{ points: number; badges: Badge[] }>(`/api/users/${userId}/badges`),
