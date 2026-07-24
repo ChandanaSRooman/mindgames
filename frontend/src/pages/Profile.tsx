@@ -26,7 +26,7 @@ import { ProfilePhoto } from '../components/profile/ProfilePhoto'
 import { ReportModal } from '../components/ReportModal'
 import { compact } from '../lib/format'
 import { api } from '../lib/api'
-import { PROFILE_TAGS, type Badge, type ProfileTag, type User } from '../types'
+import { PROFILE_TAGS, type Badge, type EmploymentType, type ProfileTag, type User } from '../types'
 
 export function Profile() {
   const { id } = useParams<{ id: string }>()
@@ -216,6 +216,9 @@ function ProfileTagBadge({ user, isMe }: { user: User; isMe: boolean }) {
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  // Whatever employmentType was just before "Open to Work" overwrote it —
+  // removing the tag restores this instead of guessing a default.
+  const priorEmploymentType = useRef<EmploymentType | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -238,14 +241,18 @@ function ProfileTagBadge({ user, isMe }: { user: User; isMe: boolean }) {
   async function choose(tag: ProfileTag | null) {
     setSaving(true)
     try {
+      const leavingOpenToWork = current === 'Open to Work' && user.employmentType === 'Looking for opportunity'
+      if (tag === 'Open to Work' && user.employmentType !== 'Looking for opportunity') {
+        priorEmploymentType.current = user.employmentType
+      }
       await updateProfile({
         profileTag: tag,
         willingToMentor: tag === 'Mentor',
         isMentor: tag === 'Mentor',
         ...(tag === 'Open to Work'
           ? { employmentType: 'Looking for opportunity' }
-          : current === 'Open to Work' && user.employmentType === 'Looking for opportunity'
-            ? { employmentType: 'Employed' }
+          : leavingOpenToWork && priorEmploymentType.current
+            ? { employmentType: priorEmploymentType.current }
             : {}),
       })
       notify(tag ? `Your profile now shows "${tag}".` : 'Tag removed from your profile.')

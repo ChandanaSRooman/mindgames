@@ -7,7 +7,7 @@ import { mapUser, type UserRow } from '../mappers.js'
 
 export const usersRouter = Router()
 
-const USER_COLS = `id, name, email, phone, photo, profile_tag, email_verified_at, email_digest, avatar, batch_year, course, company, designation,
+const USER_COLS = `id, name, email, phone, photo, profile_tag, email_verified_at, email_digest, avatar, batch_year, course, company, designation, college,
   experience_years, domain, employment_type, city, bio, linkedin, expertise,
   willing_to_mentor, interested_in_startup, connections_count, is_mentor,
   mentor_rate, sessions_conducted, is_admin`
@@ -70,6 +70,7 @@ const COLUMN_MAP: Record<string, string> = {
   course: 'course',
   company: 'company',
   designation: 'designation',
+  college: 'college',
   experienceYears: 'experience_years',
   domain: 'domain',
   employmentType: 'employment_type',
@@ -99,6 +100,7 @@ const patchSchema = z
     course: z.string().optional(),
     company: z.string().optional(),
     designation: z.string().optional(),
+    college: z.string().optional(),
     experienceYears: z.number().int().min(0).optional(),
     domain: z.string().optional(),
     employmentType: z.string().optional(),

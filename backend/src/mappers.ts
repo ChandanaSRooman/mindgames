@@ -16,6 +16,7 @@ export interface UserRow {
   course: string
   company: string
   designation: string
+  college: string
   experience_years: number
   domain: string
   employment_type: string
@@ -47,6 +48,7 @@ export function mapUser(r: UserRow) {
     course: r.course,
     company: r.company,
     designation: r.designation,
+    college: r.college,
     experienceYears: r.experience_years,
     domain: r.domain,
     employmentType: r.employment_type,

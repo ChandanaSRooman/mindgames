@@ -4,7 +4,21 @@ import { useApp } from '../../store/AppStore'
 import { fileToPhotoDataUrl } from '../../lib/image'
 import { Button } from '../ui'
 import { ProfilePhoto } from './ProfilePhoto'
-import { DOMAINS, EMPLOYMENT_TYPES, type Domain, type EmploymentType } from '../../types'
+import {
+  DOMAINS,
+  WORKING_EMPLOYMENT_TYPES,
+  statusOf,
+  type CurrentStatus,
+  type Domain,
+  type EmploymentType,
+} from '../../types'
+
+const STATUS_OPTIONS: CurrentStatus[] = [
+  'Working Professional',
+  'Student',
+  'Looking for opportunity',
+  'Just looking around',
+]
 
 // Edit the signed-in user's profile. Saves via PATCH /api/users/me (RDS).
 export function EditProfileModal({ onClose }: { onClose: () => void }) {
@@ -19,6 +33,7 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
     name: currentUser.name,
     designation: currentUser.designation,
     company: currentUser.company,
+    college: currentUser.college ?? '',
     city: currentUser.city,
     phone: currentUser.phone ?? '',
     linkedin: currentUser.linkedin ?? '',
@@ -36,6 +51,8 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
 
   const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }))
 
+  const status = statusOf(form.employmentType)
+
   async function save() {
     if (!form.name.trim()) return notify('Name is required.', 'error')
     setSaving(true)
@@ -45,6 +62,7 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
         ...(photo !== undefined ? { photo } : {}),
         designation: form.designation,
         company: form.company,
+        college: form.college,
         city: form.city,
         phone: form.phone,
         linkedin: form.linkedin,
@@ -136,16 +154,57 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
             <label className={label}>Full Name</label>
             <input className={field} value={form.name} onChange={(e) => set('name', e.target.value)} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={label}>Designation</label>
-              <input className={field} value={form.designation} onChange={(e) => set('designation', e.target.value)} />
-            </div>
-            <div>
-              <label className={label}>Company</label>
-              <input className={field} value={form.company} onChange={(e) => set('company', e.target.value)} />
+
+          <div>
+            <label className={label}>Current Status</label>
+            <div className="grid grid-cols-2 gap-2">
+              {STATUS_OPTIONS.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() =>
+                    set('employmentType', s === 'Working Professional' ? (status === 'Working Professional' ? form.employmentType : 'Employed') : s)
+                  }
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                    status === s
+                      ? 'border-[#ff4500] bg-orange-50 text-[#ff4500]'
+                      : 'border-[#edeff1] text-[#1c1c1c] hover:bg-gray-50'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
             </div>
           </div>
+
+          {status === 'Working Professional' && (
+            <>
+              <div>
+                <label className={label}>Employment Type</label>
+                <select className={field} value={form.employmentType} onChange={(e) => set('employmentType', e.target.value)}>
+                  {WORKING_EMPLOYMENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={label}>Designation</label>
+                  <input className={field} value={form.designation} onChange={(e) => set('designation', e.target.value)} />
+                </div>
+                <div>
+                  <label className={label}>Company</label>
+                  <input className={field} value={form.company} onChange={(e) => set('company', e.target.value)} />
+                </div>
+              </div>
+            </>
+          )}
+
+          {status === 'Student' && (
+            <div>
+              <label className={label}>College / Institution</label>
+              <input className={field} value={form.college} onChange={(e) => set('college', e.target.value)} />
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={label}>City</label>
@@ -161,28 +220,22 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
               <label className={label}>Batch Year</label>
               <input className={field} value={form.batchYear} onChange={(e) => set('batchYear', e.target.value.replace(/\D/g, '').slice(0, 4))} />
             </div>
-            <div>
-              <label className={label}>Experience (yrs)</label>
-              <input className={field} value={form.experienceYears} onChange={(e) => set('experienceYears', e.target.value.replace(/\D/g, '').slice(0, 2))} />
-            </div>
+            {(status === 'Working Professional' || status === 'Looking for opportunity') && (
+              <div>
+                <label className={label}>Experience (yrs)</label>
+                <input className={field} value={form.experienceYears} onChange={(e) => set('experienceYears', e.target.value.replace(/\D/g, '').slice(0, 2))} />
+              </div>
+            )}
           </div>
           <div>
             <label className={label}>Course at Rooman</label>
             <input className={field} value={form.course} onChange={(e) => set('course', e.target.value)} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={label}>Domain</label>
-              <select className={field} value={form.domain} onChange={(e) => set('domain', e.target.value)}>
-                {DOMAINS.map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={label}>Employment</label>
-              <select className={field} value={form.employmentType} onChange={(e) => set('employmentType', e.target.value)}>
-                {EMPLOYMENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
+          <div>
+            <label className={label}>Domain</label>
+            <select className={field} value={form.domain} onChange={(e) => set('domain', e.target.value)}>
+              {DOMAINS.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
           </div>
           <div>
             <label className={label}>LinkedIn URL</label>
