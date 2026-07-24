@@ -216,44 +216,53 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   // ---- bootstrap: load users, feed & connections for the signed-in user ---
+  // Every call runs in parallel via allSettled — NOT Promise.all — because a
+  // hiccup in any *one* of these (a slow/flaky endpoint, a transient 500) must
+  // not be treated as "the token is invalid". Only api.me() failing means the
+  // session itself is gone; every other slice just degrades to empty on
+  // failure instead of forcing a full sign-out.
   const bootstrap = useCallback(async () => {
-    try {
-      const [me, allUsers, feed, graph, msgThreads, comms, sess, sups, notifs, evts] = await Promise.all([
-        api.me(),
-        api.getUsers(),
-        api.getFeed(),
-        api.getConnections(),
-        api.getThreads(),
-        api.getCommunities(),
-        api.getSessions(),
-        api.getStartups(),
-        api.getNotifications(),
-        api.getEvents().catch(() => [] as AppEvent[]),
-      ])
-      setUsers(allUsers.some((u) => u.id === me.id) ? allUsers : [me, ...allUsers])
-      setCurrentUserId(me.id)
-      setPosts(feed)
-      setEvents(evts)
-      setConnectionIds(graph.connectionIds)
-      setSentRequestIds(graph.sentRequestIds)
-      setPendingRequestIds(graph.pendingRequestIds)
-      setThreads(msgThreads)
-      setCommunities(comms)
-      setSessions(sess)
-      setStartups(sups)
-      setNotifications(notifs)
-      // Mentor approvals are an admin-only view.
-      if (me.isAdmin) {
-        api.getMentorApplications().then(setPendingMentorIds, () => {})
-      }
-    } catch {
+    const [meR, usersR, feedR, graphR, threadsR, commsR, sessR, supsR, notifsR, evtsR] = await Promise.allSettled([
+      api.me(),
+      api.getUsers(),
+      api.getFeed(),
+      api.getConnections(),
+      api.getThreads(),
+      api.getCommunities(),
+      api.getSessions(),
+      api.getStartups(),
+      api.getNotifications(),
+      api.getEvents(),
+    ])
+
+    if (meR.status === 'rejected') {
       // Token missing/expired — drop it so the app falls back to signed-out.
       setToken(null)
       setTokenState(null)
       setCurrentUserId(null)
-    } finally {
       setBootstrapped(true)
+      return
     }
+
+    const me = meR.value
+    const allUsers = usersR.status === 'fulfilled' ? usersR.value : []
+    setUsers(allUsers.some((u) => u.id === me.id) ? allUsers : [me, ...allUsers])
+    setCurrentUserId(me.id)
+    setPosts(feedR.status === 'fulfilled' ? feedR.value : [])
+    setEvents(evtsR.status === 'fulfilled' ? evtsR.value : [])
+    setConnectionIds(graphR.status === 'fulfilled' ? graphR.value.connectionIds : [])
+    setSentRequestIds(graphR.status === 'fulfilled' ? graphR.value.sentRequestIds : [])
+    setPendingRequestIds(graphR.status === 'fulfilled' ? graphR.value.pendingRequestIds : [])
+    setThreads(threadsR.status === 'fulfilled' ? threadsR.value : [])
+    setCommunities(commsR.status === 'fulfilled' ? commsR.value : [])
+    setSessions(sessR.status === 'fulfilled' ? sessR.value : [])
+    setStartups(supsR.status === 'fulfilled' ? supsR.value : [])
+    setNotifications(notifsR.status === 'fulfilled' ? notifsR.value : [])
+    // Mentor approvals are an admin-only view.
+    if (me.isAdmin) {
+      api.getMentorApplications().then(setPendingMentorIds, () => {})
+    }
+    setBootstrapped(true)
   }, [])
 
   // Which social providers are real (backend reports GOOGLE_CLIENT_ID).
