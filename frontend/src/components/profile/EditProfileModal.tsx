@@ -53,6 +53,20 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
 
   const status = statusOf(form.employmentType)
 
+  // Switching Current Status clears whatever fields no longer apply, so a
+  // stale company/designation/college doesn't ride along unfilled on save.
+  function pickStatus(s: CurrentStatus) {
+    setForm((f) => ({
+      ...f,
+      employmentType:
+        s === 'Working Professional' ? (statusOf(f.employmentType) === 'Working Professional' ? f.employmentType : 'Employed') : s,
+      company: s === 'Working Professional' ? f.company : '',
+      designation: s === 'Working Professional' ? f.designation : '',
+      college: s === 'Student' ? f.college : '',
+      experienceYears: s === 'Working Professional' || s === 'Looking for opportunity' ? f.experienceYears : '',
+    }))
+  }
+
   async function save() {
     if (!form.name.trim()) return notify('Name is required.', 'error')
     setSaving(true)
@@ -162,9 +176,7 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
                 <button
                   key={s}
                   type="button"
-                  onClick={() =>
-                    set('employmentType', s === 'Working Professional' ? (status === 'Working Professional' ? form.employmentType : 'Employed') : s)
-                  }
+                  onClick={() => pickStatus(s)}
                   className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
                     status === s
                       ? 'border-[#ff4500] bg-orange-50 text-[#ff4500]'

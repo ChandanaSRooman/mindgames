@@ -5,7 +5,7 @@ import { useApp } from '../store/AppStore'
 import { useLayout } from '../components/layout/LayoutContext'
 import { api } from '../lib/api'
 import { Avatar, Button, Card, Pill } from '../components/ui'
-import { timeAgo } from '../lib/format'
+import { roleLine, timeAgo } from '../lib/format'
 import { DOMAINS, type Domain, type JobApplicant, type Post } from '../types'
 
 type Tab = 'Hiring' | 'Open to Work'
@@ -104,13 +104,15 @@ export function Jobs() {
                 <Avatar name={u.name} src={u.photo} size={52} to={`/profile/${u.id}`} />
                 <div className="min-w-0">
                   <Link to={`/profile/${u.id}`} className="font-semibold text-[#1c1c1c] hover:underline">{u.name}</Link>
-                  <p className="truncate text-xs text-[#878a8c]">{u.designation}</p>
+                  {roleLine(u) && <p className="truncate text-xs text-[#878a8c]">{roleLine(u)}</p>}
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-1.5">
                 <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-700">Open to Work</span>
                 <span className="rounded-full bg-[#f6f7f8] px-2.5 py-0.5 text-xs text-[#878a8c]">{u.domain}</span>
-                <span className="rounded-full bg-[#f6f7f8] px-2.5 py-0.5 text-xs text-[#878a8c]">{u.experienceYears} yrs</span>
+                {u.experienceYears > 0 && (
+                  <span className="rounded-full bg-[#f6f7f8] px-2.5 py-0.5 text-xs text-[#878a8c]">{u.experienceYears} yrs</span>
+                )}
                 <span className="rounded-full bg-[#f6f7f8] px-2.5 py-0.5 text-xs text-[#878a8c]">{u.city}</span>
               </div>
               <p className="mt-3 line-clamp-2 text-sm text-[#878a8c]">{u.bio}</p>
