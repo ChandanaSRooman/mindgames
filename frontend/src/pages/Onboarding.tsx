@@ -153,7 +153,9 @@ export function Onboarding() {
         college: form.college,
         experienceYears: Number(form.experienceYears) || 0,
         domain: (form.domain || 'Web Dev') as Domain,
-        employmentType: (form.employmentType || 'Employed') as EmploymentType,
+        // A truly skipped step 2 means "didn't say" — default to the honest
+        // catch-all, not a guessed 'Employed'.
+        employmentType: (form.employmentType || 'Just looking around') as EmploymentType,
         linkedin: form.linkedin,
         bio: form.bio || 'Rooman alumnus.',
         city: form.city,

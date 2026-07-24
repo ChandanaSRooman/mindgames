@@ -2,6 +2,15 @@
 // consumes (see frontend/src/types.ts). Kept in one place so response shapes
 // stay consistent across routes.
 
+// Single source of truth for the user column list — auth.routes.ts and
+// users.routes.ts both SELECT/RETURNING this so a new column can't go missing
+// from one of them (see mapUser below, which has no fallback for a column
+// that a route forgot to select).
+export const USER_COLS = `id, name, email, phone, photo, profile_tag, email_verified_at, email_digest, avatar, batch_year, course, company, designation, college,
+  experience_years, domain, employment_type, city, bio, linkedin, expertise,
+  willing_to_mentor, interested_in_startup, connections_count, is_mentor,
+  mentor_rate, sessions_conducted, is_admin`
+
 export interface UserRow {
   id: string
   name: string

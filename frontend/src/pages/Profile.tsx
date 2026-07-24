@@ -26,7 +26,7 @@ import { ProfilePhoto } from '../components/profile/ProfilePhoto'
 import { ReportModal } from '../components/ReportModal'
 import { compact } from '../lib/format'
 import { api } from '../lib/api'
-import { PROFILE_TAGS, type Badge, type EmploymentType, type ProfileTag, type User } from '../types'
+import { PROFILE_TAGS, type Badge, type ProfileTag, type User } from '../types'
 
 export function Profile() {
   const { id } = useParams<{ id: string }>()
@@ -79,7 +79,12 @@ export function Profile() {
                 {user.name}
                 <VerifiedBadge verified={user.emailVerified} size={18} />
               </h1>
-              <p className="text-sm text-[#1c1c1c]">{user.designation} · {user.company}</p>
+              {(user.designation || user.company) && (
+                <p className="text-sm text-[#1c1c1c]">{[user.designation, user.company].filter(Boolean).join(' · ')}</p>
+              )}
+              {!user.designation && !user.company && user.college && (
+                <p className="text-sm text-[#1c1c1c]">{user.college}</p>
+              )}
               <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#878a8c]">
                 <span className="flex items-center gap-1"><MapPin size={12} /> {user.city}</span>
                 <span className="flex items-center gap-1"><GraduationCap size={12} /> Batch {user.batchYear} · {user.course}</span>
@@ -216,9 +221,6 @@ function ProfileTagBadge({ user, isMe }: { user: User; isMe: boolean }) {
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  // Whatever employmentType was just before "Open to Work" overwrote it —
-  // removing the tag restores this instead of guessing a default.
-  const priorEmploymentType = useRef<EmploymentType | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -241,19 +243,15 @@ function ProfileTagBadge({ user, isMe }: { user: User; isMe: boolean }) {
   async function choose(tag: ProfileTag | null) {
     setSaving(true)
     try {
-      const leavingOpenToWork = current === 'Open to Work' && user.employmentType === 'Looking for opportunity'
-      if (tag === 'Open to Work' && user.employmentType !== 'Looking for opportunity') {
-        priorEmploymentType.current = user.employmentType
-      }
+      // profileTag alone drives the badge and the Jobs → Open to Work listing
+      // (see Jobs.tsx's openToWork filter) — it doesn't touch employmentType,
+      // which stays whatever the user's actual Current Status is. That also
+      // means picking "Open to Work" no longer requires guessing what to
+      // restore employmentType to if the tag is later removed.
       await updateProfile({
         profileTag: tag,
         willingToMentor: tag === 'Mentor',
         isMentor: tag === 'Mentor',
-        ...(tag === 'Open to Work'
-          ? { employmentType: 'Looking for opportunity' }
-          : leavingOpenToWork && priorEmploymentType.current
-            ? { employmentType: priorEmploymentType.current }
-            : {}),
       })
       notify(tag ? `Your profile now shows "${tag}".` : 'Tag removed from your profile.')
       setOpen(false)

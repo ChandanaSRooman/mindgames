@@ -39,10 +39,13 @@ export function Jobs() {
     [posts, domain, q, currentUser.id],
   )
 
-  // "Open to work" people: anyone employmentType Looking + those who posted Open to Work.
+  // "Open to work" people: anyone employmentType Looking, anyone with the
+  // "Open to Work" profile tag, + those who posted Open to Work.
   const openToWork = useMemo(() => {
     const fromPosts = posts.filter((p) => p.type === 'Open to Work').map((p) => p.authorId)
-    const fromStatus = users.filter((u) => u.employmentType === 'Looking for opportunity').map((u) => u.id)
+    const fromStatus = users
+      .filter((u) => u.employmentType === 'Looking for opportunity' || u.profileTag === 'Open to Work')
+      .map((u) => u.id)
     const ids = Array.from(new Set([...fromPosts, ...fromStatus])).filter((id) => id !== currentUser.id)
     return ids
       .map((id) => userById(id))
