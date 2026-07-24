@@ -8,14 +8,9 @@ import { hashPassword, verifyPassword } from '../auth/password.js'
 import { signToken } from '../auth/jwt.js'
 import { requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
-import { mapUser, type UserRow } from '../mappers.js'
+import { mapUser, USER_COLS, type UserRow } from '../mappers.js'
 
 export const authRouter = Router()
-
-const USER_COLS = `id, name, email, phone, photo, profile_tag, email_verified_at, email_digest, avatar, batch_year, course, company, designation,
-  experience_years, domain, employment_type, city, bio, linkedin, expertise,
-  willing_to_mentor, interested_in_startup, connections_count, is_mentor,
-  mentor_rate, sessions_conducted, is_admin`
 
 const signupSchema = z.object({
   name: z.string().trim().min(1, 'name is required'),

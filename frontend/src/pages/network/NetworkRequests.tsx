@@ -2,6 +2,7 @@ import { useOutletContext } from 'react-router-dom'
 import { Briefcase, Check, GraduationCap, X } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { Avatar, Button, Card, SectionTitle } from '../../components/ui'
+import { roleLine } from '../../lib/format'
 import type { Post, User } from '../../types'
 import type { NetworkOutletContext } from './NetworkLayout'
 
@@ -65,9 +66,7 @@ export function NetworkRequests() {
                 >
                   {u.name}
                 </button>
-                {(u.designation || u.company) && (
-                  <p className="truncate text-xs text-[#878a8c]">{[u.designation, u.company].filter(Boolean).join(' · ')}</p>
-                )}
+                {roleLine(u) && <p className="truncate text-xs text-[#878a8c]">{roleLine(u)}</p>}
                 <RequestTags requester={u} me={currentUser} posts={posts} />
               </div>
               <Button onClick={() => acceptRequest(u.id)} className="!px-3 !py-1.5 text-xs">
@@ -102,9 +101,7 @@ export function NetworkRequests() {
                 >
                   {u.name}
                 </button>
-                {(u.designation || u.company) && (
-                  <p className="truncate text-xs text-[#878a8c]">{[u.designation, u.company].filter(Boolean).join(' · ')}</p>
-                )}
+                {roleLine(u) && <p className="truncate text-xs text-[#878a8c]">{roleLine(u)}</p>}
               </div>
               <Button
                 variant="ghost"

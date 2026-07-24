@@ -3,6 +3,7 @@ import { MapPin, MessageSquare } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { useLayout } from '../../components/layout/LayoutContext'
 import { Avatar, Button, Card, SectionTitle } from '../../components/ui'
+import { roleLine } from '../../lib/format'
 import type { NetworkOutletContext } from './NetworkLayout'
 
 // Mentors across your connections and suggestions — for finding/connecting
@@ -32,9 +33,7 @@ export function NetworkMentors() {
               >
                 {u.name}
               </button>
-              {(u.designation || u.company) && (
-                <p className="text-xs text-[#878a8c]">{[u.designation, u.company].filter(Boolean).join(' · ')}</p>
-              )}
+              {roleLine(u) && <p className="text-xs text-[#878a8c]">{roleLine(u)}</p>}
               <p className="mt-0.5 flex items-center gap-1 text-xs text-[#878a8c]">
                 <MapPin size={12} /> {u.city} · Batch {u.batchYear}
               </p>

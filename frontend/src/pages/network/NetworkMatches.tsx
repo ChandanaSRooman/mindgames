@@ -3,6 +3,7 @@ import { useOutletContext } from 'react-router-dom'
 import { MapPin } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { Avatar, Button, Card, Pill, SectionTitle } from '../../components/ui'
+import { roleLine } from '../../lib/format'
 import { DOMAINS } from '../../types'
 import type { NetworkOutletContext } from './NetworkLayout'
 
@@ -50,9 +51,7 @@ export function NetworkMatches() {
             >
               {u.name}
             </button>
-            {(u.designation || u.company) && (
-              <p className="text-xs text-[#878a8c]">{[u.designation, u.company].filter(Boolean).join(' · ')}</p>
-            )}
+            {roleLine(u) && <p className="text-xs text-[#878a8c]">{roleLine(u)}</p>}
             <p className="mt-0.5 flex items-center gap-1 text-xs text-[#878a8c]">
               <MapPin size={12} /> {u.city} · Batch {u.batchYear}
             </p>

@@ -53,6 +53,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_tag TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
 -- Weekly digest email opt-out (Settings toggle).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_digest BOOLEAN NOT NULL DEFAULT TRUE;
+-- Current institution name — only meaningful when employment_type = 'Student'.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS college TEXT NOT NULL DEFAULT '';
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_profile_tag_check;
 ALTER TABLE users
   ADD CONSTRAINT users_profile_tag_check

@@ -3,6 +3,7 @@ import { MessageSquare } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { useLayout } from '../../components/layout/LayoutContext'
 import { Avatar, Button, Card, SectionTitle } from '../../components/ui'
+import { roleLine } from '../../lib/format'
 import type { NetworkOutletContext } from './NetworkLayout'
 
 export function NetworkMyNetwork() {
@@ -31,9 +32,7 @@ export function NetworkMyNetwork() {
               >
                 {u.name}
               </button>
-              {(u.designation || u.company) && (
-                <p className="truncate text-xs text-[#878a8c]">{[u.designation, u.company].filter(Boolean).join(' · ')}</p>
-              )}
+              {roleLine(u) && <p className="truncate text-xs text-[#878a8c]">{roleLine(u)}</p>}
             </div>
             <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => openChatWith(u.id)}>
               <MessageSquare size={15} /> Message
