@@ -142,6 +142,7 @@ interface AppContextValue {
     isPaid?: boolean
     price?: number
     capacity?: number
+    speakers?: { name: string; bio: string }[]
   }) => Promise<void>
   toggleRsvp: (id: string) => void
   cancelEvent: (id: string) => void
@@ -760,6 +761,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       isPaid?: boolean
       price?: number
       capacity?: number
+      speakers?: { name: string; bio: string }[]
     }) => {
       const created = await api.createEvent(e)
       setEvents((list) =>

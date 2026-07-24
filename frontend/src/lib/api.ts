@@ -6,6 +6,7 @@ import type {
   Comment,
   Community,
   ContactRow,
+  EventAttendee,
   EventFeedbackEntry,
   JobApplicant,
   MentorshipSession,
@@ -313,6 +314,7 @@ export const api = {
     isPaid?: boolean
     price?: number
     capacity?: number
+    speakers?: { name: string; bio: string }[]
   }) => http<AppEvent>('/api/events', { method: 'POST', body: JSON.stringify(e) }),
   rsvpEvent: (id: string) => http<AppEvent>(`/api/events/${id}/rsvp`, { method: 'POST' }),
   unrsvpEvent: (id: string) => http<AppEvent>(`/api/events/${id}/rsvp`, { method: 'DELETE' }),
@@ -320,8 +322,7 @@ export const api = {
   getPendingEvents: () => http<PendingEvent[]>('/api/events/pending'),
   approveEvent: (id: string) => http<{ ok: boolean }>(`/api/events/${id}/approve`, { method: 'POST' }),
   rejectEvent: (id: string) => http<{ ok: boolean }>(`/api/events/${id}/reject`, { method: 'POST' }),
-  getEventAttendees: (id: string) =>
-    http<Array<{ id: string; name: string; designation: string; photo?: string }>>(`/api/events/${id}/attendees`),
+  getEventAttendees: (id: string) => http<EventAttendee[]>(`/api/events/${id}/attendees`),
   getEventComments: (id: string) => http<Comment[]>(`/api/events/${id}/comments`),
   addEventComment: (id: string, text: string) =>
     http<Comment>(`/api/events/${id}/comments`, { method: 'POST', body: JSON.stringify({ text }) }),
