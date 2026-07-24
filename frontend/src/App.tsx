@@ -13,7 +13,11 @@ import { Events } from './pages/Events'
 import { AcceptInvite } from './pages/AcceptInvite'
 import { Onboarding } from './pages/Onboarding'
 import { Home } from './pages/Home'
-import { MyNetwork } from './pages/MyNetwork'
+import { NetworkLayout } from './pages/network/NetworkLayout'
+import { NetworkMatches } from './pages/network/NetworkMatches'
+import { NetworkRequests } from './pages/network/NetworkRequests'
+import { NetworkMentors } from './pages/network/NetworkMentors'
+import { NetworkMyNetwork } from './pages/network/NetworkMyNetwork'
 import { Jobs } from './pages/Jobs'
 import { Mentorship } from './pages/Mentorship'
 import { StartupVarsity } from './pages/StartupVarsity'
@@ -91,7 +95,13 @@ export default function App() {
             }
           >
             <Route path="/home" element={<Home />} />
-            <Route path="/network" element={<MyNetwork />} />
+            <Route path="/network" element={<NetworkLayout />}>
+              <Route index element={<Navigate to="matches" replace />} />
+              <Route path="matches" element={<NetworkMatches />} />
+              <Route path="requests" element={<NetworkRequests />} />
+              <Route path="mentors" element={<NetworkMentors />} />
+              <Route path="my-network" element={<NetworkMyNetwork />} />
+            </Route>
             <Route path="/events" element={<Events />} />
             <Route path="/jobs" element={<Jobs />} />
             <Route path="/mentorship" element={<Mentorship />} />
