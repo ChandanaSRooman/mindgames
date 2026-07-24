@@ -246,13 +246,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const me = meR.value
     const allUsers = usersR.status === 'fulfilled' ? usersR.value : []
+    const graph = graphR.status === 'fulfilled' ? graphR.value : { connectionIds: [], sentRequestIds: [], pendingRequestIds: [] }
     setUsers(allUsers.some((u) => u.id === me.id) ? allUsers : [me, ...allUsers])
     setCurrentUserId(me.id)
     setPosts(feedR.status === 'fulfilled' ? feedR.value : [])
     setEvents(evtsR.status === 'fulfilled' ? evtsR.value : [])
-    setConnectionIds(graphR.status === 'fulfilled' ? graphR.value.connectionIds : [])
-    setSentRequestIds(graphR.status === 'fulfilled' ? graphR.value.sentRequestIds : [])
-    setPendingRequestIds(graphR.status === 'fulfilled' ? graphR.value.pendingRequestIds : [])
+    setConnectionIds(graph.connectionIds)
+    setSentRequestIds(graph.sentRequestIds)
+    setPendingRequestIds(graph.pendingRequestIds)
     setThreads(threadsR.status === 'fulfilled' ? threadsR.value : [])
     setCommunities(commsR.status === 'fulfilled' ? commsR.value : [])
     setSessions(sessR.status === 'fulfilled' ? sessR.value : [])
