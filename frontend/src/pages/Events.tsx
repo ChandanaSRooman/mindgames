@@ -617,7 +617,7 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }))
 
   const priceValue = Math.max(0, Math.round(Number(price) || 0))
-  const capacityValue = Math.max(1, Math.round(Number(capacity) || 0))
+  const capacityValue = Math.round(Number(capacity) || 0)
   const canSubmit =
     form.title.trim() && form.date && form.time && (!isPaid || priceValue > 0) && (!hasCapacity || capacityValue > 0)
   const field =
@@ -635,7 +635,7 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
         startsAt: new Date(`${form.date}T${form.time}`).toISOString(),
         isPaid,
         price: isPaid ? priceValue : 0,
-        capacity: hasCapacity ? capacityValue : undefined,
+        capacity: hasCapacity ? Math.max(1, capacityValue) : undefined,
       })
       onClose()
     } catch (err) {

@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { query } from '../db/pool.js'
+import { query, withTransaction } from '../db/pool.js'
 import { requireAdmin, requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { pushNotification, pushNotificationToAll } from '../notify.js'
@@ -225,42 +225,49 @@ eventsRouter.post(
   requireAuth,
   asyncHandler(async (req, res) => {
     const me = req.user!.sub
-    const ev = await query<{ creator_id: string; title: string; capacity: number | null }>(
-      `SELECT creator_id, title, capacity FROM events WHERE id = $1`,
-      [req.params.id],
-    )
-    if (!ev.rowCount) throw new ApiError(404, 'Event not found')
+    // Lock the event row for the whole check+insert so two concurrent RSVPs
+    // near capacity can't both read the same "confirmed count" and both slip
+    // in as confirmed — the second transaction blocks until the first commits.
+    const joined = await withTransaction(async (client) => {
+      const ev = await client.query<{ creator_id: string; title: string; capacity: number | null }>(
+        `SELECT creator_id, title, capacity FROM events WHERE id = $1 FOR UPDATE`,
+        [req.params.id],
+      )
+      if (!ev.rowCount) throw new ApiError(404, 'Event not found')
 
-    const already = await query(`SELECT 1 FROM event_rsvps WHERE event_id = $1 AND user_id = $2`, [
-      req.params.id,
-      me,
-    ])
-    if (!already.rowCount) {
+      const already = await client.query(`SELECT 1 FROM event_rsvps WHERE event_id = $1 AND user_id = $2`, [
+        req.params.id,
+        me,
+      ])
+      if (already.rowCount) return null
+
       const { capacity, creator_id, title } = ev.rows[0]
       let waitlisted = false
       if (capacity != null) {
-        const confirmed = await query<{ count: number }>(
+        const confirmed = await client.query<{ count: number }>(
           `SELECT count(*)::int AS count FROM event_rsvps WHERE event_id = $1 AND NOT waitlisted`,
           [req.params.id],
         )
         waitlisted = confirmed.rows[0].count >= capacity
       }
-      await query(`INSERT INTO event_rsvps (event_id, user_id, waitlisted) VALUES ($1, $2, $3)`, [
+      await client.query(`INSERT INTO event_rsvps (event_id, user_id, waitlisted) VALUES ($1, $2, $3)`, [
         req.params.id,
         me,
         waitlisted,
       ])
-      if (creator_id !== me) {
-        const who = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [me])
-        void pushNotification(
-          creator_id,
-          'event',
-          waitlisted
-            ? `${who.rows[0].name} joined the waitlist for your event "${title}".`
-            : `${who.rows[0].name} is attending your event "${title}".`,
-          me,
-        )
-      }
+      return { creator_id, title, waitlisted }
+    })
+
+    if (joined && joined.creator_id !== me) {
+      const who = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [me])
+      void pushNotification(
+        joined.creator_id,
+        'event',
+        joined.waitlisted
+          ? `${who.rows[0].name} joined the waitlist for your event "${joined.title}".`
+          : `${who.rows[0].name} is attending your event "${joined.title}".`,
+        me,
+      )
     }
     const full = await query<EventRow>(`${EVENT_SELECT} WHERE e.id = $2`, [me, req.params.id])
     res.json(mapEvent(full.rows[0]))
@@ -271,13 +278,22 @@ eventsRouter.delete(
   '/:id/rsvp',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const del = await query<{ waitlisted: boolean }>(
-      `DELETE FROM event_rsvps WHERE event_id = $1 AND user_id = $2 RETURNING waitlisted`,
-      [req.params.id, req.user!.sub],
-    )
-    // A confirmed spot freed up — promote whoever has waited longest.
-    if (del.rowCount && !del.rows[0].waitlisted) {
-      const promoted = await query<{ user_id: string; title: string }>(
+    const me = req.user!.sub
+    // Same per-event lock as the RSVP route — without it, two people cancelling
+    // at once can both pick the same longest-waiting waitlister and both
+    // "promote" them, double-notifying while under-promoting everyone else.
+    const promoted = await withTransaction(async (client) => {
+      const evLock = await client.query(`SELECT id FROM events WHERE id = $1 FOR UPDATE`, [req.params.id])
+      if (!evLock.rowCount) throw new ApiError(404, 'Event not found')
+
+      const del = await client.query<{ waitlisted: boolean }>(
+        `DELETE FROM event_rsvps WHERE event_id = $1 AND user_id = $2 RETURNING waitlisted`,
+        [req.params.id, me],
+      )
+      if (!del.rowCount || del.rows[0].waitlisted) return null
+
+      // A confirmed spot freed up — promote whoever has waited longest.
+      const promo = await client.query<{ user_id: string; title: string }>(
         `UPDATE event_rsvps SET waitlisted = FALSE
          WHERE event_id = $1 AND user_id = (
            SELECT user_id FROM event_rsvps WHERE event_id = $1 AND waitlisted ORDER BY created_at LIMIT 1
@@ -285,15 +301,17 @@ eventsRouter.delete(
          RETURNING user_id, (SELECT title FROM events WHERE id = $1) AS title`,
         [req.params.id],
       )
-      if (promoted.rowCount) {
-        void pushNotification(
-          promoted.rows[0].user_id,
-          'event',
-          `A spot opened up — you're off the waitlist and confirmed for "${promoted.rows[0].title}"!`,
-        )
-      }
+      return promo.rowCount ? promo.rows[0] : null
+    })
+
+    if (promoted) {
+      void pushNotification(
+        promoted.user_id,
+        'event',
+        `A spot opened up — you're off the waitlist and confirmed for "${promoted.title}"!`,
+      )
     }
-    const full = await query<EventRow>(`${EVENT_SELECT} WHERE e.id = $2`, [req.user!.sub, req.params.id])
+    const full = await query<EventRow>(`${EVENT_SELECT} WHERE e.id = $2`, [me, req.params.id])
     if (!full.rowCount) throw new ApiError(404, 'Event not found')
     res.json(mapEvent(full.rows[0]))
   }),
