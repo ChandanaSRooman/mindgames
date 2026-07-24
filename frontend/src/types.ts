@@ -153,6 +153,8 @@ export interface AppEvent {
   price?: number
   // Max confirmed RSVPs; undefined = unlimited. Extra RSVPs waitlist.
   capacity?: number
+  // Speakers/agenda contributors, shown in the quick-view drawer.
+  speakers: { name: string; bio: string }[]
   rsvpCount: number
   waitlistCount: number
   rsvpedByMe: boolean
@@ -167,6 +169,14 @@ export interface AppEvent {
 // Admin review queue entry for events.
 export interface PendingEvent extends AppEvent {
   creatorName: string
+}
+
+// A confirmed attendee, as shown in an event's quick-view drawer.
+export interface EventAttendee {
+  id: string
+  name: string
+  designation: string
+  photo?: string
 }
 
 // One attendee's rating + comment (host/admin view of an event's feedback).

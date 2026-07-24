@@ -368,6 +368,10 @@ ALTER TABLE events DROP CONSTRAINT IF EXISTS events_capacity_check;
 ALTER TABLE events ADD CONSTRAINT events_capacity_check CHECK (capacity IS NULL OR capacity > 0);
 ALTER TABLE event_rsvps ADD COLUMN IF NOT EXISTS waitlisted BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- Speakers/agenda contributors shown in the event's quick-view drawer.
+-- JSON array of {name, bio}, host-entered at creation time.
+ALTER TABLE events ADD COLUMN IF NOT EXISTS speakers JSONB NOT NULL DEFAULT '[]'::jsonb;
+
 -- event_comments: a discussion/Q&A thread on the event itself (distinct from
 -- the event's linked feed posts and their comments).
 CREATE TABLE IF NOT EXISTS event_comments (

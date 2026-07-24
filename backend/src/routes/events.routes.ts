@@ -9,6 +9,11 @@ import { mapComment, type CommentRow } from '../mappers.js'
 
 export const eventsRouter = Router()
 
+interface Speaker {
+  name: string
+  bio: string
+}
+
 interface EventRow {
   id: string
   creator_id: string
@@ -21,6 +26,7 @@ interface EventRow {
   is_paid: boolean
   price: number
   capacity: number | null
+  speakers: Speaker[]
   rsvp_count: number
   waitlist_count: number
   rsvped_by_me: boolean
@@ -33,7 +39,7 @@ interface EventRow {
 
 const EVENT_SELECT = `
   SELECT e.id, e.creator_id, e.title, e.description, e.location, e.meeting_link, e.starts_at,
-         e.status, e.is_paid, e.price, e.capacity,
+         e.status, e.is_paid, e.price, e.capacity, e.speakers,
          (SELECT count(*)::int FROM event_rsvps r WHERE r.event_id = e.id AND NOT r.waitlisted) AS rsvp_count,
          (SELECT count(*)::int FROM event_rsvps r WHERE r.event_id = e.id AND r.waitlisted) AS waitlist_count,
          EXISTS (SELECT 1 FROM event_rsvps r WHERE r.event_id = e.id AND r.user_id = $1 AND NOT r.waitlisted) AS rsvped_by_me,
@@ -62,6 +68,7 @@ function mapEvent(r: EventRow) {
     isPaid: r.is_paid,
     price: r.price,
     capacity: r.capacity ?? undefined,
+    speakers: r.speakers ?? [],
     rsvpCount: r.rsvp_count,
     waitlistCount: r.waitlist_count,
     rsvpedByMe: r.rsvped_by_me,
@@ -115,6 +122,11 @@ const createSchema = z.object({
   price: z.number().int().min(0).max(1_000_000).default(0),
   // Max confirmed RSVPs; omit/undefined = unlimited. Extra RSVPs waitlist.
   capacity: z.number().int().min(1).max(100_000).optional(),
+  // Shown in the event's quick-view drawer.
+  speakers: z
+    .array(z.object({ name: z.string().trim().min(1).max(120), bio: z.string().trim().max(500).default('') }))
+    .max(10)
+    .default([]),
 })
 
 // POST /api/events — request an event. Members' events await admin acceptance
@@ -137,9 +149,12 @@ eventsRouter.post(
     const me = req.user!.sub
     const status = req.user!.isAdmin ? 'approved' : 'pending'
     const inserted = await query<{ id: string }>(
-      `INSERT INTO events (creator_id, title, description, location, meeting_link, starts_at, status, is_paid, price, capacity)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-      [me, e.title, e.description, e.location, e.meetingLink || null, startsAt, status, isPaid, price, e.capacity ?? null],
+      `INSERT INTO events (creator_id, title, description, location, meeting_link, starts_at, status, is_paid, price, capacity, speakers)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+      [
+        me, e.title, e.description, e.location, e.meetingLink || null, startsAt, status, isPaid, price,
+        e.capacity ?? null, JSON.stringify(e.speakers),
+      ],
     )
     await query(`INSERT INTO event_rsvps (event_id, user_id) VALUES ($1, $2)`, [inserted.rows[0].id, me])
 

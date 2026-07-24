@@ -9,7 +9,11 @@ import { Login } from './pages/Login'
 import { ForgotPassword } from './pages/ForgotPassword'
 import { ResetPassword } from './pages/ResetPassword'
 import { VerifyEmail } from './pages/VerifyEmail'
-import { Events } from './pages/Events'
+import { EventsLayout } from './pages/events/EventsLayout'
+import { EventsUpcoming } from './pages/events/EventsUpcoming'
+import { EventsMyRegistered } from './pages/events/EventsMyRegistered'
+import { EventsPast } from './pages/events/EventsPast'
+import { EventsHost } from './pages/events/EventsHost'
 import { AcceptInvite } from './pages/AcceptInvite'
 import { Onboarding } from './pages/Onboarding'
 import { Home } from './pages/Home'
@@ -92,7 +96,13 @@ export default function App() {
           >
             <Route path="/home" element={<Home />} />
             <Route path="/network" element={<MyNetwork />} />
-            <Route path="/events" element={<Events />} />
+            <Route path="/events" element={<EventsLayout />}>
+              <Route index element={<Navigate to="upcoming" replace />} />
+              <Route path="upcoming" element={<EventsUpcoming />} />
+              <Route path="my-events" element={<EventsMyRegistered />} />
+              <Route path="past" element={<EventsPast />} />
+              <Route path="host" element={<EventsHost />} />
+            </Route>
             <Route path="/jobs" element={<Jobs />} />
             <Route path="/mentorship" element={<Mentorship />} />
             <Route path="/startupvarsity" element={<StartupVarsity />} />

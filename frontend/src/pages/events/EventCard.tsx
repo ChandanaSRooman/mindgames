@@ -1,16 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Award,
   Calendar,
-  CalendarPlus,
   Check,
   Clock,
   ExternalLink,
   MapPin,
   MessageCircle,
   MessageSquarePlus,
-  Radio,
   Send,
   Star,
   Ticket,
@@ -19,170 +17,29 @@ import {
   Video,
   X,
 } from 'lucide-react'
-import { useApp } from '../store/AppStore'
-import { api } from '../lib/api'
-import { Avatar, Button, Card, VerifiedBadge } from '../components/ui'
-import { PostCard } from '../components/feed/PostCard'
-import type { AppEvent, Comment, EventFeedbackEntry, Post } from '../types'
+import { useApp } from '../../store/AppStore'
+import { api } from '../../lib/api'
+import { Avatar, Button, Card, VerifiedBadge } from '../../components/ui'
+import { PostCard } from '../../components/feed/PostCard'
+import { EventPhaseBadge, useEventPhase } from './EventPhase'
+import type { AppEvent, Comment, EventFeedbackEntry, Post } from '../../types'
 
-// Matches the 1-hour default duration assumed by the .ics export — used here
-// to decide when an event flips from "Live now" to "Ended".
-const EVENT_DURATION_MS = 60 * 60 * 1000
-
-type EventPhase = 'upcoming' | 'live' | 'ended'
-
-function phaseOf(startsAt: string, now: number): EventPhase {
-  const start = +new Date(startsAt)
-  const end = start + EVENT_DURATION_MS
-  if (now < start) return 'upcoming'
-  if (now < end) return 'live'
-  return 'ended'
-}
-
-// Live countdown/status for one event: ticks every second while upcoming or
-// live so the "Starts in…" timer and the live/ended flip feel real-time.
-function useEventPhase(startsAt: string) {
-  const [now, setNow] = useState(() => Date.now())
-  const phase = phaseOf(startsAt, now)
-
-  useEffect(() => {
-    if (phase === 'ended') return
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [phase])
-
-  const start = +new Date(startsAt)
-  const diff = Math.max(0, start - now)
-  const totalSeconds = Math.floor(diff / 1000)
-  const days = Math.floor(totalSeconds / 86400)
-  const hours = Math.floor((totalSeconds % 86400) / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = totalSeconds % 60
-
-  let countdownLabel = ''
-  if (days > 0) countdownLabel = `${days}d ${hours}h`
-  else if (hours > 0) countdownLabel = `${hours}h ${minutes}m`
-  else countdownLabel = `${minutes}m ${seconds}s`
-
-  return { phase, countdownLabel }
-}
-
-function EventPhaseBadge({ startsAt }: { startsAt: string }) {
-  const { phase, countdownLabel } = useEventPhase(startsAt)
-  if (phase === 'live') {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600">
-        <Radio size={11} className="animate-pulse" /> Live now
-      </span>
-    )
-  }
-  if (phase === 'upcoming') {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
-        <Clock size={11} /> Starts in {countdownLabel}
-      </span>
-    )
-  }
-  return null
-}
-
-// Alumni events: meetups, webinars and reunions with one-click RSVP.
-export function Events() {
-  const { events, posts } = useApp()
-  const [tab, setTab] = useState<'Upcoming' | 'Past'>('Upcoming')
-  const [showCreate, setShowCreate] = useState(false)
-
-  const now = Date.now()
-  const upcoming = useMemo(
-    () =>
-      events
-        .filter((e) => +new Date(e.startsAt) + EVENT_DURATION_MS >= now)
-        .sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt)),
-    [events, now],
-  )
-  const past = useMemo(
-    () =>
-      events
-        .filter((e) => +new Date(e.startsAt) + EVENT_DURATION_MS < now)
-        .sort((a, b) => +new Date(b.startsAt) - +new Date(a.startsAt)),
-    [events, now],
-  )
-  const shown = tab === 'Upcoming' ? upcoming : past
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold text-[#1c1c1c]">Events</h1>
-        <Button onClick={() => setShowCreate(true)}>
-          <CalendarPlus size={16} /> Host an event
-        </Button>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex items-center rounded-xl border border-[#edeff1] bg-white px-2 shadow-sm">
-        {(['Upcoming', 'Past'] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`relative px-4 py-3 text-sm font-semibold transition-colors ${
-              tab === t ? 'text-[#ff4500]' : 'text-[#878a8c] hover:text-[#1c1c1c]'
-            }`}
-          >
-            {t} {t === 'Upcoming' && upcoming.length > 0 && `(${upcoming.length})`}
-            {tab === t && <span className="absolute inset-x-3 bottom-0 h-[3px] rounded-t-full bg-[#ff4500]" />}
-          </button>
-        ))}
-      </div>
-
-      {shown.map((e) => (
-        <EventCard
-          key={e.id}
-          event={e}
-          isPast={tab === 'Past'}
-          updates={posts.filter((p) => p.eventId === e.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))}
-        />
-      ))}
-
-      {shown.length === 0 && (
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-[#edeff1] bg-white py-16 text-center shadow-sm">
-          <span className="grid h-16 w-16 place-items-center rounded-full bg-orange-50 text-[#ff4500]">
-            <Calendar size={28} />
-          </span>
-          <p className="font-semibold text-[#1c1c1c]">
-            {tab === 'Upcoming' ? 'No upcoming events yet' : 'No past events'}
-          </p>
-          {tab === 'Upcoming' && (
-            <>
-              <p className="max-w-sm text-sm text-[#878a8c]">
-                Be the one who brings the network together — host a meetup, webinar or batch reunion.
-              </p>
-              <Button className="mt-1" onClick={() => setShowCreate(true)}>
-                <CalendarPlus size={16} /> Host the first event
-              </Button>
-            </>
-          )}
-        </div>
-      )}
-
-      {showCreate && <CreateEventModal onClose={() => setShowCreate(false)} />}
-    </div>
-  )
-}
-
-function EventCard({
+export function EventCard({
   event: e,
-  isPast,
   updates,
+  onOpenQuickView,
 }: {
   event: AppEvent
-  isPast: boolean
   updates: Post[]
+  onOpenQuickView: (eventId: string) => void
 }) {
   const { userById, currentUser, toggleRsvp, cancelEvent } = useApp()
   const creator = userById(e.creatorId)
   const isMine = e.creatorId === currentUser.id
   const canPostUpdate = isMine || currentUser.isAdmin
   const start = new Date(e.startsAt)
+  const { phase } = useEventPhase(e.startsAt)
+  const isPast = phase === 'ended'
   const [showPostUpdate, setShowPostUpdate] = useState(false)
   const [showDiscussion, setShowDiscussion] = useState(false)
   const [showHostFeedback, setShowHostFeedback] = useState(false)
@@ -191,16 +48,21 @@ function EventCard({
     <Card className="p-5">
       <div className="flex gap-4">
         {/* Date block */}
-        <div className="flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-xl bg-orange-50 text-[#ff4500]">
+        <button
+          onClick={() => onOpenQuickView(e.id)}
+          className="flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-xl bg-orange-50 text-[#ff4500]"
+        >
           <span className="text-[11px] font-bold uppercase">
             {start.toLocaleDateString('en-IN', { month: 'short' })}
           </span>
           <span className="text-2xl leading-none font-extrabold">{start.getDate()}</span>
-        </div>
+        </button>
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-lg font-bold text-[#1c1c1c]">{e.title}</h3>
+            <button onClick={() => onOpenQuickView(e.id)} className="text-lg font-bold text-[#1c1c1c] hover:underline">
+              {e.title}
+            </button>
             {e.status === 'pending' && (
               <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
                 <Clock size={11} /> Pending approval
@@ -496,10 +358,16 @@ function EventFeedbackModal({ event: e, onClose }: { event: AppEvent; onClose: (
 }
 
 // Lightweight Q&A/discussion thread on the event itself (distinct from the
-// event's linked feed posts and their comments).
+// event's linked feed posts and their comments). Collapsed to the latest 3
+// comments by default — a long thread used to stretch the whole page since
+// it rendered fully inline; now it's a "View N more" toggle into a bounded,
+// independently-scrolling list instead.
+const COLLAPSED_COMMENT_COUNT = 3
+
 function EventDiscussion({ eventId }: { eventId: string }) {
   const { currentUser, userById } = useApp()
   const [comments, setComments] = useState<Comment[] | null>(null)
+  const [expanded, setExpanded] = useState(false)
   const [draft, setDraft] = useState('')
   const [posting, setPosting] = useState(false)
 
@@ -514,12 +382,17 @@ function EventDiscussion({ eventId }: { eventId: string }) {
       const created = await api.addEventComment(eventId, draft.trim())
       setComments((list) => [...(list ?? []), created])
       setDraft('')
+      setExpanded(true)
     } catch {
       /* toast not critical here */
     } finally {
       setPosting(false)
     }
   }
+
+  const all = comments ?? []
+  const hiddenCount = all.length - COLLAPSED_COMMENT_COUNT
+  const shown = expanded || hiddenCount <= 0 ? all : all.slice(-COLLAPSED_COMMENT_COUNT)
 
   return (
     <div className="mt-3 flex flex-col gap-3 border-t border-[#edeff1] pt-3">
@@ -541,8 +414,16 @@ function EventDiscussion({ eventId }: { eventId: string }) {
         </button>
       </div>
       {comments === null && <p className="text-xs text-[#878a8c]">Loading discussion…</p>}
-      <div className="flex flex-col gap-2">
-        {comments?.map((c) => {
+      {hiddenCount > 0 && !expanded && (
+        <button
+          onClick={() => setExpanded(true)}
+          className="self-start text-xs font-semibold text-[#ff4500] hover:underline"
+        >
+          View {hiddenCount} more comment{hiddenCount > 1 ? 's' : ''}
+        </button>
+      )}
+      <div className={`flex flex-col gap-2 ${expanded ? 'max-h-72 overflow-y-auto pr-1' : ''}`}>
+        {shown.map((c) => {
           const author = userById(c.authorId)
           return (
             <div key={c.id} className="flex gap-2">
@@ -556,6 +437,14 @@ function EventDiscussion({ eventId }: { eventId: string }) {
         })}
         {comments?.length === 0 && <p className="text-xs text-[#878a8c]">No comments yet — be the first to ask something.</p>}
       </div>
+      {expanded && hiddenCount > 0 && (
+        <button
+          onClick={() => setExpanded(false)}
+          className="self-start text-xs font-semibold text-[#878a8c] hover:underline"
+        >
+          Show less
+        </button>
+      )}
     </div>
   )
 }
@@ -600,138 +489,6 @@ function PostEventUpdateModal({ event: e, onClose }: { event: AppEvent; onClose:
         <div className="flex items-center justify-end gap-2 border-t border-[#edeff1] px-5 py-3">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button disabled={!content.trim()} onClick={submit}>Post update</Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function CreateEventModal({ onClose }: { onClose: () => void }) {
-  const { createEvent, notify, currentUser } = useApp()
-  const [form, setForm] = useState({ title: '', date: '', time: '', location: '', meetingLink: '', description: '' })
-  const [isPaid, setIsPaid] = useState(false)
-  const [price, setPrice] = useState('')
-  const [hasCapacity, setHasCapacity] = useState(false)
-  const [capacity, setCapacity] = useState('')
-  const [saving, setSaving] = useState(false)
-  const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }))
-
-  const priceValue = Math.max(0, Math.round(Number(price) || 0))
-  const capacityValue = Math.round(Number(capacity) || 0)
-  const canSubmit =
-    form.title.trim() && form.date && form.time && (!isPaid || priceValue > 0) && (!hasCapacity || capacityValue > 0)
-  const field =
-    'w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]'
-
-  async function submit() {
-    if (!canSubmit) return
-    setSaving(true)
-    try {
-      await createEvent({
-        title: form.title.trim(),
-        description: form.description.trim(),
-        location: form.location.trim(),
-        meetingLink: form.meetingLink.trim() || undefined,
-        startsAt: new Date(`${form.date}T${form.time}`).toISOString(),
-        isPaid,
-        price: isPaid ? priceValue : 0,
-        capacity: hasCapacity ? Math.max(1, capacityValue) : undefined,
-      })
-      onClose()
-    } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not create the event.', 'error')
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center" onClick={onClose}>
-      <div className="animate-slidein my-auto w-full max-w-md rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-[#edeff1] px-5 py-4">
-          <div className="flex items-center gap-2">
-            <CalendarPlus size={18} className="text-[#ff4500]" />
-            <h2 className="font-bold text-[#1c1c1c]">Host an event</h2>
-          </div>
-          <button onClick={onClose} className="rounded-full p-1.5 text-[#878a8c] hover:bg-gray-100">
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="space-y-3 px-5 py-4">
-          <input value={form.title} onChange={(e) => set('title', e.target.value)} placeholder="Event title — e.g. Bengaluru Alumni Meetup" className={field} />
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-[#878a8c]">Date</label>
-              <input type="date" value={form.date} onChange={(e) => set('date', e.target.value)} className={field} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-[#878a8c]">Time</label>
-              <input type="time" value={form.time} onChange={(e) => set('time', e.target.value)} className={field} />
-            </div>
-          </div>
-          <input value={form.location} onChange={(e) => set('location', e.target.value)} placeholder="Venue — or 'Online'" className={field} />
-          <input value={form.meetingLink} onChange={(e) => set('meetingLink', e.target.value)} placeholder="Meeting link (optional, for online events)" className={field} />
-
-          {/* Ticketing */}
-          <div className="rounded-lg border border-[#edeff1] p-3">
-            <label className="flex cursor-pointer items-center gap-2">
-              <input type="checkbox" className="h-4 w-4 accent-[#ff4500]" checked={isPaid} onChange={(e) => setIsPaid(e.target.checked)} />
-              <span className="text-sm font-medium text-[#1c1c1c]">This is a paid event</span>
-            </label>
-            {isPaid && (
-              <div className="mt-3">
-                <label className="mb-1 block text-xs font-medium text-[#878a8c]">Ticket price (₹ per attendee)</label>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-[#878a8c]">₹</span>
-                  <input
-                    type="number"
-                    min={1}
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    placeholder="e.g. 500"
-                    className={field}
-                  />
-                </div>
-                <p className="mt-1 text-xs text-[#878a8c]">Attendees pay offline / at the venue — RSVP just records who's coming.</p>
-              </div>
-            )}
-          </div>
-
-          {/* Capacity */}
-          <div className="rounded-lg border border-[#edeff1] p-3">
-            <label className="flex cursor-pointer items-center gap-2">
-              <input type="checkbox" className="h-4 w-4 accent-[#ff4500]" checked={hasCapacity} onChange={(e) => setHasCapacity(e.target.checked)} />
-              <span className="text-sm font-medium text-[#1c1c1c]">Limit capacity</span>
-            </label>
-            {hasCapacity && (
-              <div className="mt-3">
-                <label className="mb-1 block text-xs font-medium text-[#878a8c]">Max confirmed attendees</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={capacity}
-                  onChange={(e) => setCapacity(e.target.value)}
-                  placeholder="e.g. 50"
-                  className={field}
-                />
-                <p className="mt-1 text-xs text-[#878a8c]">RSVPs beyond this number join a waitlist and are auto-confirmed as spots free up.</p>
-              </div>
-            )}
-          </div>
-
-          <textarea value={form.description} onChange={(e) => set('description', e.target.value)} rows={3} placeholder="What's the plan?" className={`${field} resize-none`} />
-          <p className="text-xs text-[#878a8c]">
-            {currentUser.isAdmin
-              ? 'Everyone on the network gets a notification, and the event appears on this page and the sidebar.'
-              : 'Your event is sent to an admin for approval. Once approved, the whole network is notified.'}
-          </p>
-        </div>
-
-        <div className="flex items-center justify-end gap-2 border-t border-[#edeff1] px-5 py-3">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button disabled={!canSubmit || saving} onClick={submit}>
-            {saving ? 'Creating…' : 'Create event'}
-          </Button>
         </div>
       </div>
     </div>
