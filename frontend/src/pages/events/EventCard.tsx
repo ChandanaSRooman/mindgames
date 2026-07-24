@@ -38,7 +38,7 @@ export function EventCard({
   const isMine = e.creatorId === currentUser.id
   const canPostUpdate = isMine || currentUser.isAdmin
   const start = new Date(e.startsAt)
-  const { phase } = useEventPhase(e.startsAt)
+  const { phase, countdownLabel } = useEventPhase(e.startsAt)
   const isPast = phase === 'ended'
   const [showPostUpdate, setShowPostUpdate] = useState(false)
   const [showDiscussion, setShowDiscussion] = useState(false)
@@ -68,7 +68,7 @@ export function EventCard({
                 <Clock size={11} /> Pending approval
               </span>
             )}
-            {e.status !== 'pending' && <EventPhaseBadge startsAt={e.startsAt} />}
+            {e.status !== 'pending' && <EventPhaseBadge phase={phase} countdownLabel={countdownLabel} />}
             {e.feedbackCount > 0 && (
               <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-semibold text-yellow-800">
                 <Star size={11} className="fill-yellow-500 text-yellow-500" /> {e.avgRating} ({e.feedbackCount})

@@ -4,7 +4,7 @@ import { Calendar, Clock, MapPin, Sparkles, Ticket, Users, Video, X } from 'luci
 import { useApp } from '../../store/AppStore'
 import { Avatar, Button, VerifiedBadge } from '../../components/ui'
 import { api } from '../../lib/api'
-import { EventPhaseBadge } from './EventPhase'
+import { EventPhaseBadge, useEventPhase } from './EventPhase'
 import type { EventAttendee, User } from '../../types'
 
 // Why an attendee is worth noting: shared batch year, overlapping technical
@@ -26,6 +26,9 @@ export function EventQuickView({ eventId, onClose }: { eventId: string; onClose:
   const { events, userById, currentUser, toggleRsvp } = useApp()
   const event = events.find((e) => e.id === eventId)
   const [attendees, setAttendees] = useState<EventAttendee[] | null>(null)
+  // Called unconditionally (before the early return below) to satisfy the
+  // rules of hooks; '' yields phase 'ended', so no timer runs when there's no event.
+  const { phase, countdownLabel } = useEventPhase(event?.startsAt ?? '')
 
   useEffect(() => {
     setAttendees(null)
@@ -70,7 +73,7 @@ export function EventQuickView({ eventId, onClose }: { eventId: string; onClose:
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-lg font-bold text-[#1c1c1c]">{event.title}</h3>
-              <EventPhaseBadge startsAt={event.startsAt} />
+              <EventPhaseBadge phase={phase} countdownLabel={countdownLabel} />
             </div>
             <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[#878a8c]">
               <span className="inline-flex items-center gap-1">
@@ -143,7 +146,9 @@ export function EventQuickView({ eventId, onClose }: { eventId: string; onClose:
 
           <div>
             <p className="mb-2 flex items-center gap-1 text-xs font-semibold tracking-wide text-[#878a8c] uppercase">
-              <Users size={12} /> Attendees ({attendees?.length ?? event.rsvpCount})
+              {/* Count confirmed only, to match the card's "X going" (which excludes
+                  the waitlist); waitlisted people are still listed below, labelled. */}
+              <Users size={12} /> Attendees ({attendees ? attendees.filter((a) => !a.waitlisted).length : event.rsvpCount})
             </p>
             {attendees === null && <p className="text-sm text-[#878a8c]">Loading…</p>}
             <div className="flex flex-col gap-3">
@@ -151,13 +156,20 @@ export function EventQuickView({ eventId, onClose }: { eventId: string; onClose:
                 <div key={a.id} className="flex items-center gap-2">
                   <Avatar name={a.name} src={a.photo} size={36} />
                   <div className="min-w-0 flex-1">
-                    <Link
-                      to={`/profile/${a.id}`}
-                      onClick={onClose}
-                      className="text-sm font-semibold text-[#1c1c1c] hover:underline"
-                    >
-                      {a.name}
-                    </Link>
+                    <span className="flex items-center gap-1.5">
+                      <Link
+                        to={`/profile/${a.id}`}
+                        onClick={onClose}
+                        className="text-sm font-semibold text-[#1c1c1c] hover:underline"
+                      >
+                        {a.name}
+                      </Link>
+                      {a.waitlisted && (
+                        <span className="rounded-full bg-[#f6f7f8] px-1.5 py-0.5 text-[10px] font-semibold text-[#878a8c]">
+                          Waitlisted
+                        </span>
+                      )}
+                    </span>
                     <p className="truncate text-xs text-[#878a8c]">{a.designation}</p>
                     {reasons.length > 0 && (
                       <div className="mt-0.5 flex flex-wrap gap-1">

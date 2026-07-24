@@ -43,8 +43,10 @@ export function useEventPhase(startsAt: string) {
   return { phase, countdownLabel }
 }
 
-export function EventPhaseBadge({ startsAt }: { startsAt: string }) {
-  const { phase, countdownLabel } = useEventPhase(startsAt)
+// Pure presentational badge — the caller runs useEventPhase once and passes
+// the result in, so a card that also needs `phase` for its own logic doesn't
+// end up running two independent per-second timers for the same event.
+export function EventPhaseBadge({ phase, countdownLabel }: { phase: EventPhase; countdownLabel: string }) {
   if (phase === 'live') {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600">

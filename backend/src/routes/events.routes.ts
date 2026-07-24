@@ -545,10 +545,10 @@ eventsRouter.get(
   '/:id/attendees',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const result = await query<{ id: string; name: string; designation: string; photo: string | null }>(
-      `SELECT u.id, u.name, u.designation, u.photo
+    const result = await query<{ id: string; name: string; designation: string; photo: string | null; waitlisted: boolean }>(
+      `SELECT u.id, u.name, u.designation, u.photo, r.waitlisted
        FROM event_rsvps r JOIN users u ON u.id = r.user_id
-       WHERE r.event_id = $1 ORDER BY r.created_at`,
+       WHERE r.event_id = $1 ORDER BY r.waitlisted, r.created_at`,
       [req.params.id],
     )
     res.json(result.rows.map((r) => ({ ...r, photo: r.photo ?? undefined })))

@@ -171,12 +171,14 @@ export interface PendingEvent extends AppEvent {
   creatorName: string
 }
 
-// A confirmed attendee, as shown in an event's quick-view drawer.
+// An attendee, as shown in an event's quick-view drawer. `waitlisted` = past
+// the capacity cap and not yet promoted (shown separately from confirmed).
 export interface EventAttendee {
   id: string
   name: string
   designation: string
   photo?: string
+  waitlisted: boolean
 }
 
 // One attendee's rating + comment (host/admin view of an event's feedback).
