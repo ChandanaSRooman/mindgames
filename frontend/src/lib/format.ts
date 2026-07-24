@@ -41,6 +41,13 @@ export function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
 }
 
+// A user's role line: "Designation · Company", falling back to their
+// college when neither is set (Student / Just looking around have no employer).
+export function roleLine(u: { designation?: string; company?: string; college?: string }): string {
+  const role = [u.designation, u.company].filter(Boolean).join(' · ')
+  return role || u.college || ''
+}
+
 export function compact(n: number): string {
   if (n < 1000) return String(n)
   if (n < 1_000_000) return `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k`

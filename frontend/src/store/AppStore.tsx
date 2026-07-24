@@ -23,6 +23,7 @@ import type {
 } from '../types'
 import { api, getToken, setToken } from '../lib/api'
 import { googleSignIn } from '../lib/google'
+import { rankByMatch } from '../lib/matching'
 
 // ---- Toasts ----------------------------------------------------------------
 export type ToastKind = 'success' | 'error' | 'info'
@@ -95,9 +96,11 @@ interface AppContextValue {
   connectionIds: string[]
   suggestionIds: string[]
   pendingRequestIds: string[]
+  sentRequestIds: string[]
   sendConnect: (id: string) => void
   acceptRequest: (id: string) => void
   ignoreRequest: (id: string) => void
+  cancelSentRequest: (id: string) => void
   refreshNetwork: () => Promise<void>
 
   // posts
@@ -410,8 +413,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // already linked.
   const suggestionIds = useMemo(
     () =>
-      users
-        .filter(
+      rankByMatch(
+        users.filter(
           (u) =>
             u.id !== currentUserId &&
             !u.isAdmin &&
@@ -419,9 +422,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
             !connectionIds.includes(u.id) &&
             !sentRequestIds.includes(u.id) &&
             !pendingRequestIds.includes(u.id),
-        )
-        .map((u) => u.id),
-    [users, currentUserId, connectionIds, sentRequestIds, pendingRequestIds],
+        ),
+        currentUser,
+      ).map((u) => u.id),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [users, currentUserId, currentUser, connectionIds, sentRequestIds, pendingRequestIds],
   )
 
   // Bump the displayed connection count for me + the other user after an
@@ -484,6 +489,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const ignoreRequest = useCallback((id: string) => {
     setPendingRequestIds((p) => p.filter((x) => x !== id))
     api.ignoreConnection(id).catch(() => {})
+  }, [])
+
+  const cancelSentRequest = useCallback((id: string) => {
+    setSentRequestIds((s) => s.filter((x) => x !== id))
+    api.cancelSentRequest(id).catch(() => {})
   }, [])
 
   // ---- posts ---------------------------------------------------------------
@@ -970,9 +980,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     connectionIds,
     suggestionIds,
     pendingRequestIds,
+    sentRequestIds,
     sendConnect,
     acceptRequest,
     ignoreRequest,
+    cancelSentRequest,
     refreshNetwork,
     posts,
     createPost,

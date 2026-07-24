@@ -18,7 +18,15 @@ export class ResumeParseError extends Error {
 // Must stay in sync with DOMAINS / EMPLOYMENT_TYPES in frontend/src/types.ts.
 // "" means "could not tell from the resume" — the form keeps its own value then.
 const DOMAINS = ['Cloud', 'AI/ML', 'Cybersecurity', 'DevOps', 'Data', 'Web Dev', 'Mobile', 'UI/UX', '']
-const EMPLOYMENT_TYPES = ['Employed', 'Freelancer', 'Entrepreneur', 'Looking for opportunity', '']
+const EMPLOYMENT_TYPES = [
+  'Employed',
+  'Freelancer',
+  'Entrepreneur',
+  'Looking for opportunity',
+  'Student',
+  'Just looking around',
+  '',
+]
 
 // JSON Schema the model must fill — mirrors ResumeParseResult minus `source`.
 const SCHEMA = {
@@ -36,7 +44,8 @@ const SCHEMA = {
     course: { type: 'string', description: 'Name of that course/degree/certification, "" if unclear' },
     experienceYears: { type: 'string', description: 'Total years of professional experience as digits, "" if unclear' },
     domain: { type: 'string', enum: DOMAINS, description: 'Closest expertise domain, "" only if none fits' },
-    employmentType: { type: 'string', enum: EMPLOYMENT_TYPES, description: 'Current employment status, "" if unclear' },
+    employmentType: { type: 'string', enum: EMPLOYMENT_TYPES, description: 'Current employment status, "" if unclear. Use "Student" if currently enrolled in further education with no job, "Looking for opportunity" if job-hunting with no current role.' },
+    college: { type: 'string', description: 'Name of the college/institution currently being attended, only if employmentType is "Student" — "" otherwise' },
     experience: {
       type: 'array',
       items: {
@@ -55,7 +64,7 @@ const SCHEMA = {
   },
   required: [
     'name', 'email', 'phone', 'linkedin', 'city', 'headline', 'bio',
-    'batchYear', 'course', 'experienceYears', 'domain', 'employmentType',
+    'batchYear', 'course', 'experienceYears', 'domain', 'employmentType', 'college',
     'experience', 'skills',
   ],
 }
@@ -65,7 +74,8 @@ const PROMPT =
   'Work experience is listed newest-first. ' +
   'Use only information present in the document — never invent employers, contact details, or dates. ' +
   'Use "" (or []) for anything the document does not state. ' +
-  'For domain and employmentType, pick the closest allowed value based on the overall profile.'
+  'For domain and employmentType, pick the closest allowed value based on the overall profile. ' +
+  'If currently a student, also fill college with the institution name.'
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 

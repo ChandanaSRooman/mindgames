@@ -14,7 +14,7 @@ import {
 import { useApp } from '../../store/AppStore'
 import { Avatar, Card, PostTypeBadge, VerifiedBadge } from '../ui'
 import { ReportModal } from '../ReportModal'
-import { timeAgo } from '../../lib/format'
+import { roleLine, timeAgo } from '../../lib/format'
 import type { Post } from '../../types'
 
 export function PostCard({ post }: { post: Post }) {
@@ -68,9 +68,9 @@ export function PostCard({ post }: { post: Post }) {
             </Link>
             <PostTypeBadge type={post.type} />
           </div>
-          <p className="truncate text-[13px] text-[#878a8c]">
-            {author.designation} · {author.company}
-          </p>
+          {roleLine(author) && (
+            <p className="truncate text-[13px] text-[#878a8c]">{roleLine(author)}</p>
+          )}
           <p className="mt-0.5 text-xs text-[#a5a8ab]">
             {timeAgo(post.createdAt)}
             {community && (

@@ -149,3 +149,20 @@ connectionsRouter.post(
     res.json({ ok: true, state: 'none' })
   }),
 )
+
+// DELETE /api/connections/:id — withdraw a request I sent to :id. Marked
+// 'ignored' rather than deleted so the row's history is kept; the POST /:id
+// handler already reactivates an 'ignored' row to 'pending' on a fresh send.
+connectionsRouter.delete(
+  '/:id',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const me = req.user!.sub
+    await query(
+      `UPDATE connections SET status = 'ignored', updated_at = now()
+       WHERE requester_id = $1 AND addressee_id = $2 AND status = 'pending'`,
+      [me, req.params.id],
+    )
+    res.json({ ok: true, state: 'none' })
+  }),
+)
