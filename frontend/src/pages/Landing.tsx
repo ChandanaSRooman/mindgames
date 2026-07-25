@@ -647,9 +647,11 @@ export function Landing() {
           className="animate-floaty2 pointer-events-none absolute -bottom-40 right-[10%] h-[320px] w-[480px] rounded-full bg-[#7c3aed]/15 blur-3xl"
         />
 
-        <div className="relative mx-auto max-w-6xl px-6 py-20">
+        {/* Full-width so the single story row can run edge to edge; only the
+            heading and trust strip are width-constrained. */}
+        <div className="relative py-20">
           <Reveal>
-            <div className="mx-auto max-w-2xl text-center">
+            <div className="mx-auto max-w-2xl px-6 text-center">
               <p className="text-sm font-bold tracking-widest text-[#ff8a00] uppercase">
                 Alumni stories
               </p>
@@ -666,7 +668,7 @@ export function Landing() {
           {/* Trust strip. Every figure here comes from roomanStats, the same
               numbers used in the hero — no separate claims invented for this section. */}
           <Reveal delay={120}>
-            <div className="mx-auto mt-8 flex max-w-3xl flex-wrap items-center justify-center gap-x-8 gap-y-3 text-sm">
+            <div className="mx-auto mt-8 flex max-w-3xl flex-wrap items-center justify-center gap-x-8 gap-y-3 px-6 text-sm">
               {[
                 { icon: <ShieldCheck size={15} />, label: 'Invite-only, batch-record verified' },
                 { icon: <Users size={15} />, label: `${roomanStats.alumni} alumni trained` },
@@ -780,6 +782,21 @@ export function Landing() {
  * each its own observer and the line could not be timed against them.
  */
 /* Must match the transition durations of .step-num / .step-line in index.css. */
+/**
+ * Marquee rows all drift at this speed. A shared duration would not work: the
+ * rows hold different numbers of cards, so the same 52s covered different
+ * distances and they visibly moved at 27, 34 and 45 px/s. Duration is derived
+ * per row from its track width instead.
+ */
+const MARQUEE_PX_PER_SEC = 34
+const CARD_GAP_PX = 24
+
+/** Seconds for one loop of a track holding `count` cards of `cardPx` width. */
+function marqueeSeconds(count: number, cardPx: number) {
+  const trackPx = count * cardPx + (count - 1) * CARD_GAP_PX
+  return Math.round(trackPx / MARQUEE_PX_PER_SEC)
+}
+
 const BADGE_MS = 420
 const LINE_MS = 460
 /** One badge plus the line that leaves it — the length of a single stage. */
@@ -845,63 +862,76 @@ function Steps() {
  * beat later. That ordering is the point — the verification reads as being
  * applied to the quote rather than arriving with it.
  */
+function StoryCard({ t, shown, base }: { t: Testimonial; shown: string; base: number }) {
+  return (
+    <figure className="flex min-h-[326px] w-[300px] shrink-0 flex-col rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm transition-all hover:-translate-y-1 hover:border-white/25 hover:bg-white/[0.08] sm:w-[360px]">
+      <div className="flex items-start justify-between gap-3">
+        <Quote
+          size={22}
+          className={`pop-in shrink-0 text-[#ff6534] ${shown}`}
+          style={{ transitionDelay: `${base + 180}ms` }}
+          fill="currentColor"
+        />
+        {/* Design affordance only — nothing here checks batch records.
+            See the warning above TESTIMONIALS. */}
+        <span
+          className={`pop-in inline-flex items-center gap-1 rounded-full border border-[#166534] bg-[#052e16]/70 px-2 py-0.5 text-[11px] font-bold whitespace-nowrap text-[#86efac] ${shown}`}
+          style={{ transitionDelay: `${base + 260}ms` }}
+        >
+          <BadgeCheck size={12} className="shrink-0" />
+          Verified alumnus
+        </span>
+      </div>
+
+      <blockquote className="mt-4 flex-1 text-[15px] leading-relaxed text-[#e8e9ea]">
+        “{t.quote}”
+      </blockquote>
+
+      <span
+        className={`pop-in mt-5 inline-flex w-fit items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-[#e2e3e4] ${shown}`}
+        style={{ transitionDelay: `${base + 320}ms` }}
+      >
+        <Check size={12} className="shrink-0 text-[#86efac]" />
+        {t.outcome}
+      </span>
+
+      <figcaption className="mt-5 flex items-center gap-3 border-t border-white/10 pt-4">
+        <Avatar name={t.name} size={42} />
+        <div className="min-w-0 text-left">
+          <p className="text-sm font-bold text-white">{t.name}</p>
+          <p className="truncate text-xs text-[#a5a8ab]">{t.role}</p>
+          <p className="truncate text-xs text-[#9ca1a5]">{t.batch}</p>
+        </div>
+      </figcaption>
+    </figure>
+  )
+}
+
 function Testimonials() {
   const { ref, inView } = useInView<HTMLDivElement>(0.12)
   const shown = inView ? 'is-visible' : ''
 
   return (
-    <div ref={ref} className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-      {TESTIMONIALS.map((t, i) => {
-        const base = i * 110
-        return (
-          <div
-            key={t.name}
-            className={`reveal h-full ${shown}`}
-            style={{ transitionDelay: `${base}ms` }}
-          >
-            <figure className="flex h-full flex-col rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm transition-all hover:-translate-y-1 hover:border-white/25 hover:bg-white/[0.08]">
-              <div className="flex items-start justify-between gap-3">
-                <Quote
-                  size={22}
-                  className={`pop-in shrink-0 text-[#ff6534] ${shown}`}
-                  style={{ transitionDelay: `${base + 180}ms` }}
-                  fill="currentColor"
-                />
-                {/* Design affordance only — nothing here checks batch records.
-                    See the warning above TESTIMONIALS. */}
-                <span
-                  className={`pop-in inline-flex items-center gap-1 rounded-full border border-[#166534] bg-[#052e16]/70 px-2 py-0.5 text-[11px] font-bold text-[#86efac] ${shown}`}
-                  style={{ transitionDelay: `${base + 260}ms` }}
-                >
-                  <BadgeCheck size={12} className="shrink-0" />
-                  Verified alumnus
-                </span>
-              </div>
-
-              <blockquote className="mt-4 flex-1 text-[15px] leading-relaxed text-[#e8e9ea]">
-                “{t.quote}”
-              </blockquote>
-
-              <span
-                className={`pop-in mt-5 inline-flex w-fit items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-[#e2e3e4] ${shown}`}
-                style={{ transitionDelay: `${base + 320}ms` }}
-              >
-                <Check size={12} className="shrink-0 text-[#86efac]" />
-                {t.outcome}
-              </span>
-
-              <figcaption className="mt-5 flex items-center gap-3 border-t border-white/10 pt-4">
-                <Avatar name={t.name} size={42} />
-                <div className="min-w-0 text-left">
-                  <p className="text-sm font-bold text-white">{t.name}</p>
-                  <p className="truncate text-xs text-[#a5a8ab]">{t.role}</p>
-                  <p className="truncate text-xs text-[#9ca1a5]">{t.batch}</p>
-                </div>
-              </figcaption>
-            </figure>
+    <div
+      ref={ref}
+      className="marquee-row mt-12 overflow-hidden py-2 [mask-image:linear-gradient(to_right,transparent,black_6%,black_94%,transparent)]"
+    >
+      <div
+        className="animate-row-left flex w-max items-stretch gap-6"
+        style={{ animationDuration: `${marqueeSeconds(TESTIMONIALS.length, 360)}s` }}
+      >
+        {TESTIMONIALS.map((t, i) => (
+          <StoryCard key={t.name} t={t} shown={shown} base={i * 110} />
+        ))}
+        {/* Duplicate half, so translateX(-50%) lands on a seam. aria-hidden and
+            data-clone so screen readers and reduced-motion users see each story
+            once — see .marquee-row in index.css. */}
+        {TESTIMONIALS.map((t, i) => (
+          <div key={`clone-${t.name}`} data-clone="true" aria-hidden className="flex">
+            <StoryCard t={t} shown={shown} base={i * 110} />
           </div>
-        )
-      })}
+        ))}
+      </div>
     </div>
   )
 }
@@ -959,15 +989,16 @@ function FeatureCard({ f }: { f: Feature }) {
  * A self-scrolling row of feature cards. The card list is rendered twice so the
  * track can translate -50% and land exactly on a seam; the second copy is
  * `data-clone` and aria-hidden, so screen readers and reduced-motion users see
- * each feature once. Pauses on hover/focus (see .feature-row in index.css).
+ * each feature once. Pauses on hover/focus (see .marquee-row in index.css).
  */
 function FeatureRow({ items, direction }: { items: Feature[]; direction: 'left' | 'right' }) {
   return (
-    <div className="feature-row overflow-hidden py-5 [mask-image:linear-gradient(to_right,transparent,black_6%,black_94%,transparent)]">
+    <div className="marquee-row overflow-hidden py-5 [mask-image:linear-gradient(to_right,transparent,black_6%,black_94%,transparent)]">
       <div
         className={`flex w-max items-stretch gap-6 ${
           direction === 'right' ? 'animate-row-right' : 'animate-row-left'
         }`}
+        style={{ animationDuration: `${marqueeSeconds(items.length, 330)}s` }}
       >
         {items.map((f) => (
           <FeatureCard key={f.title} f={f} />

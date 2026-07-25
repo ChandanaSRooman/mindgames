@@ -177,10 +177,10 @@ body {
 }
 /* Pause on hover and on keyboard focus inside the row, so anyone can stop it
    long enough to read a card (WCAG 2.2.2). */
-.feature-row:hover .animate-row-right,
-.feature-row:hover .animate-row-left,
-.feature-row:focus-within .animate-row-right,
-.feature-row:focus-within .animate-row-left {
+.marquee-row:hover .animate-row-right,
+.marquee-row:hover .animate-row-left,
+.marquee-row:focus-within .animate-row-right,
+.marquee-row:focus-within .animate-row-left {
   animation-play-state: paused;
 }
 
@@ -265,16 +265,16 @@ body {
   /* Scroll is off, so the off-screen half would be unreachable. Drop the
      duplicated cards (they exist only to make the loop seamless) and let the
      real ones wrap into a normal static grid. */
-  .feature-row {
+  .marquee-row {
     overflow: visible;
     mask-image: none;
   }
-  .feature-row > div {
+  .marquee-row > div {
     width: 100%;
     flex-wrap: wrap;
     justify-content: center;
   }
-  .feature-row [data-clone='true'] {
+  .marquee-row [data-clone='true'] {
     display: none;
   }
   .reveal {
