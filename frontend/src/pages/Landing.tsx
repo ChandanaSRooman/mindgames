@@ -575,28 +575,7 @@ export function Landing() {
             </div>
           </Reveal>
 
-          <div className="relative mt-12 grid gap-10 md:grid-cols-3 md:gap-8">
-            {/* Connector line (desktop) */}
-            <div
-              aria-hidden
-              className="absolute top-7 right-[16%] left-[16%] hidden border-t-2 border-dashed border-orange-200 md:block"
-            />
-            {STEPS.map((s, i) => (
-              <Reveal key={s.n} delay={i * 150}>
-                <div className="relative text-center">
-                  {/* Ink numerals, not white: white on this orange gradient is only
-                      2.6:1, whereas #1c1c1c on it clears 4.7:1 and keeps the brand fill. */}
-                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[#ff4500] to-[#ff8a00] text-lg font-extrabold text-[#1c1c1c] shadow-lg shadow-orange-500/25 transition-transform hover:scale-110">
-                    {s.n}
-                  </div>
-                  <h3 className="mt-5 text-lg font-bold text-[#1c1c1c]">{s.title}</h3>
-                  <p className="mx-auto mt-2 max-w-xs text-sm leading-relaxed text-[#6b6e70]">
-                    {s.body}
-                  </p>
-                </div>
-              </Reveal>
-            ))}
-          </div>
+          <Steps />
 
           <Reveal delay={300}>
             <div className="mx-auto mt-12 flex max-w-md items-center justify-center gap-2 rounded-full border border-[#edeff1] bg-[#f6f7f8] px-5 py-2.5 text-sm text-[#6b6e70]">
@@ -736,6 +715,54 @@ export function Landing() {
           © 2026 Rooman Technologies · Alumni Network
         </div>
       </footer>
+    </div>
+  )
+}
+
+/**
+ * The three onboarding steps, revealed in sequence.
+ *
+ * A single observer drives all of it, so the badges, copy and connector share
+ * one clock: badge 01 pops, the dashed line starts drawing toward 02, 02 pops as
+ * the line reaches it, and so on. Using a <Reveal> per step instead would give
+ * each its own observer and the line could not be timed against them.
+ */
+const STEP_STAGGER_MS = 280
+
+function Steps() {
+  const { ref, inView } = useInView<HTMLDivElement>(0.25)
+  const shown = inView ? 'is-visible' : ''
+
+  return (
+    <div ref={ref} className="relative mt-12 grid gap-10 md:grid-cols-3 md:gap-8">
+      {/* Connector (desktop only). Draws left to right, starting with step 01 and
+          finishing about when step 03 lands. */}
+      <div
+        aria-hidden
+        className={`step-line absolute top-7 right-[16%] left-[16%] hidden border-t-2 border-dashed border-orange-200 md:block ${shown}`}
+        style={{ transitionDelay: `${STEP_STAGGER_MS}ms` }}
+      />
+
+      {STEPS.map((s, i) => (
+        <div key={s.n} className="relative text-center">
+          {/* Ink numerals, not white: white on this orange gradient is only
+              2.6:1, whereas #1c1c1c on it clears 4.7:1 and keeps the brand fill. */}
+          <div
+            className={`step-num mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[#ff4500] to-[#ff8a00] text-lg font-extrabold text-[#1c1c1c] shadow-lg shadow-orange-500/25 ${shown}`}
+            style={{ transitionDelay: `${i * STEP_STAGGER_MS}ms` }}
+          >
+            {s.n}
+          </div>
+          {/* Copy trails its badge slightly so the badge reads as arriving first. */}
+          <div
+            className={`reveal ${shown}`}
+            style={{ transitionDelay: `${i * STEP_STAGGER_MS + 140}ms` }}
+          >
+            <h3 className="mt-5 text-lg font-bold text-[#1c1c1c]">{s.title}</h3>
+            <p className="mx-auto mt-2 max-w-xs text-sm leading-relaxed text-[#6b6e70]">{s.body}</p>
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

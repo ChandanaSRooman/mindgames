@@ -209,6 +209,34 @@ body {
   transform: none;
 }
 
+/* ---------------------------------------------------------------------------
+   "Up and running in three steps": the numbered badges pop in one after the
+   other while the dashed connector draws left to right between them, so the
+   sequence reads as 01 -> 02 -> 03 rather than three things appearing at once.
+   Per-step delays are set inline from the component.
+--------------------------------------------------------------------------- */
+.step-num {
+  opacity: 0;
+  transform: scale(0.4);
+  /* Overshooting curve gives the badge a physical "pop" as it lands. */
+  transition:
+    opacity 0.25s ease,
+    transform 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.step-num.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+.step-line {
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 1.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.step-line.is-visible {
+  transform: scaleX(1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-floaty,
   .animate-floaty2,
@@ -234,6 +262,13 @@ body {
     display: none;
   }
   .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  /* Steps land in their finished state: badges full size, connector full width. */
+  .step-num,
+  .step-line {
     opacity: 1;
     transform: none;
     transition: none;
