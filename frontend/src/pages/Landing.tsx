@@ -727,7 +727,16 @@ export function Landing() {
  * the line reaches it, and so on. Using a <Reveal> per step instead would give
  * each its own observer and the line could not be timed against them.
  */
-const STEP_STAGGER_MS = 280
+/* Must match the transition durations of .step-num / .step-line in index.css. */
+const BADGE_MS = 420
+const LINE_MS = 460
+/** One badge plus the line that leaves it — the length of a single stage. */
+const STAGE_MS = BADGE_MS + LINE_MS
+
+/** Badge i lands only after every earlier badge and connecting line has finished. */
+const badgeDelay = (i: number) => i * STAGE_MS
+/** Segment i starts the moment badge i has landed. */
+const lineDelay = (i: number) => BADGE_MS + i * STAGE_MS
 
 function Steps() {
   const { ref, inView } = useInView<HTMLDivElement>(0.25)
@@ -735,13 +744,21 @@ function Steps() {
 
   return (
     <div ref={ref} className="relative mt-12 grid gap-10 md:grid-cols-3 md:gap-8">
-      {/* Connector (desktop only). Draws left to right, starting with step 01 and
-          finishing about when step 03 lands. */}
-      <div
-        aria-hidden
-        className={`step-line absolute top-7 right-[16%] left-[16%] hidden border-t-2 border-dashed border-orange-200 md:block ${shown}`}
-        style={{ transitionDelay: `${STEP_STAGGER_MS}ms` }}
-      />
+      {/*
+        One segment per gap rather than a single line spanning both, so the draw
+        can stop at badge 02 and wait for it before continuing to 03. With three
+        equal columns the badge centres sit near 16% / 50% / 84%.
+      */}
+      {[0, 1].map((i) => (
+        <div
+          key={i}
+          aria-hidden
+          className={`step-line absolute top-7 hidden border-t-2 border-dashed border-orange-200 md:block ${shown} ${
+            i === 0 ? 'right-[50%] left-[16%]' : 'right-[16%] left-[50%]'
+          }`}
+          style={{ transitionDelay: `${lineDelay(i)}ms` }}
+        />
+      ))}
 
       {STEPS.map((s, i) => (
         <div key={s.n} className="relative text-center">
@@ -749,14 +766,15 @@ function Steps() {
               2.6:1, whereas #1c1c1c on it clears 4.7:1 and keeps the brand fill. */}
           <div
             className={`step-num mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[#ff4500] to-[#ff8a00] text-lg font-extrabold text-[#1c1c1c] shadow-lg shadow-orange-500/25 ${shown}`}
-            style={{ transitionDelay: `${i * STEP_STAGGER_MS}ms` }}
+            style={{ transitionDelay: `${badgeDelay(i)}ms` }}
           >
             {s.n}
           </div>
-          {/* Copy trails its badge slightly so the badge reads as arriving first. */}
+          {/* Copy belongs to its badge, so it follows immediately rather than
+              waiting for the next stage. */}
           <div
             className={`reveal ${shown}`}
-            style={{ transitionDelay: `${i * STEP_STAGGER_MS + 140}ms` }}
+            style={{ transitionDelay: `${badgeDelay(i) + 120}ms` }}
           >
             <h3 className="mt-5 text-lg font-bold text-[#1c1c1c]">{s.title}</h3>
             <p className="mx-auto mt-2 max-w-xs text-sm leading-relaxed text-[#6b6e70]">{s.body}</p>
