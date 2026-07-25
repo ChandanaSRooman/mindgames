@@ -786,14 +786,22 @@ function Steps() {
 }
 
 /**
- * One feature card. Fixed width so the marquee track has a stable, duplicable
- * length; `h-full` lets flex stretch every card in a row to equal height. The
- * width is narrower on phones so a whole card fits inside a 390px viewport
- * instead of being sliced by the row's edge mask.
+ * One feature card, uniform in both axes.
+ *
+ * Width is fixed so the marquee track has a stable, duplicable length, and is
+ * narrower on phones so a whole card fits inside a 390px viewport rather than
+ * being sliced by the row's edge mask.
+ *
+ * Height is a `min-h` floor, NOT `h-full`. `h-full` looks like it would equalise
+ * heights but does the opposite: `align-items: stretch` only stretches items
+ * whose cross size is `auto`, so an explicit `height: 100%` opts the card out of
+ * stretching entirely. The floor is set just above the tallest measured card
+ * (345px at >=640px, 385px at 390px) so every card lands on the same height,
+ * while still being free to grow rather than clip if a font renders larger.
  */
 function FeatureCard({ f }: { f: Feature }) {
   return (
-    <div className="group relative h-full w-[272px] shrink-0 rounded-2xl border border-[#edeff1] bg-white p-6 shadow-sm transition-all hover:-translate-y-1.5 hover:shadow-xl sm:w-[330px]">
+    <div className="group relative flex min-h-[400px] w-[272px] shrink-0 flex-col rounded-2xl border border-[#edeff1] bg-white p-6 shadow-sm transition-all hover:-translate-y-1.5 hover:shadow-xl sm:min-h-[360px] sm:w-[330px]">
       {/*
         Offer sticker: absolutely placed and tilted so it reads as stuck onto the
         card rather than as another row of content. It overhangs the corner, which
