@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 
 /* ---------------------------------------------------------------------------
-   RooConnect — Rooman Alumni Network
+   Root Connect — Rooman Alumni Network
    Strict design system: white surfaces, light-gray page, Reddit-orange accent.
 --------------------------------------------------------------------------- */
 @theme {
@@ -36,6 +36,44 @@ body {
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+}
+
+/* ---------------------------------------------------------------------------
+   Keyboard focus. Nothing in the app declared a focus style, so tabbing was
+   invisible. `:focus-visible` shows the ring for keyboard users only, never on
+   mouse click. The white companion ring keeps it legible on dark surfaces
+   (hero video, testimonials band) as well as on light ones.
+--------------------------------------------------------------------------- */
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgb(255 255 255 / 0.85);
+  border-radius: 4px;
+}
+
+/* Skip link: first tab stop, off-screen until focused. */
+.skip-link {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  z-index: 100;
+  translate: -50% -150%;
+  border-radius: 0 0 0.75rem 0.75rem;
+  background: var(--color-brand);
+  padding: 0.625rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #fff;
+  transition: translate 0.18s ease;
+}
+.skip-link:focus {
+  translate: -50% 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skip-link {
+    transition: none;
+  }
 }
 
 /* Thin scrollbars */
