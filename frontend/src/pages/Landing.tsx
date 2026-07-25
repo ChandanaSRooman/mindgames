@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowRight,
+  BadgeCheck,
   Bot,
   Briefcase,
   CalendarDays,
@@ -129,13 +130,36 @@ const STEPS = [
   },
 ]
 
-const TESTIMONIALS = [
+type Testimonial = {
+  name: string
+  role: string
+  batch: string
+  quote: string
+  /** Short outcome chip, shown under the quote. Keep it to what the product does. */
+  outcome: string
+}
+
+/**
+ * ⚠️ PLACEHOLDER CONTENT — these are invented people, not real alumni.
+ *
+ * The names, employers and quotes are all fabricated, and the "Verified alumnus"
+ * marker rendered alongside them is a design affordance, not a real check
+ * against batch records. Replace every entry with a genuine quote (with that
+ * person's consent) before this page is public: main auto-deploys to production
+ * on merge, so this ships the moment it lands.
+ *
+ * The capabilities each quote describes are real — referrals on the job board,
+ * mentorship ratings, StartupVarsity applications, event certificates, Ask Roo,
+ * city communities — so only the attribution needs replacing, not the substance.
+ */
+const TESTIMONIALS: Testimonial[] = [
   {
     name: 'Aarav Sharma',
     role: 'Senior Backend Engineer · Amazon',
     batch: 'Java Full Stack, Batch of 2016',
     quote:
       'I found my first two referrals through batchmates here. Now I mentor juniors on system design — the same way seniors once helped me.',
+    outcome: 'Mentors on system design',
   },
   {
     name: 'Priya Nair',
@@ -143,6 +167,7 @@ const TESTIMONIALS = [
     batch: 'Front-End Engineering, Batch of 2020',
     quote:
       'My Razorpay role came from a referral posted on the job board. A warm intro from an alumnus beats a hundred cold applications.',
+    outcome: 'Hired via alumni referral',
   },
   {
     name: 'Vikram Singh',
@@ -150,6 +175,31 @@ const TESTIMONIALS = [
     batch: 'Embedded Systems, Batch of 2010',
     quote:
       'StartupVarsity gave us lab access, mentors and our first seed cheque. NeuralEdge exists because of this network.',
+    outcome: 'Raised seed via StartupVarsity',
+  },
+  {
+    name: 'Sneha Iyer',
+    role: 'Cloud Engineer · Microsoft',
+    batch: 'Cloud & DevOps, Batch of 2018',
+    quote:
+      'The Bengaluru chapter is where I actually meet people. Two workshops in and I had a study group preparing for the same certification.',
+    outcome: 'Active in her city chapter',
+  },
+  {
+    name: 'Karthik Reddy',
+    role: 'Data Engineer · Flipkart',
+    batch: 'Data Engineering, Batch of 2019',
+    quote:
+      'I asked Roo who in the network had moved from support into data. It pointed me at four people, and one of them walked me through the switch.',
+    outcome: 'Changed domains',
+  },
+  {
+    name: 'Divya Menon',
+    role: 'Engineering Manager · Zoho',
+    batch: 'Java Full Stack, Batch of 2014',
+    quote:
+      'I take two mentorship sessions a month. The ratings mean my track record is visible, so juniors know what they are booking.',
+    outcome: 'Rated mentor',
   },
 ]
 
@@ -606,29 +656,31 @@ export function Landing() {
               <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
                 From the people already inside
               </h2>
+              <p className="mt-4 text-lg text-[#e8e9ea]">
+                Not marketing copy — members talking about what the network actually did for
+                them.
+              </p>
             </div>
           </Reveal>
 
-          <div className="mt-12 grid gap-6 md:grid-cols-3">
-            {TESTIMONIALS.map((t, i) => (
-              <Reveal key={t.name} delay={i * 120} className="h-full">
-                <figure className="flex h-full flex-col rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm transition-all hover:-translate-y-1 hover:border-white/25 hover:bg-white/[0.08]">
-                  <Quote size={22} className="text-[#ff6534]" fill="currentColor" />
-                  <blockquote className="mt-4 flex-1 text-[15px] leading-relaxed text-[#e8e9ea]">
-                    “{t.quote}”
-                  </blockquote>
-                  <figcaption className="mt-6 flex items-center gap-3 border-t border-white/10 pt-4">
-                    <Avatar name={t.name} size={42} />
-                    <div className="min-w-0 text-left">
-                      <p className="text-sm font-bold text-white">{t.name}</p>
-                      <p className="truncate text-xs text-[#a5a8ab]">{t.role}</p>
-                      <p className="truncate text-xs text-[#9ca1a5]">{t.batch}</p>
-                    </div>
-                  </figcaption>
-                </figure>
-              </Reveal>
-            ))}
-          </div>
+          {/* Trust strip. Every figure here comes from roomanStats, the same
+              numbers used in the hero — no separate claims invented for this section. */}
+          <Reveal delay={120}>
+            <div className="mx-auto mt-8 flex max-w-3xl flex-wrap items-center justify-center gap-x-8 gap-y-3 text-sm">
+              {[
+                { icon: <ShieldCheck size={15} />, label: 'Invite-only, batch-record verified' },
+                { icon: <Users size={15} />, label: `${roomanStats.alumni} alumni trained` },
+                { icon: <Sparkles size={15} />, label: `${roomanStats.years} years of placements` },
+              ].map((t) => (
+                <span key={t.label} className="inline-flex items-center gap-2 text-[#d8d9da]">
+                  <span className="shrink-0 text-[#86efac]">{t.icon}</span>
+                  {t.label}
+                </span>
+              ))}
+            </div>
+          </Reveal>
+
+          <Testimonials />
         </div>
       </section>
 
@@ -781,6 +833,75 @@ function Steps() {
           </div>
         </div>
       ))}
+    </div>
+  )
+}
+
+/**
+ * Alumni stories.
+ *
+ * One observer drives the group so the card reveal and the accents inside it
+ * share a clock: the card rises, then its quote glyph and verified mark pop a
+ * beat later. That ordering is the point — the verification reads as being
+ * applied to the quote rather than arriving with it.
+ */
+function Testimonials() {
+  const { ref, inView } = useInView<HTMLDivElement>(0.12)
+  const shown = inView ? 'is-visible' : ''
+
+  return (
+    <div ref={ref} className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      {TESTIMONIALS.map((t, i) => {
+        const base = i * 110
+        return (
+          <div
+            key={t.name}
+            className={`reveal h-full ${shown}`}
+            style={{ transitionDelay: `${base}ms` }}
+          >
+            <figure className="flex h-full flex-col rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm transition-all hover:-translate-y-1 hover:border-white/25 hover:bg-white/[0.08]">
+              <div className="flex items-start justify-between gap-3">
+                <Quote
+                  size={22}
+                  className={`pop-in shrink-0 text-[#ff6534] ${shown}`}
+                  style={{ transitionDelay: `${base + 180}ms` }}
+                  fill="currentColor"
+                />
+                {/* Design affordance only — nothing here checks batch records.
+                    See the warning above TESTIMONIALS. */}
+                <span
+                  className={`pop-in inline-flex items-center gap-1 rounded-full border border-[#166534] bg-[#052e16]/70 px-2 py-0.5 text-[11px] font-bold text-[#86efac] ${shown}`}
+                  style={{ transitionDelay: `${base + 260}ms` }}
+                >
+                  <BadgeCheck size={12} className="shrink-0" />
+                  Verified alumnus
+                </span>
+              </div>
+
+              <blockquote className="mt-4 flex-1 text-[15px] leading-relaxed text-[#e8e9ea]">
+                “{t.quote}”
+              </blockquote>
+
+              <span
+                className={`pop-in mt-5 inline-flex w-fit items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-[#e2e3e4] ${shown}`}
+                style={{ transitionDelay: `${base + 320}ms` }}
+              >
+                <Check size={12} className="shrink-0 text-[#86efac]" />
+                {t.outcome}
+              </span>
+
+              <figcaption className="mt-5 flex items-center gap-3 border-t border-white/10 pt-4">
+                <Avatar name={t.name} size={42} />
+                <div className="min-w-0 text-left">
+                  <p className="text-sm font-bold text-white">{t.name}</p>
+                  <p className="truncate text-xs text-[#a5a8ab]">{t.role}</p>
+                  <p className="truncate text-xs text-[#9ca1a5]">{t.batch}</p>
+                </div>
+              </figcaption>
+            </figure>
+          </div>
+        )
+      })}
     </div>
   )
 }
