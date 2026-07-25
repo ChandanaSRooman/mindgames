@@ -534,10 +534,11 @@ export function Landing() {
         </Reveal>
       </section>
 
-      {/* Features */}
-      <section id="features" className="mx-auto max-w-6xl scroll-mt-20 px-6 py-20">
+      {/* Features — section is full-width so the marquee rows can run edge to
+          edge; only the heading block is width-constrained. */}
+      <section id="features" className="scroll-mt-20 py-20">
         <Reveal>
-          <div className="mx-auto max-w-2xl text-center">
+          <div className="mx-auto max-w-2xl px-6 text-center">
             {/* Eyebrows use the darker action orange: #ff4500 is only 3.2:1 on the
                 light page at this size. The logotype keeps #ff4500 (WCAG exempts logos). */}
             <p className="text-sm font-bold tracking-widest text-[#c2410c] uppercase">
@@ -553,39 +554,10 @@ export function Landing() {
           </div>
         </Reveal>
 
-        <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURES.map((f, i) => (
-            <Reveal key={f.title} delay={(i % 3) * 100} className="h-full">
-              <div className="group h-full rounded-2xl border border-[#edeff1] bg-white p-6 shadow-sm transition-all hover:-translate-y-1.5 hover:shadow-xl">
-                {/* Icon left, optional offer pill pinned to the opposite corner.
-                    Laid out with justify-between rather than absolute positioning so
-                    it cannot clip the rounded card edge or overlap the icon. */}
-                <div className="flex items-start justify-between gap-3">
-                  <div
-                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-white shadow-lg transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6 ${f.tint}`}
-                  >
-                    {f.icon}
-                  </div>
-                  {f.badge && (
-                    <span className="mt-0.5 inline-flex items-center gap-1 rounded-full border border-[#bbf7d0] bg-[#f0fdf4] px-2.5 py-1 text-xs font-bold tracking-tight text-[#15803d]">
-                      <Sparkles size={12} className="shrink-0" />
-                      {f.badge}
-                    </span>
-                  )}
-                </div>
-                <h3 className="mt-4 text-lg font-bold text-[#1c1c1c]">{f.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-[#6b6e70]">{f.body}</p>
-                <ul className="mt-4 space-y-2">
-                  {f.points.map((p) => (
-                    <li key={p} className="flex items-start gap-2 text-sm text-[#1c1c1c]">
-                      <Check size={16} className="mt-0.5 shrink-0 text-[#16a34a]" />
-                      {p}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </Reveal>
-          ))}
+        {/* Two tracks instead of a 3x3 grid: top row drifts right, bottom left. */}
+        <div className="mt-12 space-y-6">
+          <FeatureRow items={FEATURES.slice(0, 5)} direction="right" />
+          <FeatureRow items={FEATURES.slice(5)} direction="left" />
         </div>
       </section>
 
@@ -603,28 +575,7 @@ export function Landing() {
             </div>
           </Reveal>
 
-          <div className="relative mt-12 grid gap-10 md:grid-cols-3 md:gap-8">
-            {/* Connector line (desktop) */}
-            <div
-              aria-hidden
-              className="absolute top-7 right-[16%] left-[16%] hidden border-t-2 border-dashed border-orange-200 md:block"
-            />
-            {STEPS.map((s, i) => (
-              <Reveal key={s.n} delay={i * 150}>
-                <div className="relative text-center">
-                  {/* Ink numerals, not white: white on this orange gradient is only
-                      2.6:1, whereas #1c1c1c on it clears 4.7:1 and keeps the brand fill. */}
-                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[#ff4500] to-[#ff8a00] text-lg font-extrabold text-[#1c1c1c] shadow-lg shadow-orange-500/25 transition-transform hover:scale-110">
-                    {s.n}
-                  </div>
-                  <h3 className="mt-5 text-lg font-bold text-[#1c1c1c]">{s.title}</h3>
-                  <p className="mx-auto mt-2 max-w-xs text-sm leading-relaxed text-[#6b6e70]">
-                    {s.body}
-                  </p>
-                </div>
-              </Reveal>
-            ))}
-          </div>
+          <Steps />
 
           <Reveal delay={300}>
             <div className="mx-auto mt-12 flex max-w-md items-center justify-center gap-2 rounded-full border border-[#edeff1] bg-[#f6f7f8] px-5 py-2.5 text-sm text-[#6b6e70]">
@@ -764,6 +715,140 @@ export function Landing() {
           © 2026 Rooman Technologies · Alumni Network
         </div>
       </footer>
+    </div>
+  )
+}
+
+/**
+ * The three onboarding steps, revealed in sequence.
+ *
+ * A single observer drives all of it, so the badges, copy and connector share
+ * one clock: badge 01 pops, the dashed line starts drawing toward 02, 02 pops as
+ * the line reaches it, and so on. Using a <Reveal> per step instead would give
+ * each its own observer and the line could not be timed against them.
+ */
+/* Must match the transition durations of .step-num / .step-line in index.css. */
+const BADGE_MS = 420
+const LINE_MS = 460
+/** One badge plus the line that leaves it — the length of a single stage. */
+const STAGE_MS = BADGE_MS + LINE_MS
+
+/** Badge i lands only after every earlier badge and connecting line has finished. */
+const badgeDelay = (i: number) => i * STAGE_MS
+/** Segment i starts the moment badge i has landed. */
+const lineDelay = (i: number) => BADGE_MS + i * STAGE_MS
+
+function Steps() {
+  const { ref, inView } = useInView<HTMLDivElement>(0.25)
+  const shown = inView ? 'is-visible' : ''
+
+  return (
+    <div ref={ref} className="relative mt-12 grid gap-10 md:grid-cols-3 md:gap-8">
+      {/*
+        One segment per gap rather than a single line spanning both, so the draw
+        can stop at badge 02 and wait for it before continuing to 03. With three
+        equal columns the badge centres sit near 16% / 50% / 84%.
+      */}
+      {[0, 1].map((i) => (
+        <div
+          key={i}
+          aria-hidden
+          className={`step-line absolute top-7 hidden border-t-2 border-dashed border-orange-200 md:block ${shown} ${
+            i === 0 ? 'right-[50%] left-[16%]' : 'right-[16%] left-[50%]'
+          }`}
+          style={{ transitionDelay: `${lineDelay(i)}ms` }}
+        />
+      ))}
+
+      {STEPS.map((s, i) => (
+        <div key={s.n} className="relative text-center">
+          {/* Ink numerals, not white: white on this orange gradient is only
+              2.6:1, whereas #1c1c1c on it clears 4.7:1 and keeps the brand fill. */}
+          <div
+            className={`step-num mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[#ff4500] to-[#ff8a00] text-lg font-extrabold text-[#1c1c1c] shadow-lg shadow-orange-500/25 ${shown}`}
+            style={{ transitionDelay: `${badgeDelay(i)}ms` }}
+          >
+            {s.n}
+          </div>
+          {/* Copy belongs to its badge, so it follows immediately rather than
+              waiting for the next stage. */}
+          <div
+            className={`reveal ${shown}`}
+            style={{ transitionDelay: `${badgeDelay(i) + 120}ms` }}
+          >
+            <h3 className="mt-5 text-lg font-bold text-[#1c1c1c]">{s.title}</h3>
+            <p className="mx-auto mt-2 max-w-xs text-sm leading-relaxed text-[#6b6e70]">{s.body}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * One feature card. Fixed width so the marquee track has a stable, duplicable
+ * length; `h-full` lets flex stretch every card in a row to equal height. The
+ * width is narrower on phones so a whole card fits inside a 390px viewport
+ * instead of being sliced by the row's edge mask.
+ */
+function FeatureCard({ f }: { f: Feature }) {
+  return (
+    <div className="group relative h-full w-[272px] shrink-0 rounded-2xl border border-[#edeff1] bg-white p-6 shadow-sm transition-all hover:-translate-y-1.5 hover:shadow-xl sm:w-[330px]">
+      {/*
+        Offer sticker: absolutely placed and tilted so it reads as stuck onto the
+        card rather than as another row of content. It overhangs the corner, which
+        is why the track wrapper carries vertical padding — `overflow-hidden`
+        clips both axes and would otherwise shave the top off.
+      */}
+      {f.badge && (
+        <span className="absolute -top-3 -right-2 z-10 inline-flex rotate-[7deg] items-center gap-1 rounded-full border-2 border-white bg-gradient-to-br from-[#15803d] to-[#166534] px-3 py-1.5 text-xs font-extrabold tracking-tight text-white shadow-lg shadow-green-900/25 transition-transform duration-300 group-hover:rotate-[-3deg] group-hover:scale-105">
+          <Sparkles size={12} className="shrink-0" />
+          {f.badge}
+        </span>
+      )}
+
+      <div
+        className={`flex h-12 w-12 items-center justify-center rounded-xl text-white shadow-lg transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6 ${f.tint}`}
+      >
+        {f.icon}
+      </div>
+      <h3 className="mt-4 text-lg font-bold text-[#1c1c1c]">{f.title}</h3>
+      <p className="mt-2 text-sm leading-relaxed text-[#6b6e70]">{f.body}</p>
+      <ul className="mt-4 space-y-2">
+        {f.points.map((p) => (
+          <li key={p} className="flex items-start gap-2 text-sm text-[#1c1c1c]">
+            <Check size={16} className="mt-0.5 shrink-0 text-[#16a34a]" />
+            {p}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/**
+ * A self-scrolling row of feature cards. The card list is rendered twice so the
+ * track can translate -50% and land exactly on a seam; the second copy is
+ * `data-clone` and aria-hidden, so screen readers and reduced-motion users see
+ * each feature once. Pauses on hover/focus (see .feature-row in index.css).
+ */
+function FeatureRow({ items, direction }: { items: Feature[]; direction: 'left' | 'right' }) {
+  return (
+    <div className="feature-row overflow-hidden py-5 [mask-image:linear-gradient(to_right,transparent,black_6%,black_94%,transparent)]">
+      <div
+        className={`flex w-max items-stretch gap-6 ${
+          direction === 'right' ? 'animate-row-right' : 'animate-row-left'
+        }`}
+      >
+        {items.map((f) => (
+          <FeatureCard key={f.title} f={f} />
+        ))}
+        {items.map((f) => (
+          <div key={`clone-${f.title}`} data-clone="true" aria-hidden className="flex">
+            <FeatureCard f={f} />
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

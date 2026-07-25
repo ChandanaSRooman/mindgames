@@ -165,6 +165,25 @@ body {
 .animate-floaty2 {
   animation: floaty2 11s ease-in-out infinite;
 }
+/* Feature rows: two tracks scrolling in opposite directions. Both reuse the
+   `marquee` keyframe (0 -> -50%); the rightward one just runs it in reverse.
+   Requires the track's children to be duplicated so -50% lands on a seam.
+   Slower than the logo marquee because these cards carry readable text. */
+.animate-row-right {
+  animation: marquee 52s linear infinite reverse;
+}
+.animate-row-left {
+  animation: marquee 52s linear infinite;
+}
+/* Pause on hover and on keyboard focus inside the row, so anyone can stop it
+   long enough to read a card (WCAG 2.2.2). */
+.feature-row:hover .animate-row-right,
+.feature-row:hover .animate-row-left,
+.feature-row:focus-within .animate-row-right,
+.feature-row:focus-within .animate-row-left {
+  animation-play-state: paused;
+}
+
 .animate-marquee {
   animation: marquee 28s linear infinite;
 }
@@ -190,14 +209,68 @@ body {
   transform: none;
 }
 
+/* ---------------------------------------------------------------------------
+   "Up and running in three steps": a strictly sequential timeline —
+   badge 01, then the line 01->02, then badge 02, then the line 02->03, then
+   badge 03. Nothing overlaps; each stage starts as the previous one finishes.
+   Durations here must match BADGE_MS / LINE_MS in Landing.tsx, which computes
+   the per-element delays inline.
+--------------------------------------------------------------------------- */
+.step-num {
+  opacity: 0;
+  transform: scale(0.4);
+  /* Overshooting curve gives the badge a physical "pop" as it lands. */
+  transition:
+    opacity 0.18s ease,
+    transform 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.step-num.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* One segment per gap, each drawing from its left end toward the next badge. */
+.step-line {
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.46s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.step-line.is-visible {
+  transform: scaleX(1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-floaty,
   .animate-floaty2,
   .animate-marquee,
+  .animate-row-right,
+  .animate-row-left,
   .animate-gradient-x {
     animation: none;
   }
+  /* Scroll is off, so the off-screen half would be unreachable. Drop the
+     duplicated cards (they exist only to make the loop seamless) and let the
+     real ones wrap into a normal static grid. */
+  .feature-row {
+    overflow: visible;
+    mask-image: none;
+  }
+  .feature-row > div {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .feature-row [data-clone='true'] {
+    display: none;
+  }
   .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  /* Steps land in their finished state: badges full size, connector full width. */
+  .step-num,
+  .step-line {
     opacity: 1;
     transform: none;
     transition: none;
