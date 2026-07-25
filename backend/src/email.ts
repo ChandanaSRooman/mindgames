@@ -66,8 +66,8 @@ export async function sendEmail(to: string, subject: string, text: string): Prom
 export function sendPasswordResetEmail(to: string, name: string, link: string): Promise<boolean> {
   return sendEmail(
     to,
-    'Reset your RooConnect password',
-    `Hi ${name},\n\nSomeone requested a password reset for your RooConnect account. ` +
+    'Reset your Root Connect password',
+    `Hi ${name},\n\nSomeone requested a password reset for your Root Connect account. ` +
       `If this was you, set a new password here (link valid for 1 hour):\n\n${link}\n\n` +
       `If you didn't request this, you can safely ignore this email.\n\n— The Rooman Team`,
   )
@@ -76,7 +76,7 @@ export function sendPasswordResetEmail(to: string, name: string, link: string): 
 export function sendVerificationEmail(to: string, name: string, link: string): Promise<boolean> {
   return sendEmail(
     to,
-    'Verify your email for RooConnect',
+    'Verify your email for Root Connect',
     `Hi ${name},\n\nWelcome to the Rooman Alumni Network! Please confirm this email address ` +
       `so we know it's really you:\n\n${link}\n\n— The Rooman Team`,
   )

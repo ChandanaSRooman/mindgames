@@ -24,7 +24,7 @@ async function buildDigest(): Promise<string> {
     `SELECT count(*)::int AS count FROM users WHERE created_at > now() - interval '7 days'`,
   )
 
-  const lines: string[] = ['Your week on RooConnect', '========================', '']
+  const lines: string[] = ['Your week on Root Connect', '========================', '']
   if (topPosts.rowCount) {
     lines.push('Top posts this week:')
     for (const p of topPosts.rows) {
@@ -75,7 +75,7 @@ export async function sendWeeklyDigest(): Promise<{ recipients: number; simulate
   let sent = 0
   for (const r of recipients.rows) {
     try {
-      await sendEmail(r.email, 'Your weekly RooConnect digest', body)
+      await sendEmail(r.email, 'Your weekly Root Connect digest', body)
       sent++
     } catch (err) {
       console.error(`digest to ${r.email} failed:`, err instanceof Error ? err.message : err)

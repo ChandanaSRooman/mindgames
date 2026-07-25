@@ -523,7 +523,7 @@ eventsRouter.get(
 <body>
   <p class="print-hint">Use your browser's Print (Ctrl/Cmd+P) → Save as PDF to keep a copy.</p>
   <div class="cert">
-    <div class="brand">RooConnect — Rooman Alumni Network</div>
+    <div class="brand">Root Connect — Rooman Alumni Network</div>
     <h1>Certificate of Attendance</h1>
     <p class="sub">This is to certify that</p>
     <div class="name">${esc(who.rows[0].name)}</div>
@@ -573,7 +573,7 @@ eventsRouter.get(
     const ics = [
       'BEGIN:VCALENDAR',
       'VERSION:2.0',
-      'PRODID:-//RooConnect//Alumni Events//EN',
+      'PRODID:-//Root Connect//Alumni Events//EN',
       'BEGIN:VEVENT',
       `UID:rooconnect-event-${e.id}`,
       `DTSTAMP:${stamp(new Date())}`,
@@ -619,7 +619,7 @@ export function startEventReminderScheduler(): void {
             `Reminder: ${e.title} — ${when}`,
             `Hi ${a.name},\n\nA reminder that "${e.title}" starts ${when}${e.location ? ` at ${e.location}` : ''}.` +
               (e.meeting_link ? `\nJoin: ${e.meeting_link}` : '') +
-              `\n\nSee you there!\n— RooConnect`,
+              `\n\nSee you there!\n— Root Connect`,
           ).catch(() => {})
         }
       }

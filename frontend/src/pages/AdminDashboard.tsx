@@ -12,7 +12,7 @@ import { AlumniTable } from '../components/admin/AlumniTable'
 import { Avatar, Button, Card } from '../components/ui'
 import { roleLine, timeAgo } from '../lib/format'
 
-// NOTE: Restyled to the light RooConnect theme. All api.* invite/alumni LOGIC
+// NOTE: Restyled to the light Root Connect theme. All api.* invite/alumni LOGIC
 // is unchanged from the original implementation.
 
 export function AdminDashboard() {

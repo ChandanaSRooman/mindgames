@@ -162,7 +162,7 @@ export function RightSidebar() {
         </Card>
 
         <p className="px-2 text-[11px] leading-relaxed text-[#878a8c]">
-          RooConnect · Rooman Technologies Alumni Network · 25 years · 500,000+ alumni
+          Root Connect · Rooman Technologies Alumni Network · 25 years · 500,000+ alumni
         </p>
       </div>
     </aside>

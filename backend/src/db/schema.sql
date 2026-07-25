@@ -1,4 +1,4 @@
--- RooConnect — Phase 1 schema (users, posts, comments, likes, saves, connections, invitees).
+-- Root Connect — Phase 1 schema (users, posts, comments, likes, saves, connections, invitees).
 -- Idempotent: safe to run repeatedly (CREATE ... IF NOT EXISTS).
 -- Raw SQL, targets Postgres 14+ (Amazon RDS in prod, local Docker in dev).
 
