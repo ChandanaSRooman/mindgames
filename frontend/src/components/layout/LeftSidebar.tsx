@@ -30,7 +30,7 @@ export function LeftSidebar() {
   const joined = communities.filter((c) => c.joined)
 
   return (
-    <aside className="fixed bottom-0 left-0 top-14 hidden w-[260px] overflow-y-auto border-r border-[#edeff1] bg-white px-3 py-4 lg:block">
+    <aside className="fixed bottom-0 left-[var(--shell-gutter)] top-14 hidden w-[260px] overflow-y-auto border-r border-[#edeff1] bg-white px-3 py-4 lg:block">
       <nav className="flex flex-col gap-0.5">
         {NAV.map(({ to, label, icon: Icon }) => (
           <NavLink

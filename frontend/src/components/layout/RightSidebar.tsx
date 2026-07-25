@@ -31,7 +31,7 @@ export function RightSidebar() {
   ].slice(0, 3)
 
   return (
-    <aside className="fixed bottom-0 right-0 top-14 hidden w-[300px] overflow-y-auto px-4 py-4 xl:block">
+    <aside className="fixed bottom-0 right-[var(--shell-gutter)] top-14 hidden w-[300px] overflow-y-auto px-4 py-4 xl:block">
       <div className="flex flex-col gap-4">
         {/* People you may know */}
         <Card className="p-4">

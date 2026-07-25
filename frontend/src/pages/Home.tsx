@@ -39,7 +39,7 @@ export function Home() {
   }, [posts, users, query, sort, currentUser.domain])
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-2">
       <CreatePostBox />
 
       {/* Sort bar */}

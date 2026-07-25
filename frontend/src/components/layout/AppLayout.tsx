@@ -51,8 +51,15 @@ export function AppLayout() {
       <LeftSidebar />
       <RightSidebar />
 
-      <main className="min-h-screen pt-14 lg:pl-[260px] xl:pr-[300px]">
-        <div className="mx-auto w-full max-w-2xl px-4 py-5">
+      {/*
+        Padding tracks the sidebars, which are offset by --shell-gutter so the
+        three columns stay together as one centred shell on wide screens.
+        The +16px past each sidebar width (260 -> 276, 300 -> 316) guarantees a
+        gutter even at exactly 1280px, where 260 + 720 + 300 would otherwise
+        leave the feed touching both sidebars.
+      */}
+      <main className="min-h-screen pt-14 lg:pl-[calc(276px+var(--shell-gutter))] xl:pr-[calc(316px+var(--shell-gutter))]">
+        <div className="mx-auto w-full max-w-[720px] px-4 py-5">
           {showVerifyBanner && (
             <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
               <MailWarning size={16} className="shrink-0" />

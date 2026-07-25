@@ -30,6 +30,21 @@ body,
   height: 100%;
 }
 
+/* ---------------------------------------------------------------------------
+   App shell width.
+
+   The sidebars are position:fixed, so with left:0 / right:0 they pin to the
+   viewport edges. On a wide monitor that strands the centre column in the
+   middle with ~340px of dead space either side. Offsetting both sidebars (and
+   the navbar padding) by this gutter keeps the three columns together as one
+   centred shell, while collapsing to 0 on narrower screens so nothing changes
+   below the breakpoint.
+--------------------------------------------------------------------------- */
+:root {
+  --shell-max: 1400px;
+  --shell-gutter: max(0px, calc((100vw - var(--shell-max)) / 2));
+}
+
 body {
   margin: 0;
   background-color: var(--color-page);
