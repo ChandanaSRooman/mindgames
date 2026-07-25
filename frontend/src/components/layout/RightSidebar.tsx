@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Briefcase, Calendar, Trophy } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { Avatar, Button, Card } from '../ui'
-import { timeAgo } from '../../lib/format'
+import { roleLine, timeAgo } from '../../lib/format'
 import { api } from '../../lib/api'
 
 export function RightSidebar() {
@@ -49,9 +49,9 @@ export function RightSidebar() {
                   <Link to={`/profile/${u.id}`} className="block truncate text-sm font-semibold text-[#1c1c1c] hover:underline">
                     {u.name}
                   </Link>
-                  <p className="truncate text-xs text-[#878a8c]">
-                    {u.designation} · {u.company}
-                  </p>
+                  {roleLine(u) && (
+                    <p className="truncate text-xs text-[#878a8c]">{roleLine(u)}</p>
+                  )}
                 </div>
                 <Button variant="outline" className="!px-3 !py-1 text-xs" onClick={() => sendConnect(u.id)}>
                   Connect

@@ -189,6 +189,8 @@ export const api = {
     http<{ ok: boolean; state: string }>(`/api/connections/${id}/accept`, { method: 'POST' }),
   ignoreConnection: (id: string) =>
     http<{ ok: boolean; state: string }>(`/api/connections/${id}/ignore`, { method: 'POST' }),
+  cancelSentRequest: (id: string) =>
+    http<{ ok: boolean; state: string }>(`/api/connections/${id}`, { method: 'DELETE' }),
 
   // messages / chats
   getThreads: () => http<MessageThread[]>('/api/messages/threads'),

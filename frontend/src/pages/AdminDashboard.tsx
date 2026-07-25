@@ -10,7 +10,7 @@ import { CsvUpload } from '../components/admin/CsvUpload'
 import { AddUserForm } from '../components/admin/AddUserForm'
 import { AlumniTable } from '../components/admin/AlumniTable'
 import { Avatar, Button, Card } from '../components/ui'
-import { timeAgo } from '../lib/format'
+import { roleLine, timeAgo } from '../lib/format'
 
 // NOTE: Restyled to the light Root Connect theme. All api.* invite/alumni LOGIC
 // is unchanged from the original implementation.
@@ -195,7 +195,7 @@ function MentorApprovalsPanel() {
               <Avatar name={u.name} size={44} />
               <div className="min-w-0 flex-1">
                 <p className="font-semibold text-[#1c1c1c]">{u.name}</p>
-                <p className="truncate text-xs text-[#878a8c]">{u.designation} · {u.company} · {u.domain}</p>
+                <p className="truncate text-xs text-[#878a8c]">{[roleLine(u), u.domain].filter(Boolean).join(' · ')}</p>
               </div>
               <Button icon={<Check size={15} />} className="!px-3 !py-1.5 text-xs" onClick={() => approveMentor(u.id)}>
                 Approve

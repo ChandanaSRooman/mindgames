@@ -26,14 +26,38 @@ export const DOMAINS: Domain[] = [
   'UI/UX',
 ]
 
-export type EmploymentType = 'Employed' | 'Freelancer' | 'Entrepreneur' | 'Looking for opportunity'
+export type EmploymentType =
+  | 'Employed'
+  | 'Freelancer'
+  | 'Entrepreneur'
+  | 'Looking for opportunity'
+  | 'Student'
+  | 'Just looking around'
 
 export const EMPLOYMENT_TYPES: EmploymentType[] = [
   'Employed',
   'Freelancer',
   'Entrepreneur',
   'Looking for opportunity',
+  'Student',
+  'Just looking around',
 ]
+
+// The three sub-types that count as "currently working" — shown with
+// Company/Designation fields during onboarding/profile editing.
+export const WORKING_EMPLOYMENT_TYPES: EmploymentType[] = ['Employed', 'Freelancer', 'Entrepreneur']
+
+// Top-level status asked first during onboarding; drives which fields show.
+// Not stored directly — it's derived from / mapped onto `employmentType`.
+export type CurrentStatus = 'Working Professional' | 'Student' | 'Looking for opportunity' | 'Just looking around'
+
+export function statusOf(employmentType: EmploymentType | ''): CurrentStatus | '' {
+  if (employmentType === '') return ''
+  if ((WORKING_EMPLOYMENT_TYPES as string[]).includes(employmentType)) return 'Working Professional'
+  if (employmentType === 'Student') return 'Student'
+  if (employmentType === 'Looking for opportunity') return 'Looking for opportunity'
+  return 'Just looking around'
+}
 
 export type Visibility = 'All Alumni' | 'My Network' | 'Specific Community'
 
@@ -59,6 +83,8 @@ export interface User {
   course: string
   company: string
   designation: string
+  // Current institution name — only meaningful when employmentType is 'Student'.
+  college?: string
   experienceYears: number
   domain: Domain
   employmentType: EmploymentType
@@ -337,6 +363,8 @@ export interface ResumeParseResult {
   experienceYears: string
   domain: string
   employmentType: string
+  // Current college/institution name — only populated when employmentType is 'Student'.
+  college: string
   experience: Experience[]
   skills: string[]
   // 'ai' = real Claude extraction; 'fallback' = server demo data (no API key).

@@ -24,7 +24,7 @@ import { PostCard } from '../components/feed/PostCard'
 import { EditProfileModal } from '../components/profile/EditProfileModal'
 import { ProfilePhoto } from '../components/profile/ProfilePhoto'
 import { ReportModal } from '../components/ReportModal'
-import { compact } from '../lib/format'
+import { compact, roleLine } from '../lib/format'
 import { api } from '../lib/api'
 import { PROFILE_TAGS, type Badge, type ProfileTag, type User } from '../types'
 
@@ -79,11 +79,13 @@ export function Profile() {
                 {user.name}
                 <VerifiedBadge verified={user.emailVerified} size={18} />
               </h1>
-              <p className="text-sm text-[#1c1c1c]">{user.designation} · {user.company}</p>
+              {roleLine(user) && <p className="text-sm text-[#1c1c1c]">{roleLine(user)}</p>}
               <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#878a8c]">
                 <span className="flex items-center gap-1"><MapPin size={12} /> {user.city}</span>
                 <span className="flex items-center gap-1"><GraduationCap size={12} /> Batch {user.batchYear} · {user.course}</span>
-                <span className="flex items-center gap-1"><Briefcase size={12} /> {user.experienceYears} yrs · {user.domain}</span>
+                <span className="flex items-center gap-1">
+                  <Briefcase size={12} /> {user.experienceYears > 0 ? `${user.experienceYears} yrs · ` : ''}{user.domain}
+                </span>
               </p>
               <p className="mt-1 text-xs font-medium text-[#1c1c1c]">{compact(user.connectionsCount)} connections</p>
             </div>
@@ -238,15 +240,15 @@ function ProfileTagBadge({ user, isMe }: { user: User; isMe: boolean }) {
   async function choose(tag: ProfileTag | null) {
     setSaving(true)
     try {
+      // profileTag alone drives the badge and the Jobs → Open to Work listing
+      // (see Jobs.tsx's openToWork filter) — it doesn't touch employmentType,
+      // which stays whatever the user's actual Current Status is. That also
+      // means picking "Open to Work" no longer requires guessing what to
+      // restore employmentType to if the tag is later removed.
       await updateProfile({
         profileTag: tag,
         willingToMentor: tag === 'Mentor',
         isMentor: tag === 'Mentor',
-        ...(tag === 'Open to Work'
-          ? { employmentType: 'Looking for opportunity' }
-          : current === 'Open to Work' && user.employmentType === 'Looking for opportunity'
-            ? { employmentType: 'Employed' }
-            : {}),
       })
       notify(tag ? `Your profile now shows "${tag}".` : 'Tag removed from your profile.')
       setOpen(false)
