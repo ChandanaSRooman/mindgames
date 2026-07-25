@@ -179,7 +179,7 @@ export function Profile() {
               `Hi ${user.name.split(' ')[0]}, I'd love a referral at ${user.company}` +
               (role ? ` for a ${role} role` : '') +
               (note ? `.\n\n${note}` : '.') +
-              `\n\n(Sent via Request Referral on RooConnect)`
+              `\n\n(Sent via Request Referral on Root Connect)`
             const threadId = await messageUser(user.id)
             sendMessage(threadId, text)
             setShowReferral(false)

@@ -1,4 +1,4 @@
-// Domain model for RooConnect — the Rooman Alumni Network.
+// Domain model for Root Connect — the Rooman Alumni Network.
 // All app state is mock data held in React context (see store/AppStore.tsx).
 
 export type PostType = 'Update' | 'Hiring' | 'Open to Work' | 'Mentorship' | 'StartupVarsity'

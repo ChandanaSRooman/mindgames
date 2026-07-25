@@ -1,4 +1,4 @@
-# Rooman Alumni Network — "RooConnect"
+# Rooman Alumni Network — "Root Connect"
 
 A LinkedIn-style alumni platform for Rooman Technologies: feed, connections,
 mentorship, StartupVarsity, communities and an admin invite console.

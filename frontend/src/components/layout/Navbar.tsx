@@ -47,7 +47,7 @@ export function Navbar() {
           R
         </span>
         <span className="hidden text-[15px] font-bold text-[#1c1c1c] sm:block">
-          Roo<span className="text-[#ff4500]">Connect</span>
+          Root <span className="text-[#ff4500]">Connect</span>
           <span className="ml-1.5 hidden text-xs font-medium text-[#878a8c] lg:inline">Alumni Network</span>
         </span>
       </Link>
