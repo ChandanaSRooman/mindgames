@@ -49,7 +49,7 @@ export function VerifyEmail() {
               href="/home"
               className="mt-6 inline-block rounded-full bg-[#ff4500] px-6 py-2.5 text-sm font-bold text-white hover:bg-[#ff6534]"
             >
-              Continue to RooConnect
+              Continue to Root Connect
             </a>
           </>
         )}

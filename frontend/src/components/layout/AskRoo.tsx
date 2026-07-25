@@ -76,7 +76,7 @@ export function AskRoo() {
         {turns.length === 0 && (
           <div className="pt-4 text-center">
             <p className="text-sm text-[#878a8c]">
-              Hi! I know the members, jobs, mentors, events and communities on RooConnect. Ask me
+              Hi! I know the members, jobs, mentors, events and communities on Root Connect. Ask me
               anything about the network.
             </p>
             <div className="mt-3 flex flex-col items-center gap-1.5">
