@@ -157,7 +157,8 @@ export function PostCard({ post }: { post: Post }) {
         {author.id !== currentUser.id && (
           <button
             onClick={() => setReporting(true)}
-            className="rounded-lg p-2 text-[#c3c6c9] transition-colors hover:bg-red-50 hover:text-red-500"
+            // ml-auto: report stays pinned right, away from the action cluster.
+            className="ml-auto rounded-lg p-2 text-[#c3c6c9] transition-colors hover:bg-red-50 hover:text-red-500"
             title="Report this post"
             aria-label="Report this post"
           >
@@ -231,7 +232,9 @@ function ActionButton({
   return (
     <button
       onClick={onClick}
-      className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-semibold transition-colors ${hover} ${
+      // Sized to its content, not flex-1: the actions group together at the left
+      // of the bar instead of each stretching to a quarter of the card width.
+      className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-semibold transition-colors ${hover} ${
         active ? 'text-[#ff4500]' : ''
       }`}
     >
