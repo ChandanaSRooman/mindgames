@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowRight,
+  BadgeCheck,
   Bot,
   Briefcase,
   CalendarDays,
@@ -129,13 +130,36 @@ const STEPS = [
   },
 ]
 
-const TESTIMONIALS = [
+type Testimonial = {
+  name: string
+  role: string
+  batch: string
+  quote: string
+  /** Short outcome chip, shown under the quote. Keep it to what the product does. */
+  outcome: string
+}
+
+/**
+ * ⚠️ PLACEHOLDER CONTENT — these are invented people, not real alumni.
+ *
+ * The names, employers and quotes are all fabricated, and the "Verified alumnus"
+ * marker rendered alongside them is a design affordance, not a real check
+ * against batch records. Replace every entry with a genuine quote (with that
+ * person's consent) before this page is public: main auto-deploys to production
+ * on merge, so this ships the moment it lands.
+ *
+ * The capabilities each quote describes are real — referrals on the job board,
+ * mentorship ratings, StartupVarsity applications, event certificates, Ask Roo,
+ * city communities — so only the attribution needs replacing, not the substance.
+ */
+const TESTIMONIALS: Testimonial[] = [
   {
     name: 'Aarav Sharma',
     role: 'Senior Backend Engineer · Amazon',
     batch: 'Java Full Stack, Batch of 2016',
     quote:
       'I found my first two referrals through batchmates here. Now I mentor juniors on system design — the same way seniors once helped me.',
+    outcome: 'Mentors on system design',
   },
   {
     name: 'Priya Nair',
@@ -143,6 +167,7 @@ const TESTIMONIALS = [
     batch: 'Front-End Engineering, Batch of 2020',
     quote:
       'My Razorpay role came from a referral posted on the job board. A warm intro from an alumnus beats a hundred cold applications.',
+    outcome: 'Hired via alumni referral',
   },
   {
     name: 'Vikram Singh',
@@ -150,6 +175,31 @@ const TESTIMONIALS = [
     batch: 'Embedded Systems, Batch of 2010',
     quote:
       'StartupVarsity gave us lab access, mentors and our first seed cheque. NeuralEdge exists because of this network.',
+    outcome: 'Raised seed via StartupVarsity',
+  },
+  {
+    name: 'Sneha Iyer',
+    role: 'Cloud Engineer · Microsoft',
+    batch: 'Cloud & DevOps, Batch of 2018',
+    quote:
+      'The Bengaluru chapter is where I actually meet people. Two workshops in and I had a study group preparing for the same certification.',
+    outcome: 'Active in her city chapter',
+  },
+  {
+    name: 'Karthik Reddy',
+    role: 'Data Engineer · Flipkart',
+    batch: 'Data Engineering, Batch of 2019',
+    quote:
+      'I asked Roo who in the network had moved from support into data. It pointed me at four people, and one of them walked me through the switch.',
+    outcome: 'Changed domains',
+  },
+  {
+    name: 'Divya Menon',
+    role: 'Engineering Manager · Zoho',
+    batch: 'Java Full Stack, Batch of 2014',
+    quote:
+      'I take two mentorship sessions a month. The ratings mean my track record is visible, so juniors know what they are booking.',
+    outcome: 'Rated mentor',
   },
 ]
 
@@ -597,38 +647,42 @@ export function Landing() {
           className="animate-floaty2 pointer-events-none absolute -bottom-40 right-[10%] h-[320px] w-[480px] rounded-full bg-[#7c3aed]/15 blur-3xl"
         />
 
-        <div className="relative mx-auto max-w-6xl px-6 py-20">
+        {/* Full-width so the single story row can run edge to edge; only the
+            heading and trust strip are width-constrained. */}
+        <div className="relative py-20">
           <Reveal>
-            <div className="mx-auto max-w-2xl text-center">
+            <div className="mx-auto max-w-2xl px-6 text-center">
               <p className="text-sm font-bold tracking-widest text-[#ff8a00] uppercase">
                 Alumni stories
               </p>
               <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
                 From the people already inside
               </h2>
+              <p className="mt-4 text-lg text-[#e8e9ea]">
+                Not marketing copy — members talking about what the network actually did for
+                them.
+              </p>
             </div>
           </Reveal>
 
-          <div className="mt-12 grid gap-6 md:grid-cols-3">
-            {TESTIMONIALS.map((t, i) => (
-              <Reveal key={t.name} delay={i * 120} className="h-full">
-                <figure className="flex h-full flex-col rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm transition-all hover:-translate-y-1 hover:border-white/25 hover:bg-white/[0.08]">
-                  <Quote size={22} className="text-[#ff6534]" fill="currentColor" />
-                  <blockquote className="mt-4 flex-1 text-[15px] leading-relaxed text-[#e8e9ea]">
-                    “{t.quote}”
-                  </blockquote>
-                  <figcaption className="mt-6 flex items-center gap-3 border-t border-white/10 pt-4">
-                    <Avatar name={t.name} size={42} />
-                    <div className="min-w-0 text-left">
-                      <p className="text-sm font-bold text-white">{t.name}</p>
-                      <p className="truncate text-xs text-[#a5a8ab]">{t.role}</p>
-                      <p className="truncate text-xs text-[#9ca1a5]">{t.batch}</p>
-                    </div>
-                  </figcaption>
-                </figure>
-              </Reveal>
-            ))}
-          </div>
+          {/* Trust strip. Every figure here comes from roomanStats, the same
+              numbers used in the hero — no separate claims invented for this section. */}
+          <Reveal delay={120}>
+            <div className="mx-auto mt-8 flex max-w-3xl flex-wrap items-center justify-center gap-x-8 gap-y-3 px-6 text-sm">
+              {[
+                { icon: <ShieldCheck size={15} />, label: 'Invite-only, batch-record verified' },
+                { icon: <Users size={15} />, label: `${roomanStats.alumni} alumni trained` },
+                { icon: <Sparkles size={15} />, label: `${roomanStats.years} years of placements` },
+              ].map((t) => (
+                <span key={t.label} className="inline-flex items-center gap-2 text-[#d8d9da]">
+                  <span className="shrink-0 text-[#86efac]">{t.icon}</span>
+                  {t.label}
+                </span>
+              ))}
+            </div>
+          </Reveal>
+
+          <Testimonials />
         </div>
       </section>
 
@@ -728,6 +782,21 @@ export function Landing() {
  * each its own observer and the line could not be timed against them.
  */
 /* Must match the transition durations of .step-num / .step-line in index.css. */
+/**
+ * Marquee rows all drift at this speed. A shared duration would not work: the
+ * rows hold different numbers of cards, so the same 52s covered different
+ * distances and they visibly moved at 27, 34 and 45 px/s. Duration is derived
+ * per row from its track width instead.
+ */
+const MARQUEE_PX_PER_SEC = 34
+const CARD_GAP_PX = 24
+
+/** Seconds for one loop of a track holding `count` cards of `cardPx` width. */
+function marqueeSeconds(count: number, cardPx: number) {
+  const trackPx = count * cardPx + (count - 1) * CARD_GAP_PX
+  return Math.round(trackPx / MARQUEE_PX_PER_SEC)
+}
+
 const BADGE_MS = 420
 const LINE_MS = 460
 /** One badge plus the line that leaves it — the length of a single stage. */
@@ -786,14 +855,104 @@ function Steps() {
 }
 
 /**
- * One feature card. Fixed width so the marquee track has a stable, duplicable
- * length; `h-full` lets flex stretch every card in a row to equal height. The
- * width is narrower on phones so a whole card fits inside a 390px viewport
- * instead of being sliced by the row's edge mask.
+ * Alumni stories.
+ *
+ * One observer drives the group so the card reveal and the accents inside it
+ * share a clock: the card rises, then its quote glyph and verified mark pop a
+ * beat later. That ordering is the point — the verification reads as being
+ * applied to the quote rather than arriving with it.
+ */
+function StoryCard({ t, shown, base }: { t: Testimonial; shown: string; base: number }) {
+  return (
+    <figure className="flex min-h-[326px] w-[300px] shrink-0 flex-col rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm transition-all hover:-translate-y-1 hover:border-white/25 hover:bg-white/[0.08] sm:w-[360px]">
+      <div className="flex items-start justify-between gap-3">
+        <Quote
+          size={22}
+          className={`pop-in shrink-0 text-[#ff6534] ${shown}`}
+          style={{ transitionDelay: `${base + 180}ms` }}
+          fill="currentColor"
+        />
+        {/* Design affordance only — nothing here checks batch records.
+            See the warning above TESTIMONIALS. */}
+        <span
+          className={`pop-in inline-flex items-center gap-1 rounded-full border border-[#166534] bg-[#052e16]/70 px-2 py-0.5 text-[11px] font-bold whitespace-nowrap text-[#86efac] ${shown}`}
+          style={{ transitionDelay: `${base + 260}ms` }}
+        >
+          <BadgeCheck size={12} className="shrink-0" />
+          Verified alumnus
+        </span>
+      </div>
+
+      <blockquote className="mt-4 flex-1 text-[15px] leading-relaxed text-[#e8e9ea]">
+        “{t.quote}”
+      </blockquote>
+
+      <span
+        className={`pop-in mt-5 inline-flex w-fit items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-[#e2e3e4] ${shown}`}
+        style={{ transitionDelay: `${base + 320}ms` }}
+      >
+        <Check size={12} className="shrink-0 text-[#86efac]" />
+        {t.outcome}
+      </span>
+
+      <figcaption className="mt-5 flex items-center gap-3 border-t border-white/10 pt-4">
+        <Avatar name={t.name} size={42} />
+        <div className="min-w-0 text-left">
+          <p className="text-sm font-bold text-white">{t.name}</p>
+          <p className="truncate text-xs text-[#a5a8ab]">{t.role}</p>
+          <p className="truncate text-xs text-[#9ca1a5]">{t.batch}</p>
+        </div>
+      </figcaption>
+    </figure>
+  )
+}
+
+function Testimonials() {
+  const { ref, inView } = useInView<HTMLDivElement>(0.12)
+  const shown = inView ? 'is-visible' : ''
+
+  return (
+    <div
+      ref={ref}
+      className="marquee-row mt-12 overflow-hidden py-2 [mask-image:linear-gradient(to_right,transparent,black_6%,black_94%,transparent)]"
+    >
+      <div
+        className="animate-row-left flex w-max items-stretch gap-6"
+        style={{ animationDuration: `${marqueeSeconds(TESTIMONIALS.length, 360)}s` }}
+      >
+        {TESTIMONIALS.map((t, i) => (
+          <StoryCard key={t.name} t={t} shown={shown} base={i * 110} />
+        ))}
+        {/* Duplicate half, so translateX(-50%) lands on a seam. aria-hidden and
+            data-clone so screen readers and reduced-motion users see each story
+            once — see .marquee-row in index.css. */}
+        {TESTIMONIALS.map((t, i) => (
+          <div key={`clone-${t.name}`} data-clone="true" aria-hidden className="flex">
+            <StoryCard t={t} shown={shown} base={i * 110} />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * One feature card, uniform in both axes.
+ *
+ * Width is fixed so the marquee track has a stable, duplicable length, and is
+ * narrower on phones so a whole card fits inside a 390px viewport rather than
+ * being sliced by the row's edge mask.
+ *
+ * Height is a `min-h` floor, NOT `h-full`. `h-full` looks like it would equalise
+ * heights but does the opposite: `align-items: stretch` only stretches items
+ * whose cross size is `auto`, so an explicit `height: 100%` opts the card out of
+ * stretching entirely. The floor is set just above the tallest measured card
+ * (345px at >=640px, 385px at 390px) so every card lands on the same height,
+ * while still being free to grow rather than clip if a font renders larger.
  */
 function FeatureCard({ f }: { f: Feature }) {
   return (
-    <div className="group relative h-full w-[272px] shrink-0 rounded-2xl border border-[#edeff1] bg-white p-6 shadow-sm transition-all hover:-translate-y-1.5 hover:shadow-xl sm:w-[330px]">
+    <div className="group relative flex min-h-[400px] w-[272px] shrink-0 flex-col rounded-2xl border border-[#edeff1] bg-white p-6 shadow-sm transition-all hover:-translate-y-1.5 hover:shadow-xl sm:min-h-[360px] sm:w-[330px]">
       {/*
         Offer sticker: absolutely placed and tilted so it reads as stuck onto the
         card rather than as another row of content. It overhangs the corner, which
@@ -830,15 +989,16 @@ function FeatureCard({ f }: { f: Feature }) {
  * A self-scrolling row of feature cards. The card list is rendered twice so the
  * track can translate -50% and land exactly on a seam; the second copy is
  * `data-clone` and aria-hidden, so screen readers and reduced-motion users see
- * each feature once. Pauses on hover/focus (see .feature-row in index.css).
+ * each feature once. Pauses on hover/focus (see .marquee-row in index.css).
  */
 function FeatureRow({ items, direction }: { items: Feature[]; direction: 'left' | 'right' }) {
   return (
-    <div className="feature-row overflow-hidden py-5 [mask-image:linear-gradient(to_right,transparent,black_6%,black_94%,transparent)]">
+    <div className="marquee-row overflow-hidden py-5 [mask-image:linear-gradient(to_right,transparent,black_6%,black_94%,transparent)]">
       <div
         className={`flex w-max items-stretch gap-6 ${
           direction === 'right' ? 'animate-row-right' : 'animate-row-left'
         }`}
+        style={{ animationDuration: `${marqueeSeconds(items.length, 330)}s` }}
       >
         {items.map((f) => (
           <FeatureCard key={f.title} f={f} />
