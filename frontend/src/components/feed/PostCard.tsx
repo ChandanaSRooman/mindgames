@@ -1,24 +1,30 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  Award,
   Bookmark,
   Briefcase,
+  CalendarDays,
+  Clock,
+  ExternalLink,
   Flag,
-  Heart,
   MapPin,
   MessageCircle,
   Pin,
+  Rocket,
   Send,
   Share2,
+  Users,
 } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { Avatar, Card, PostTypeBadge, VerifiedBadge } from '../ui'
 import { ReportModal } from '../ReportModal'
+import { Markdown } from '../../lib/markdown'
 import { roleLine, timeAgo } from '../../lib/format'
-import type { Post } from '../../types'
+import { REACTIONS, type Post } from '../../types'
 
 export function PostCard({ post }: { post: Post }) {
-  const { userById, toggleLike, toggleSave, addComment, communities, currentUser, notify } = useApp()
+  const { userById, react, toggleSave, addComment, communities, currentUser, notify } = useApp()
   const author = userById(post.authorId)
   const community = post.communityId ? communities.find((c) => c.id === post.communityId) : undefined
 
@@ -113,7 +119,12 @@ export function PostCard({ post }: { post: Post }) {
             </p>
           </div>
         )}
-        <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-[#1c1c1c]">{post.content}</p>
+        <NewsMeta post={post} />
+        {post.type === 'Article' ? (
+          <Markdown text={post.content} className="mt-1" />
+        ) : (
+          <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-[#1c1c1c]">{post.content}</p>
+        )}
 
         {(post.domain || post.city || post.batch) && !isProfileCard && (
           <div className="mt-2 flex flex-wrap gap-1.5">
@@ -128,16 +139,12 @@ export function PostCard({ post }: { post: Post }) {
         <img src={post.image} alt="" className="max-h-[420px] w-full object-cover" />
       )}
 
+      {/* Reaction summary */}
+      <ReactionSummary post={post} />
+
       {/* Action bar */}
       <div className="mx-3 mt-1 mb-1.5 flex items-center gap-1 border-t border-[#edeff1] pt-1.5 text-[#878a8c]">
-        <ActionButton
-          active={post.likedByMe}
-          hover="hover:bg-orange-50 hover:text-[#ff4500]"
-          onClick={() => toggleLike(post.id)}
-        >
-          <Heart size={18} className={post.likedByMe ? 'fill-[#ff4500] text-[#ff4500]' : ''} />
-          <span className={post.likedByMe ? 'text-[#ff4500]' : ''}>{post.likes || 'Like'}</span>
-        </ActionButton>
+        <ReactionControl post={post} react={react} />
         <ActionButton hover="hover:bg-blue-50 hover:text-blue-600" onClick={() => setShowComments((v) => !v)}>
           <MessageCircle size={18} />
           <span>{post.comments.length || 'Comment'}</span>
@@ -249,4 +256,158 @@ function Tag({ children }: { children: React.ReactNode }) {
       {children}
     </span>
   )
+}
+
+// Compact "who reacted" summary shown just above the action bar: the distinct
+// emojis used and the total count. Hidden when a post has no reactions yet.
+function ReactionSummary({ post }: { post: Post }) {
+  const reactions = post.reactions ?? {}
+  const total = Object.values(reactions).reduce((a, b) => a + b, 0)
+  if (!total) return null
+  // Show emojis in the canonical order, only those actually used.
+  const emojis = REACTIONS.filter((e) => reactions[e])
+  return (
+    <div className="flex items-center gap-1.5 px-4 pt-2 text-xs text-[#878a8c]">
+      <span className="text-sm leading-none">{emojis.join('')}</span>
+      <span>{total}</span>
+    </div>
+  )
+}
+
+// React button with a hover-revealed emoji picker. Clicking the main button
+// toggles your reaction (defaults to 👍); hovering reveals 🎉/❤️ to pick one.
+function ReactionControl({ post, react }: { post: Post; react: (id: string, emoji: string) => void }) {
+  const mine = post.myReaction
+  return (
+    <div className="group relative">
+      <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex gap-0.5 rounded-full border border-[#edeff1] bg-white p-1 opacity-0 shadow-lg transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+        {REACTIONS.map((e) => (
+          <button
+            key={e}
+            onClick={() => react(post.id, e)}
+            title={`React ${e}`}
+            aria-label={`React ${e}`}
+            className={`rounded-full px-1.5 py-0.5 text-xl leading-none transition-transform hover:scale-125 ${mine === e ? 'bg-orange-50' : ''}`}
+          >
+            {e}
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={() => react(post.id, mine ?? '👍')}
+        className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-semibold transition-colors hover:bg-orange-50 hover:text-[#ff4500] ${
+          mine ? 'text-[#ff4500]' : ''
+        }`}
+      >
+        <span className="text-base leading-none">{mine ?? '👍'}</span>
+        <span>{mine ? 'Reacted' : 'React'}</span>
+      </button>
+    </div>
+  )
+}
+
+// Structured header for the peer-to-peer News formats. Renders the fields the
+// composer collected (post.meta) above the body. For Article it renders the
+// title + category + read time; the body itself is rendered as Markdown.
+function NewsMeta({ post }: { post: Post }) {
+  const m = post.meta ?? {}
+
+  if (post.type === 'Achievement') {
+    if (!m.jobTitle && !m.achievementCompany && !m.collaborators?.length) return null
+    return (
+      <div className="mb-3 rounded-xl border-l-4 border-amber-400 bg-amber-50/70 px-3.5 py-2.5">
+        {(m.jobTitle || m.achievementCompany) && (
+          <p className="flex items-center gap-2 text-[15px] font-bold text-[#1c1c1c]">
+            <Award size={16} className="text-amber-500" />
+            {m.jobTitle}
+            {m.jobTitle && m.achievementCompany ? ' · ' : ''}
+            {m.achievementCompany}
+          </p>
+        )}
+        {m.collaborators?.length ? (
+          <p className="mt-1 flex items-center gap-1.5 text-[13px] text-[#5c6063]">
+            <Users size={13} /> with {m.collaborators.join(', ')}
+          </p>
+        ) : null}
+      </div>
+    )
+  }
+
+  if (post.type === 'Project') {
+    return (
+      <div className="mb-3 rounded-xl border-l-4 border-indigo-400 bg-indigo-50/60 px-3.5 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="flex items-center gap-2 text-[15px] font-bold text-[#1c1c1c]">
+            <Rocket size={16} className="text-indigo-500" />
+            {m.projectName || 'Project'}
+          </p>
+          {m.seeking && (
+            <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+              {m.seeking}
+            </span>
+          )}
+        </div>
+        {m.techStack?.length ? (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {m.techStack.map((t) => (
+              <span key={t} className="rounded-full border border-indigo-200 bg-white px-2 py-0.5 text-xs font-medium text-indigo-700">
+                {t}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {m.demoLink && (
+          <a
+            href={m.demoLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-[#ff4500] hover:underline"
+          >
+            <ExternalLink size={14} /> View demo
+          </a>
+        )}
+      </div>
+    )
+  }
+
+  if (post.type === 'Meetup') {
+    return (
+      <div className="mb-3 rounded-xl border-l-4 border-rose-400 bg-rose-50/60 px-3.5 py-2.5">
+        <p className="flex items-center gap-2 text-[15px] font-bold text-[#1c1c1c]">
+          <CalendarDays size={16} className="text-rose-500" />
+          {m.title || 'Meetup'}
+        </p>
+        <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[#5c6063]">
+          {m.date && <span className="inline-flex items-center gap-1"><Clock size={13} /> {m.date}</span>}
+          {m.location && <span className="inline-flex items-center gap-1"><MapPin size={13} /> {m.location}</span>}
+          {m.capacity ? <span className="inline-flex items-center gap-1"><Users size={13} /> {m.capacity} spots</span> : null}
+        </p>
+        {m.rsvpLink && (
+          <a
+            href={m.rsvpLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 inline-flex items-center gap-1 rounded-lg bg-rose-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-rose-600"
+          >
+            RSVP
+          </a>
+        )}
+      </div>
+    )
+  }
+
+  if (post.type === 'Article') {
+    const mins = Math.max(1, Math.round(post.content.trim().split(/\s+/).filter(Boolean).length / 200))
+    return (
+      <div className="mb-1.5">
+        {m.title && <h2 className="text-lg font-bold leading-snug text-[#1c1c1c]">{m.title}</h2>}
+        <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#878a8c]">
+          {m.category && <span className="rounded-full bg-sky-100 px-2 py-0.5 font-semibold text-sky-700">{m.category}</span>}
+          <span className="inline-flex items-center gap-1"><Clock size={12} /> {mins} min read</span>
+        </p>
+      </div>
+    )
+  }
+
+  return null
 }

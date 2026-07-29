@@ -1,7 +1,41 @@
 // Domain model for Root Connect — the Rooman Alumni Network.
 // All app state is mock data held in React context (see store/AppStore.tsx).
 
-export type PostType = 'Update' | 'Hiring' | 'Open to Work' | 'Mentorship' | 'StartupVarsity'
+export type PostType =
+  | 'Update'
+  | 'Hiring'
+  | 'Open to Work'
+  | 'Mentorship'
+  | 'StartupVarsity'
+  // Peer-to-peer News & Updates formats (published from the News tab).
+  | 'Achievement'
+  | 'Project'
+  | 'Article'
+  | 'Meetup'
+
+// The four member-authored formats that appear in the News & Updates tab.
+export const NEWS_TYPES: PostType[] = ['Achievement', 'Project', 'Article', 'Meetup']
+
+// Category tags for Industry Articles & Blogs.
+export const ARTICLE_CATEGORIES = [
+  'AI/ML',
+  'DevOps',
+  'Cloud',
+  'Cybersecurity',
+  'Web Dev',
+  'Data',
+  'Career Guidance',
+  'Product',
+  'General',
+] as const
+
+// "What are you looking for?" tags on a Startup / Side-Project post.
+export const PROJECT_SEEKING = [
+  'Seeking Testers',
+  'Looking for Co-founders',
+  'Looking for Contributors',
+  'Feedback welcome',
+] as const
 
 export const POST_TYPES: PostType[] = ['Update', 'Hiring', 'Open to Work', 'Mentorship', 'StartupVarsity']
 
@@ -98,6 +132,9 @@ export interface User {
   isMentor: boolean
   mentorRate?: number // ₹ / hr
   sessionsConducted?: number
+  // Verified employer: confirmed a work email → allowed to post jobs.
+  employerVerified?: boolean
+  workEmailDomain?: string
   isAdmin?: boolean
 }
 
@@ -123,6 +160,9 @@ export interface Post {
   createdAt: string // ISO
   likes: number
   likedByMe: boolean
+  // Emoji reactions: counts per emoji + the current user's own reaction (if any).
+  reactions?: Record<string, number>
+  myReaction?: string
   saved: boolean
   comments: Comment[]
   visibility: Visibility
@@ -146,6 +186,32 @@ export interface Post {
   applicantsCount?: number
   // Pinned Rooman announcement (set from the Admin panel)
   pinned?: boolean
+  // Structured fields for the peer-to-peer News formats (Achievement, Project,
+  // Article, Meetup). Which fields are set depends on `type`.
+  meta?: PostMeta
+}
+
+// Format-specific fields for News posts. `content` always holds the main body
+// (the article text, the announcement, etc.); these are the extra structured
+// bits each format collects.
+export interface PostMeta {
+  // Alumni Achievement / Career Update
+  jobTitle?: string
+  achievementCompany?: string
+  collaborators?: string[] // names of alumni who helped / collaborated
+  // Startup / Side-Project Announcement
+  projectName?: string
+  demoLink?: string
+  techStack?: string[]
+  seeking?: string // one of PROJECT_SEEKING
+  // Industry Article / Blog
+  title?: string
+  category?: string // one of ARTICLE_CATEGORIES
+  // Community Event / Local Meetup
+  date?: string
+  location?: string
+  rsvpLink?: string
+  capacity?: number
 }
 
 // A member who applied to a Hiring post (poster-only view).
@@ -263,7 +329,14 @@ export interface MentorshipSession {
   meetingLink?: string
   // Mentee's post-session rating (1-5), once given.
   rating?: number
+  // Beyond the free allowance, a session is paid at the mentor's rate (₹).
+  isPaid?: boolean
+  price?: number
 }
+
+// A mentee's first N mentorship sessions are free; the rest are paid.
+// Keep in sync with FREE_SESSIONS in backend/src/routes/mentorship.routes.ts.
+export const FREE_MENTORSHIP_SESSIONS = 3
 
 export type StartupStage = 'Idea' | 'MVP' | 'Early Revenue' | 'Scaling'
 
@@ -381,10 +454,18 @@ export const STATUS_STYLES: Record<StatusTag, string> = {
 
 // --- Shared styling maps ----------------------------------------------------
 
+// Emoji reactions available on every post. Order = display order in the picker.
+export const REACTIONS = ['👍', '🎉', '❤️'] as const
+export type ReactionEmoji = (typeof REACTIONS)[number]
+
 export const POST_TYPE_STYLES: Record<PostType, { label: string; classes: string }> = {
   Update: { label: 'Update', classes: 'bg-gray-100 text-gray-600' },
   Hiring: { label: 'Hiring', classes: 'bg-green-100 text-green-700' },
   'Open to Work': { label: 'Open to Work', classes: 'bg-blue-100 text-blue-700' },
   Mentorship: { label: 'Mentorship', classes: 'bg-orange-100 text-[#ff4500]' },
   StartupVarsity: { label: 'StartupVarsity', classes: 'bg-purple-100 text-purple-700' },
+  Achievement: { label: 'Achievement', classes: 'bg-amber-100 text-amber-700' },
+  Project: { label: 'Project', classes: 'bg-indigo-100 text-indigo-700' },
+  Article: { label: 'Article', classes: 'bg-sky-100 text-sky-700' },
+  Meetup: { label: 'Meetup', classes: 'bg-rose-100 text-rose-700' },
 }

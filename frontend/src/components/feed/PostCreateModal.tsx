@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { ChevronDown, ChevronUp, Image as ImageIcon, Plus, Trash2, X } from 'lucide-react'
+import { BadgeCheck, Check, ChevronDown, ChevronUp, Image as ImageIcon, Mail, Plus, ShieldCheck, Trash2, X } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { Avatar, Button } from '../ui'
 import {
@@ -20,7 +20,7 @@ export function PostCreateModal({
   prefill?: { type?: PostType; communityId?: string }
   onClose: () => void
 }) {
-  const { currentUser, createPost, communities } = useApp()
+  const { currentUser, createPost, communities, notify, startWorkEmailVerification, verifyWorkEmail } = useApp()
   const fileRef = useRef<HTMLInputElement>(null)
 
   const [type, setType] = useState<PostType>(prefill?.type ?? 'Update')
@@ -41,7 +41,18 @@ export function PostCreateModal({
   // Hiring only: require applicants to attach a resume.
   const [wantsResume, setWantsResume] = useState(false)
 
+  // Hiring only: the poster verifies a work email inline before posting, so a
+  // listing can't be faked. Admins bypass; verified once, then reused forever.
+  const employerVerified = !!currentUser.employerVerified || !!currentUser.isAdmin
+  const [workEmail, setWorkEmail] = useState('')
+  const [otpSent, setOtpSent] = useState(false)
+  const [sentTo, setSentTo] = useState('')
+  const [otpCode, setOtpCode] = useState('')
+  const [verifyBusy, setVerifyBusy] = useState(false)
+  const [verifyError, setVerifyError] = useState<string | null>(null)
+
   const isJob = type === 'Hiring' || type === 'Open to Work'
+  const needsWorkVerify = type === 'Hiring' && !employerVerified
 
   // Silent abuse guard only — the UI advertises no limit (backend caps at 20 too).
   const MAX_QUESTIONS = 20
@@ -69,13 +80,41 @@ export function PostCreateModal({
     })
   }
 
+  async function sendWorkCode() {
+    setVerifyBusy(true)
+    setVerifyError(null)
+    try {
+      const r = await startWorkEmailVerification(workEmail.trim())
+      setSentTo(r.email)
+      setOtpSent(true)
+      if (r.simulated) notify('Email is not configured on the server — check the server logs for your code.', 'info')
+    } catch (err) {
+      setVerifyError(err instanceof Error ? err.message : 'Could not send the code.')
+    } finally {
+      setVerifyBusy(false)
+    }
+  }
+
+  async function verifyWorkCode() {
+    setVerifyBusy(true)
+    setVerifyError(null)
+    try {
+      await verifyWorkEmail(otpCode.trim())
+      notify('Work email verified — you can post this job now. ✅')
+    } catch (err) {
+      setVerifyError(err instanceof Error ? err.message : 'Incorrect code. Try again.')
+    } finally {
+      setVerifyBusy(false)
+    }
+  }
+
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
     if (f) setImage(URL.createObjectURL(f))
   }
 
   function submit() {
-    if (!content.trim()) return
+    if (!content.trim() || needsWorkVerify) return
     createPost({
       type,
       content,
@@ -128,6 +167,74 @@ export function PostCreateModal({
               </button>
             ))}
           </div>
+
+          {/* Employer verification (Hiring only) — inline, required before posting */}
+          {type === 'Hiring' && !employerVerified && (
+            <div className="mb-3 rounded-xl border border-[#ff4500]/30 bg-orange-50 p-3">
+              <p className="flex items-center gap-2 text-sm font-semibold text-[#1c1c1c]">
+                <ShieldCheck size={16} className="text-[#ff4500]" /> Verify your work email to post this job
+              </p>
+              <p className="mt-1 text-xs text-[#878a8c]">
+                Only people who work at a company can post jobs, so listings stay genuine. We email a
+                6-digit code — personal or temporary emails aren't accepted. You only do this once.
+              </p>
+              {!otpSent ? (
+                <div className="mt-2 flex gap-2">
+                  <label className="flex flex-1 items-center gap-2 rounded-lg border border-[#edeff1] bg-white px-3 py-2 focus-within:border-[#ff4500]">
+                    <Mail size={15} className="text-[#878a8c]" />
+                    <input
+                      type="email"
+                      value={workEmail}
+                      onChange={(e) => setWorkEmail(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && workEmail.trim()) { e.preventDefault(); sendWorkCode() } }}
+                      placeholder="you@yourcompany.com"
+                      className="flex-1 text-sm outline-none"
+                    />
+                  </label>
+                  <button
+                    onClick={sendWorkCode}
+                    disabled={!workEmail.trim() || verifyBusy}
+                    className="rounded-lg bg-[#ff4500] px-3 py-2 text-sm font-semibold text-white hover:bg-[#ff6534] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {verifyBusy ? 'Sending…' : 'Send code'}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <p className="mt-2 text-xs text-[#878a8c]">Code sent to <strong className="text-[#1c1c1c]">{sentTo}</strong> — expires in 10 minutes.</p>
+                  <div className="mt-1.5 flex gap-2">
+                    <input
+                      inputMode="numeric"
+                      value={otpCode}
+                      onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && otpCode.length === 6) { e.preventDefault(); verifyWorkCode() } }}
+                      placeholder="Enter code"
+                      className="flex-1 rounded-lg border border-[#edeff1] bg-white px-3 py-2 text-center text-sm tracking-[0.3em] outline-none focus:border-[#ff4500]"
+                    />
+                    <button
+                      onClick={verifyWorkCode}
+                      disabled={otpCode.length !== 6 || verifyBusy}
+                      className="inline-flex items-center gap-1 rounded-lg bg-[#ff4500] px-3 py-2 text-sm font-semibold text-white hover:bg-[#ff6534] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Check size={14} /> {verifyBusy ? 'Verifying…' : 'Verify'}
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => { setOtpSent(false); setOtpCode(''); setVerifyError(null) }}
+                    className="mt-1.5 text-xs font-medium text-[#ff4500] hover:underline"
+                  >
+                    Change email / resend code
+                  </button>
+                </>
+              )}
+              {verifyError && <p className="mt-1.5 text-xs text-red-500">{verifyError}</p>}
+            </div>
+          )}
+          {type === 'Hiring' && employerVerified && currentUser.workEmailDomain && (
+            <div className="mb-3 flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-[#1d9bf0]">
+              <BadgeCheck size={15} /> Verified employer · {currentUser.workEmailDomain}
+            </div>
+          )}
 
           {/* Job fields */}
           {isJob && (
@@ -336,7 +443,7 @@ export function PostCreateModal({
             <ImageIcon size={18} /> Photo
           </button>
           <input ref={fileRef} type="file" accept="image/*" hidden onChange={onFile} />
-          <Button onClick={submit} disabled={!content.trim()}>
+          <Button onClick={submit} disabled={!content.trim() || needsWorkVerify}>
             Post
           </Button>
         </div>

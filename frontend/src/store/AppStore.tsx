@@ -16,6 +16,7 @@ import type {
   MentorshipSession,
   MessageThread,
   Post,
+  PostMeta,
   PostType,
   Startup,
   User,
@@ -74,6 +75,7 @@ export interface NewPostInput {
   company?: string
   questions?: string[]
   wantsResume?: boolean
+  meta?: PostMeta
 }
 
 interface AppContextValue {
@@ -84,9 +86,12 @@ interface AppContextValue {
   /** True when real Google OAuth is configured; false = demo-account fallback. */
   googleReady: boolean
   login: (email: string, password: string) => Promise<User>
-  signup: (name: string, email: string, password: string) => Promise<User>
+  signup: (ticket: string, name: string, password: string) => Promise<User>
   social: (provider: 'google' | 'linkedin') => Promise<User>
   updateProfile: (patch: Partial<User>) => Promise<void>
+  // Employer (work-email) verification — one-time, required before posting a job.
+  startWorkEmailVerification: (email: string) => Promise<{ email: string; simulated: boolean }>
+  verifyWorkEmail: (code: string) => Promise<void>
   signOut: () => void
 
   // people
@@ -108,6 +113,7 @@ interface AppContextValue {
   createPost: (input: NewPostInput) => void
   updatePost: (id: string, patch: Partial<Post>) => void
   toggleLike: (id: string) => void
+  react: (id: string, emoji: string) => void
   toggleSave: (id: string) => void
   addComment: (postId: string, text: string) => void
   applyToJob: (postId: string, answers?: string[], resume?: { name: string; dataBase64: string; mediaType: string }) => void
@@ -304,8 +310,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const signup = useCallback(async (name: string, email: string, password: string) => {
-    const res = await api.signup(name, email, password)
+  const signup = useCallback(async (ticket: string, name: string, password: string) => {
+    const res = await api.signup(ticket, name, password)
     await afterAuth(res)
     return res.user
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -349,6 +355,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [],
   )
+
+  const startWorkEmailVerification = useCallback(async (email: string) => {
+    const r = await api.startWorkEmailVerification(email)
+    return { email: r.email, simulated: r.simulated }
+  }, [])
+
+  const verifyWorkEmail = useCallback(async (code: string) => {
+    const updated = await api.verifyWorkEmail(code)
+    setUsers((list) => list.map((u) => (u.id === updated.id ? updated : u)))
+  }, [])
 
   const userById = useCallback((id: string) => users.find((u) => u.id === id), [users])
 
@@ -513,12 +529,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         company: input.company,
         questions: input.questions,
         wantsResume: input.wantsResume,
+        meta: input.meta,
       }).then(
         (created) => {
           setPosts((p) => [created, ...p])
           notify('Your post is live.')
         },
-        () => notify('Could not publish your post.', 'error'),
+        (err) => notify(err instanceof Error ? err.message : 'Could not publish your post.', 'error'),
       )
     },
     [notify],
@@ -549,6 +566,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
             ),
           )
           notify('Could not update like.', 'error')
+        },
+      )
+    },
+    [posts, notify],
+  )
+
+  // Set, change, or clear (tapping your current emoji again) a reaction.
+  const react = useCallback(
+    (id: string, emoji: string) => {
+      const post = posts.find((p) => p.id === id)
+      if (!post) return
+      const prev = post.myReaction
+      const clearing = prev === emoji
+      // optimistic: adjust counts and my reaction locally
+      setPosts((list) =>
+        list.map((p) => {
+          if (p.id !== id) return p
+          const reactions: Record<string, number> = { ...(p.reactions ?? {}) }
+          if (prev) reactions[prev] = Math.max((reactions[prev] ?? 1) - 1, 0)
+          if (!clearing) reactions[emoji] = (reactions[emoji] ?? 0) + 1
+          for (const k of Object.keys(reactions)) if (!reactions[k]) delete reactions[k]
+          return { ...p, reactions, myReaction: clearing ? undefined : emoji }
+        }),
+      )
+      const call = clearing ? api.unreact(id) : api.react(id, emoji)
+      call.then(
+        (r) =>
+          setPosts((list) =>
+            list.map((p) =>
+              p.id === id
+                ? { ...p, reactions: Object.keys(r.reactions).length ? r.reactions : undefined, myReaction: r.myReaction ?? undefined }
+                : p,
+            ),
+          ),
+        () => {
+          // revert to the server truth we knew before
+          setPosts((list) =>
+            list.map((p) => (p.id === id ? { ...p, reactions: post.reactions, myReaction: post.myReaction } : p)),
+          )
+          notify('Could not save your reaction.', 'error')
         },
       )
     },
@@ -966,6 +1023,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value: AppContextValue = {
     currentUser,
+    startWorkEmailVerification,
+    verifyWorkEmail,
     isAuthenticated,
     loading,
     googleReady: !!googleClientId,
@@ -990,6 +1049,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     createPost,
     updatePost,
     toggleLike,
+    react,
     toggleSave,
     addComment,
     applyToJob,

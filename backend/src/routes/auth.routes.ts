@@ -1,9 +1,10 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash, randomBytes, randomInt } from 'node:crypto'
 import { Router } from 'express'
 import { z } from 'zod'
+import jwt from 'jsonwebtoken'
 import { config } from '../config.js'
 import { query } from '../db/pool.js'
-import { appUrl, emailEnabled, sendPasswordResetEmail, sendVerificationEmail } from '../email.js'
+import { appUrl, emailEnabled, sendEmail, sendPasswordResetEmail, sendVerificationEmail } from '../email.js'
 import { hashPassword, verifyPassword } from '../auth/password.js'
 import { signToken } from '../auth/jwt.js'
 import { requireAuth } from '../auth/middleware.js'
@@ -12,13 +13,27 @@ import { mapUser, USER_COLS, type UserRow } from '../mappers.js'
 
 export const authRouter = Router()
 
+// Registration is a 3-step flow: /signup/start (email a code) → /signup/verify
+// (confirm the code, get a short-lived signup ticket) → /signup (ticket + name +
+// password creates the account). Splitting verify from create lets the UI verify
+// the email address *before* asking the member to choose a password.
+const SIGNUP_TICKET_TTL = '15m'
+interface SignupTicket { email: string; purpose: 'signup' }
+
 const signupSchema = z.object({
+  ticket: z.string().min(1, 'verify your email first'),
   name: z.string().trim().min(1, 'name is required'),
-  email: z.string().trim().email('valid email is required'),
   password: z.string().min(6, 'password must be at least 6 characters'),
 })
 
 const sha256 = (raw: string) => createHash('sha256').update(raw).digest('hex')
+
+// Mask an address for display in responses — a*****z@example.com.
+const maskEmail = (email: string) => {
+  const [local, domain] = email.split('@')
+  const shown = local.length <= 2 ? local[0] ?? '' : `${local[0]}${'*'.repeat(local.length - 2)}${local[local.length - 1]}`
+  return `${shown}@${domain}`
+}
 
 /** Mint a single-use email token (stored hashed) and return the raw value. */
 async function createAuthToken(userId: string, purpose: 'reset' | 'verify', ttlMs: number): Promise<string> {
@@ -58,25 +73,128 @@ function issue(userRow: UserRow & { is_admin: boolean }) {
   return { token, user: mapUser(userRow) }
 }
 
-// POST /api/auth/signup — create a new alumni account.
+const signupStartSchema = z.object({ email: z.string().trim().email('a valid email is required') })
+
+// POST /api/auth/signup/start — first step of registration: email a 6-digit
+// code so the new member proves the address is real and correctly typed before
+// the account is created. Consumed by POST /signup.
+authRouter.post(
+  '/signup/start',
+  asyncHandler(async (req, res) => {
+    const parsed = signupStartSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
+    const email = parsed.data.email.toLowerCase()
+
+    const exists = await query('SELECT 1 FROM users WHERE lower(email) = lower($1)', [email])
+    if (exists.rowCount) throw new ApiError(409, 'An account with this email already exists')
+
+    // Rate-limit: one code per minute per address.
+    const existing = await query<{ sent_at: Date }>(`SELECT sent_at FROM signup_otps WHERE email = $1`, [email])
+    if (existing.rowCount && Date.now() - new Date(existing.rows[0].sent_at).getTime() < 60_000) {
+      throw new ApiError(429, 'Please wait a minute before requesting another code.')
+    }
+
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0')
+    await query(
+      `INSERT INTO signup_otps (email, code_hash, expires_at, attempts, sent_at)
+       VALUES ($1, $2, now() + interval '10 minutes', 0, now())
+       ON CONFLICT (email) DO UPDATE
+         SET code_hash = EXCLUDED.code_hash, expires_at = EXCLUDED.expires_at, attempts = 0, sent_at = now()`,
+      [email, sha256(code)],
+    )
+
+    // Fire-and-forget the email — the code is already stored, so we must NOT
+    // block the HTTP response on the SMTP round-trip (a slow/unreachable mail
+    // server would otherwise hang the whole request, freezing the UI).
+    void sendEmail(
+      email,
+      'Verify your email for Root Connect',
+      `Welcome to the Rooman Alumni Network!\n\nYour verification code is ${code}\n\n` +
+        `Enter it to finish creating your account. The code expires in 10 minutes.\n\n` +
+        `If you didn't request this, you can safely ignore this email.\n\n— The Rooman Team`,
+    ).catch((err) => console.error('signup verification email failed:', err instanceof Error ? err.message : err))
+
+    // Expose the code to the client outside production, or when SMTP isn't
+    // configured, so registration works without a working mailbox (dev/demo).
+    // In production with SMTP set up, the code only ever goes to the inbox.
+    const exposeCode = !emailEnabled || config.nodeEnv !== 'production'
+    res.json({ ok: true, email: maskEmail(email), simulated: !emailEnabled, ...(exposeCode ? { devCode: code } : {}) })
+  }),
+)
+
+const signupVerifySchema = z.object({
+  email: z.string().trim().email('a valid email is required'),
+  code: z.string().trim(),
+})
+
+// POST /api/auth/signup/verify — step 2: confirm the 6-digit code. On success
+// the OTP is consumed and a short-lived signup ticket is returned; the client
+// then collects a name + password and calls /signup with that ticket.
+authRouter.post(
+  '/signup/verify',
+  asyncHandler(async (req, res) => {
+    const parsed = signupVerifySchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
+    const email = parsed.data.email.toLowerCase()
+
+    const otp = await query<{ code_hash: string; expires_at: Date; attempts: number }>(
+      `SELECT code_hash, expires_at, attempts FROM signup_otps WHERE email = $1`,
+      [email],
+    )
+    if (!otp.rowCount) throw new ApiError(400, 'Request a verification code first.')
+    const row = otp.rows[0]
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+      await query(`DELETE FROM signup_otps WHERE email = $1`, [email])
+      throw new ApiError(400, 'That code has expired — request a new one.')
+    }
+    if (row.attempts >= 5) {
+      await query(`DELETE FROM signup_otps WHERE email = $1`, [email])
+      throw new ApiError(429, 'Too many incorrect attempts — request a new code.')
+    }
+    if (sha256(parsed.data.code) !== row.code_hash) {
+      await query(`UPDATE signup_otps SET attempts = attempts + 1 WHERE email = $1`, [email])
+      throw new ApiError(400, 'Incorrect code. Please check and try again.')
+    }
+
+    // Verified — consume the code and hand back a ticket proving it.
+    await query(`DELETE FROM signup_otps WHERE email = $1`, [email])
+    const ticket = jwt.sign({ email, purpose: 'signup' } satisfies SignupTicket, config.jwtSecret, {
+      expiresIn: SIGNUP_TICKET_TTL,
+    })
+    res.json({ ok: true, ticket })
+  }),
+)
+
+// POST /api/auth/signup — step 3: create the account. The email is taken from
+// the verified signup ticket (not the request body), so it can't be swapped
+// after verification.
 authRouter.post(
   '/signup',
   asyncHandler(async (req, res) => {
     const parsed = signupSchema.safeParse(req.body)
     if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
-    const { name, email, password } = parsed.data
+    const { ticket, name, password } = parsed.data
+
+    let email: string
+    try {
+      const decoded = jwt.verify(ticket, config.jwtSecret) as Partial<SignupTicket>
+      if (decoded.purpose !== 'signup' || !decoded.email) throw new Error('bad ticket')
+      email = decoded.email
+    } catch {
+      throw new ApiError(400, 'Your email verification expired. Please verify your email again.')
+    }
 
     const exists = await query('SELECT 1 FROM users WHERE lower(email) = lower($1)', [email])
     if (exists.rowCount) throw new ApiError(409, 'An account with this email already exists')
 
     const passwordHash = await hashPassword(password)
+    // Email already proven via the verified ticket, so mark it verified.
     const result = await query<UserRow & { is_admin: boolean }>(
-      `INSERT INTO users (name, email, password_hash, avatar, batch_year)
-       VALUES ($1, $2, $3, $1, date_part('year', now()))
+      `INSERT INTO users (name, email, password_hash, avatar, batch_year, email_verified_at)
+       VALUES ($1, $2, $3, $1, date_part('year', now()), now())
        RETURNING ${USER_COLS}`,
       [name, email, passwordHash],
     )
-    void sendVerification(result.rows[0].id, name, email)
     res.status(201).json(issue(result.rows[0]))
   }),
 )

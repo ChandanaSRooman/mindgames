@@ -12,6 +12,11 @@ const transport = emailEnabled
       port: Number(SMTP_PORT) || 587,
       secure: Number(SMTP_PORT) === 465, // implicit TLS only on 465
       auth: { user: SMTP_USER!, pass: SMTP_PASS! },
+      // Fail fast if the mail server is slow/unreachable rather than hanging the
+      // caller (callers still shouldn't await sends on the request path).
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 15_000,
     })
   : null
 

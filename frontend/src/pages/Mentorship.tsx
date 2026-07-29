@@ -5,7 +5,7 @@ import { useApp } from '../store/AppStore'
 import { api } from '../lib/api'
 import { roleLine } from '../lib/format'
 import { Avatar, Button, Card } from '../components/ui'
-import type { MentorshipSession, User } from '../types'
+import { FREE_MENTORSHIP_SESSIONS, type MentorshipSession, type User } from '../types'
 
 type Tab = 'Find a Mentor' | 'My Sessions'
 
@@ -46,6 +46,11 @@ export function Mentorship() {
   const upcoming = sessions.filter((s) => s.status === 'upcoming')
   const finished = sessions.filter((s) => s.status === 'past' || s.status === 'declined')
 
+  // Mentee free-session allowance: the first N booked (non-declined) sessions
+  // are free; beyond that, sessions are paid at the mentor's rate.
+  const freeUsed = sessions.filter((s) => s.menteeId === currentUser.id && s.status !== 'declined').length
+  const freeRemaining = Math.max(0, FREE_MENTORSHIP_SESSIONS - freeUsed)
+
   // Mentors I already have a pending request with (as the mentee).
   const pendingMentorRequestIds = new Set(
     sessions
@@ -77,6 +82,15 @@ export function Mentorship() {
             {t}
           </button>
         ))}
+      </div>
+
+      {/* Free-session allowance */}
+      <div className={`rounded-xl border px-4 py-3 text-sm shadow-sm ${freeRemaining > 0 ? 'border-green-200 bg-green-50 text-green-800' : 'border-[#edeff1] bg-white text-[#878a8c]'}`}>
+        {freeRemaining > 0 ? (
+          <>🎁 You have <strong>{freeRemaining}</strong> of {FREE_MENTORSHIP_SESSIONS} free mentorship {freeRemaining === 1 ? 'session' : 'sessions'} left — book any mentor you like, free.</>
+        ) : (
+          <>You've used your {FREE_MENTORSHIP_SESSIONS} free sessions. New sessions are <strong>paid</strong> at the mentor's hourly rate (arranged with the mentor).</>
+        )}
       </div>
 
       {tab === 'Find a Mentor' ? (
@@ -115,7 +129,12 @@ export function Mentorship() {
                 </Button>
               ) : (
                 <Button className="mt-4 w-full" onClick={() => setBooking(m)}>
-                  <Calendar size={15} /> Book a Session
+                  <Calendar size={15} />{' '}
+                  {freeRemaining > 0
+                    ? 'Book a free session'
+                    : m.mentorRate
+                      ? `Book · ₹${m.mentorRate.toLocaleString('en-IN')}/hr`
+                      : 'Book a session'}
                 </Button>
               )}
             </Card>
@@ -140,6 +159,7 @@ export function Mentorship() {
                         <p className="font-semibold text-[#1c1c1c]">{s.topic}</p>
                         <p className="text-xs text-[#878a8c]">
                           {iAmMentor ? `${other} requested this session` : `with ${other}`} · {s.date} · {s.time}
+                          {s.isPaid && <span className="font-semibold text-[#ff4500]"> · Paid ₹{(s.price ?? 0).toLocaleString('en-IN')}</span>}
                         </p>
                       </div>
                       {iAmMentor ? (
@@ -178,6 +198,7 @@ export function Mentorship() {
                       <p className="font-semibold text-[#1c1c1c]">{s.topic}</p>
                       <p className="text-xs text-[#878a8c]">
                         {iAmMentor ? 'mentoring' : 'with'} {other} · {s.date} · {s.time}
+                        {s.isPaid && <span className="font-semibold text-[#ff4500]"> · Paid ₹{(s.price ?? 0).toLocaleString('en-IN')}</span>}
                       </p>
                     </div>
                     {s.meetingLink && (
@@ -217,7 +238,10 @@ export function Mentorship() {
                     </span>
                     <div className="flex-1">
                       <p className="font-semibold text-[#1c1c1c]">{s.topic}</p>
-                      <p className="text-xs text-[#878a8c]">{iAmMentor ? 'mentored' : 'with'} {other} · {s.date}</p>
+                      <p className="text-xs text-[#878a8c]">
+                        {iAmMentor ? 'mentored' : 'with'} {other} · {s.date}
+                        {s.isPaid && <span className="font-semibold text-[#ff4500]"> · Paid ₹{(s.price ?? 0).toLocaleString('en-IN')}</span>}
+                      </p>
                     </div>
                     {!declined && s.rating && (
                       <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-600">
@@ -263,6 +287,7 @@ export function Mentorship() {
       {booking && (
         <BookModal
           mentor={booking}
+          freeRemaining={freeRemaining}
           onClose={() => setBooking(null)}
           onBook={(topic, date, time) => {
             bookSession(booking.id, topic, date, time)
@@ -281,10 +306,12 @@ export function Mentorship() {
 // session request + notification.
 function BookModal({
   mentor,
+  freeRemaining,
   onClose,
   onBook,
 }: {
   mentor: User
+  freeRemaining: number
   onClose: () => void
   onBook: (topic: string, date: string, time: string) => void
 }) {
@@ -292,6 +319,7 @@ function BookModal({
   const [date, setDate] = useState('')
   const [time, setTime] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const isPaid = freeRemaining <= 0
 
   const field =
     'mt-1 w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]'
@@ -315,6 +343,16 @@ function BookModal({
         {mentor.designation}
         {mentor.mentorRate ? ` · ₹${mentor.mentorRate.toLocaleString('en-IN')}/hr` : ' · rate on request'}
       </p>
+      {isPaid ? (
+        <div className="mt-3 rounded-lg bg-orange-50 px-3 py-2 text-sm text-[#1c1c1c]">
+          💳 This is a <strong>paid session</strong>
+          {mentor.mentorRate ? ` · ₹${mentor.mentorRate.toLocaleString('en-IN')}/hr` : ''}. You've used your {FREE_MENTORSHIP_SESSIONS} free sessions — arrange payment directly with the mentor.
+        </div>
+      ) : (
+        <div className="mt-3 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">
+          🎁 <strong>Free session</strong> — {freeRemaining} of {FREE_MENTORSHIP_SESSIONS} left.
+        </div>
+      )}
       <label className="mt-4 block text-sm font-medium text-[#1c1c1c]">What would you like to discuss? *</label>
       <textarea
         value={topic}
@@ -340,7 +378,9 @@ function BookModal({
         </div>
       </div>
       {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
-      <Button className="mt-4 w-full" onClick={submit}>Request Session</Button>
+      <Button className="mt-4 w-full" onClick={submit}>
+        {isPaid ? 'Request paid session' : 'Request free session'}
+      </Button>
     </Overlay>
   )
 }

@@ -1,11 +1,34 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { createHash, randomInt } from 'node:crypto'
 import { query } from '../db/pool.js'
 import { requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { mapUser, USER_COLS, type UserRow } from '../mappers.js'
+import { sendEmail } from '../email.js'
 
 export const usersRouter = Router()
+
+// Personal / free / disposable mail providers — not accepted as a "work" email,
+// because they don't prove the person works at a company. Extend as needed.
+const NON_WORK_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.in', 'ymail.com', 'rocketmail.com',
+  'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'icloud.com', 'me.com', 'mac.com',
+  'aol.com', 'proton.me', 'protonmail.com', 'gmx.com', 'mail.com', 'yandex.com', 'zoho.com',
+  'rediffmail.com', 'inbox.com', 'pm.me',
+  // disposable / throwaway
+  'mailinator.com', 'guerrillamail.com', '10minutemail.com', 'tempmail.com', 'temp-mail.org',
+  'yopmail.com', 'sharklasers.com', 'maildrop.cc', 'getnada.com', 'trashmail.com', 'dispostable.com',
+  'fakeinbox.com', 'throwawaymail.com', 'mintemail.com',
+])
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const sha256 = (s: string) => createHash('sha256').update(s).digest('hex')
+const maskEmail = (email: string) => {
+  const [local, domain] = email.split('@')
+  const shown = local.length <= 2 ? local[0] ?? '' : `${local[0]}${'*'.repeat(local.length - 2)}${local[local.length - 1]}`
+  return `${shown}@${domain}`
+}
 
 // GET /api/users — the whole directory (drives People You May Know, mentions…).
 usersRouter.get(
@@ -140,6 +163,100 @@ usersRouter.patch(
   }),
 )
 
+
+// --- Employer (work-email) verification ------------------------------------
+// A user proves they work at a company by verifying a work email with a
+// one-time 6-digit code. Once verified they may create Hiring/job posts.
+
+const startSchema = z.object({ email: z.string().trim().max(200) })
+
+// POST /api/users/me/work-email/start — email a 6-digit verification code.
+usersRouter.post(
+  '/me/work-email/start',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = startSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, 'A valid work email is required')
+    const email = parsed.data.email.toLowerCase()
+    if (!EMAIL_RE.test(email)) throw new ApiError(400, 'That does not look like a valid email address')
+    const domain = email.split('@')[1]
+    if (NON_WORK_DOMAINS.has(domain)) {
+      throw new ApiError(400, 'Please use your company/work email — personal or temporary email addresses are not accepted.')
+    }
+
+    const me = req.user!.sub
+    // Rate-limit: one code per minute.
+    const existing = await query<{ sent_at: Date }>(
+      `SELECT sent_at FROM work_email_otps WHERE user_id = $1`,
+      [me],
+    )
+    if (existing.rowCount && Date.now() - new Date(existing.rows[0].sent_at).getTime() < 60_000) {
+      throw new ApiError(429, 'Please wait a minute before requesting another code.')
+    }
+
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0')
+    await query(
+      `INSERT INTO work_email_otps (user_id, email, code_hash, expires_at, attempts, sent_at)
+       VALUES ($1, $2, $3, now() + interval '10 minutes', 0, now())
+       ON CONFLICT (user_id) DO UPDATE
+         SET email = EXCLUDED.email, code_hash = EXCLUDED.code_hash,
+             expires_at = EXCLUDED.expires_at, attempts = 0, sent_at = now()`,
+      [me, email, sha256(code)],
+    )
+
+    const sent = await sendEmail(
+      email,
+      'Your RooConnect employer verification code',
+      `Your RooConnect verification code is ${code}\n\n` +
+        `Enter it on the Jobs page to verify that you work at ${domain} and unlock job posting. ` +
+        `The code expires in 10 minutes.\n\nIf you didn't request this, you can ignore this email.\n\n— The Rooman Team`,
+    )
+    res.json({ ok: true, email: maskEmail(email), simulated: !sent })
+  }),
+)
+
+const verifySchema = z.object({ code: z.string().trim() })
+
+// POST /api/users/me/work-email/verify — confirm the code, mark the user a
+// verified employer, and return the updated profile.
+usersRouter.post(
+  '/me/work-email/verify',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = verifySchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, 'Enter the 6-digit code')
+    const me = req.user!.sub
+
+    const otp = await query<{ email: string; code_hash: string; expires_at: Date; attempts: number }>(
+      `SELECT email, code_hash, expires_at, attempts FROM work_email_otps WHERE user_id = $1`,
+      [me],
+    )
+    if (!otp.rowCount) throw new ApiError(400, 'Request a verification code first.')
+    const row = otp.rows[0]
+
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+      await query(`DELETE FROM work_email_otps WHERE user_id = $1`, [me])
+      throw new ApiError(400, 'That code has expired — request a new one.')
+    }
+    if (row.attempts >= 5) {
+      await query(`DELETE FROM work_email_otps WHERE user_id = $1`, [me])
+      throw new ApiError(429, 'Too many incorrect attempts — request a new code.')
+    }
+    if (sha256(parsed.data.code) !== row.code_hash) {
+      await query(`UPDATE work_email_otps SET attempts = attempts + 1 WHERE user_id = $1`, [me])
+      throw new ApiError(400, 'Incorrect code. Please check and try again.')
+    }
+
+    const domain = row.email.split('@')[1]
+    const updated = await query<UserRow>(
+      `UPDATE users SET work_email = $2, work_email_domain = $3, work_verified_at = now(), updated_at = now()
+       WHERE id = $1 RETURNING ${USER_COLS}`,
+      [me, row.email, domain],
+    )
+    await query(`DELETE FROM work_email_otps WHERE user_id = $1`, [me])
+    res.json(mapUser(updated.rows[0]))
+  }),
+)
 
 // GET /api/users/:id/badges — achievements computed live from activity.
 // No stored state: cheap at this network's scale and always accurate.

@@ -59,8 +59,6 @@ const FEATURES: Feature[] = [
     icon: <GraduationCap size={24} />,
     tint: 'bg-gradient-to-br from-[#2563eb] to-[#60a5fa] shadow-blue-500/30',
     title: 'Paid Mentorship',
-    // NOTE: launch offer only. Nothing in mentorship.routes.ts tracks a free-session
-    // allowance — mentor_rate defaults to ₹1000/hr and applies from session one.
     badge: 'First 3 sessions free',
     body: 'Apply to become a verified mentor, take session requests from the next batch, and build a rated track record as you teach.',
     points: ['Accept, decline or complete session requests', 'Mentees rate every finished session'],
