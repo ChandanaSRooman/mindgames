@@ -1,28 +1,44 @@
-import { useMemo } from 'react'
-import { Megaphone, Newspaper } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Megaphone, Newspaper, Plus } from 'lucide-react'
 import { useApp } from '../store/AppStore'
-import { Card } from '../components/ui'
+import { Button, Card } from '../components/ui'
 import { PostCard } from '../components/feed/PostCard'
+import { NewsComposer } from '../components/feed/NewsComposer'
+import { NEWS_TYPES } from '../types'
 import { roomanStats } from '../data/mockData'
 
 export function News() {
   const { posts, userById } = useApp()
+  const [composing, setComposing] = useState(false)
 
-  // News & Updates = OFFICIAL content only: posts authored by admin accounts
-  // (pinned announcements + news updates). Member posts live on the Home feed.
+  // News & Updates = official announcements (admin / Rooman authored) PLUS the
+  // peer-to-peer formats members publish (Achievement, Project, Article, Meetup).
+  const newsTypes = new Set<string>(NEWS_TYPES)
   const news = useMemo(
     () =>
       posts
-        .filter((p) => p.authorId === 'rooman' || userById(p.authorId)?.isAdmin)
-        .sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false) || +new Date(b.createdAt) - +new Date(a.createdAt)),
+        .filter(
+          (p) => p.authorId === 'rooman' || userById(p.authorId)?.isAdmin || newsTypes.has(p.type),
+        )
+        .sort(
+          (a, b) =>
+            Number(b.pinned ?? false) - Number(a.pinned ?? false) ||
+            +new Date(b.createdAt) - +new Date(a.createdAt),
+        ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [posts, userById],
   )
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        <Newspaper size={24} className="text-[#ff4500]" />
-        <h1 className="text-2xl font-bold text-[#1c1c1c]">News & Updates</h1>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Newspaper size={24} className="text-[#ff4500]" />
+          <h1 className="text-2xl font-bold text-[#1c1c1c]">News &amp; Updates</h1>
+        </div>
+        <Button onClick={() => setComposing(true)} icon={<Plus size={18} />}>
+          Create news
+        </Button>
       </div>
 
       {/* Rooman highlight banner */}
@@ -41,9 +57,11 @@ export function News() {
       ))}
       {news.length === 0 && (
         <div className="rounded-xl border border-[#edeff1] bg-white py-12 text-center text-sm text-[#878a8c] shadow-sm">
-          No news yet.
+          No news yet — be the first to share an update.
         </div>
       )}
+
+      {composing && <NewsComposer onClose={() => setComposing(false)} />}
     </div>
   )
 }

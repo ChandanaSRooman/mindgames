@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Briefcase, Check, ChevronDown, ChevronUp, CirclePause, CirclePlay, ClipboardList, Download, FileText, MapPin, MessageSquare, Paperclip, Pencil, Plus, Send, Trash2, Users, X } from 'lucide-react'
+import { BadgeCheck, Briefcase, Check, ChevronDown, ChevronUp, CirclePause, CirclePlay, ClipboardList, Download, FileText, MapPin, MessageSquare, Paperclip, Pencil, Plus, Send, Trash2, Users, X } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { useLayout } from '../components/layout/LayoutContext'
 import { api } from '../lib/api'
+import { PostCreateModal } from '../components/feed/PostCreateModal'
 import { Avatar, Button, Card, Pill } from '../components/ui'
 import { roleLine, timeAgo } from '../lib/format'
 import { DOMAINS, type Domain, type JobApplicant, type Post } from '../types'
@@ -26,6 +27,7 @@ export function Jobs() {
   const { posts, users, userById, query, sendConnect, connectionState, currentUser, applyToJob } = useApp()
   const [tab, setTab] = useState<Tab>('Hiring')
   const [domain, setDomain] = useState<Domain | 'All'>('All')
+  const [showCreate, setShowCreate] = useState(false)
 
   const q = query.trim().toLowerCase()
 
@@ -58,7 +60,12 @@ export function Jobs() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-bold text-[#1c1c1c]">Jobs & Opportunities</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold text-[#1c1c1c]">Jobs & Opportunities</h1>
+        <Button onClick={() => setShowCreate(true)}>
+          <Plus size={16} /> {tab === 'Hiring' ? 'Post a job' : "I'm open to work"}
+        </Button>
+      </div>
 
       {/* Tabs */}
       <div className="flex gap-1 rounded-xl border border-[#edeff1] bg-white p-1 shadow-sm">
@@ -129,6 +136,10 @@ export function Jobs() {
           {openToWork.length === 0 && <Empty label="No alumni open to work match your filters." />}
         </div>
       )}
+
+      {showCreate && (
+        <PostCreateModal prefill={{ type: tab }} onClose={() => setShowCreate(false)} />
+      )}
     </div>
   )
 }
@@ -141,7 +152,7 @@ function HiringCard({
 }: {
   post: Post
   isMine: boolean
-  author?: { id: string; name: string; company: string; photo?: string | null }
+  author?: { id: string; name: string; company: string; photo?: string | null; employerVerified?: boolean; workEmailDomain?: string }
   onApply: (answers?: string[], resume?: ResumeAttachment) => void
 }) {
   const { openChatWith } = useLayout()
@@ -194,6 +205,11 @@ function HiringCard({
             <span className="flex items-center gap-1"><Briefcase size={14} /> {p.company ?? author?.company}</span>
             {p.city && <span className="flex items-center gap-1"><MapPin size={14} /> {p.city}</span>}
             {p.domain && <span>· {p.domain}</span>}
+            {author?.employerVerified && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-[#1d9bf0]" title={author.workEmailDomain ? `Verified via ${author.workEmailDomain}` : 'Verified employer'}>
+                <BadgeCheck size={12} /> Verified employer{author.workEmailDomain ? ` · ${author.workEmailDomain}` : ''}
+              </span>
+            )}
           </p>
         </div>
         <span

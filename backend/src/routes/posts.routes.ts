@@ -10,9 +10,15 @@ export const postsRouter = Router()
 
 const POST_SELECT = `
   SELECT p.id, p.author_id, p.type, p.content, p.image, p.visibility, p.community_id, p.event_id,
-         p.domain, p.city, p.batch, p.role, p.company, p.questions, p.wants_resume, p.active, p.pinned, p.likes, p.created_at,
+         p.domain, p.city, p.batch, p.role, p.company, p.questions, p.wants_resume, p.active, p.pinned, p.likes, p.meta, p.created_at,
          EXISTS (SELECT 1 FROM post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1) AS liked_by_me,
          EXISTS (SELECT 1 FROM post_saves ps WHERE ps.post_id = p.id AND ps.user_id = $1) AS saved_by_me,
+         COALESCE((
+           SELECT json_object_agg(emoji, cnt) FROM (
+             SELECT emoji, count(*)::int AS cnt FROM post_reactions WHERE post_id = p.id GROUP BY emoji
+           ) s
+         ), '{}'::json) AS reactions,
+         (SELECT emoji FROM post_reactions WHERE post_id = p.id AND user_id = $1) AS my_reaction,
          EXISTS (SELECT 1 FROM job_applications ja WHERE ja.post_id = p.id AND ja.applicant_id = $1) AS applied_by_me,
          (SELECT count(*)::int FROM job_applications ja WHERE ja.post_id = p.id) AS applicants_count,
          COALESCE((
@@ -38,8 +44,45 @@ postsRouter.get(
   }),
 )
 
+// User-supplied links must be http(s) only — a javascript: or data: URI here
+// would execute when rendered as an <a href> (stored XSS), and the JWT lives in
+// localStorage. Rejected at this trust boundary; the client guards again on render.
+const httpUrl = z
+  .string()
+  .trim()
+  .max(500)
+  .refine((v) => /^https?:\/\//i.test(v), 'links must start with http:// or https://')
+
+// Structured fields for the peer-to-peer news formats. All optional; each
+// format uses the subset relevant to it (see frontend NEWS_FORMATS).
+const newsMetaSchema = z
+  .object({
+    // Achievement / Career
+    jobTitle: z.string().trim().max(120),
+    achievementCompany: z.string().trim().max(120),
+    collaborators: z.array(z.string().trim().min(1).max(80)).max(20),
+    // Startup / Project
+    projectName: z.string().trim().max(120),
+    demoLink: httpUrl,
+    techStack: z.array(z.string().trim().min(1).max(40)).max(30),
+    seeking: z.string().trim().max(60),
+    // Article / Blog
+    title: z.string().trim().max(160),
+    category: z.string().trim().max(60),
+    // Meetup
+    date: z.string().trim().max(80),
+    location: z.string().trim().max(160),
+    rsvpLink: httpUrl,
+    capacity: z.number().int().min(0).max(1_000_000),
+  })
+  .partial()
+
+const NEWS_TYPES = ['Achievement', 'Project', 'Article', 'Meetup'] as const
+
 const createSchema = z.object({
-  type: z.enum(['Update', 'Hiring', 'Open to Work', 'Mentorship', 'StartupVarsity']).default('Update'),
+  type: z
+    .enum(['Update', 'Hiring', 'Open to Work', 'Mentorship', 'StartupVarsity', ...NEWS_TYPES])
+    .default('Update'),
   content: z.string().trim().min(1, 'content is required'),
   image: z.string().optional(),
   visibility: z.enum(['All Alumni', 'My Network', 'Specific Community']).default('All Alumni'),
@@ -54,6 +97,8 @@ const createSchema = z.object({
   questions: z.array(z.string().trim().min(1).max(160)).max(20).optional(),
   // Hiring only: require applicants to attach a resume.
   wantsResume: z.boolean().optional(),
+  // News formats only: format-specific structured fields.
+  meta: newsMetaSchema.optional(),
 })
 
 // POST /api/posts — create a post authored by the current user.
@@ -64,8 +109,23 @@ postsRouter.post(
     const parsed = createSchema.safeParse(req.body)
     if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
     const p = parsed.data
+
+    // Only verified employers (or admins) can post jobs, so listings can't be
+    // faked — the poster must have verified a real company work email.
+    if (p.type === 'Hiring' && !req.user!.isAdmin) {
+      const v = await query<{ work_verified_at: Date | null }>(
+        `SELECT work_verified_at FROM users WHERE id = $1`,
+        [req.user!.sub],
+      )
+      if (!v.rows[0]?.work_verified_at) {
+        throw new ApiError(403, 'Verify your work email before posting a job.')
+      }
+    }
+
     const questions = p.type === 'Hiring' ? (p.questions ?? []) : []
     const wantsResume = p.type === 'Hiring' && !!p.wantsResume
+    // Only news-format posts carry structured meta; keep everything else lean.
+    const meta = (NEWS_TYPES as readonly string[]).includes(p.type) ? (p.meta ?? {}) : {}
 
     // An event-linked update may only be posted by that event's host or an admin.
     let event: { creator_id: string; title: string } | undefined
@@ -83,12 +143,12 @@ postsRouter.post(
 
     const inserted = await query<{ id: string }>(
       `INSERT INTO posts (author_id, type, content, image, visibility, community_id, event_id,
-                          domain, city, batch, role, company, questions, wants_resume)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+                          domain, city, batch, role, company, questions, wants_resume, meta)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
       [
         req.user!.sub, p.type, p.content, p.image ?? null, p.visibility, p.communityId ?? null, p.eventId ?? null,
         p.domain ?? null, p.city ?? null, p.batch ?? null, p.role ?? null, p.company ?? null,
-        JSON.stringify(questions), wantsResume,
+        JSON.stringify(questions), wantsResume, JSON.stringify(meta),
       ],
     )
 
@@ -236,6 +296,86 @@ postsRouter.delete(
       return r.rows[0].likes
     })
     res.json({ likes, likedByMe: false })
+  }),
+)
+
+// A post's reaction summary ({ '👍': 3, … }) plus the caller's own reaction.
+async function reactionSummary(postId: string, userId: string) {
+  const agg = await query<{ emoji: string; cnt: number }>(
+    `SELECT emoji, count(*)::int AS cnt FROM post_reactions WHERE post_id = $1 GROUP BY emoji`,
+    [postId],
+  )
+  const reactions: Record<string, number> = {}
+  for (const row of agg.rows) reactions[row.emoji] = row.cnt
+  const mine = await query<{ emoji: string }>(
+    `SELECT emoji FROM post_reactions WHERE post_id = $1 AND user_id = $2`,
+    [postId, userId],
+  )
+  return { reactions, myReaction: mine.rows[0]?.emoji ?? null }
+}
+
+const REACTION_EMOJIS = ['👍', '🎉', '❤️'] as const
+const reactSchema = z.object({ emoji: z.enum(REACTION_EMOJIS) })
+
+// POST /api/posts/:id/react — set or change the caller's reaction.
+postsRouter.post(
+  '/:id/react',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = reactSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, 'Unsupported reaction')
+    await ensurePostExists(req.params.id)
+    // A reaction is one unit of "like" engagement. We keep the denormalised
+    // posts.likes counter in sync (a first-time reaction increments it; changing
+    // emoji doesn't) so the Home "Top" sort, the leaderboard, and the weekly
+    // digest — all of which read posts.likes — stay live now that the Like
+    // button is a reaction. (post_reactions holds the per-emoji detail.)
+    const isNew = await withTransaction(async (client) => {
+      const prev = await client.query(
+        `SELECT 1 FROM post_reactions WHERE post_id = $1 AND user_id = $2`,
+        [req.params.id, req.user!.sub],
+      )
+      await client.query(
+        `INSERT INTO post_reactions (post_id, user_id, emoji) VALUES ($1, $2, $3)
+         ON CONFLICT (post_id, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, created_at = now()`,
+        [req.params.id, req.user!.sub, parsed.data.emoji],
+      )
+      if (!prev.rowCount) {
+        await client.query(`UPDATE posts SET likes = likes + 1 WHERE id = $1`, [req.params.id])
+      }
+      return !prev.rowCount
+    })
+    // Notify the author only on a first-time reaction (not emoji swaps, not self).
+    if (isNew) {
+      const meta = await query<{ author_id: string; name: string }>(
+        `SELECT p.author_id, u.name FROM posts p JOIN users u ON u.id = $2 WHERE p.id = $1`,
+        [req.params.id, req.user!.sub],
+      )
+      const { author_id, name } = meta.rows[0]
+      if (author_id !== req.user!.sub) {
+        void pushNotification(author_id, 'like', `${name} reacted ${parsed.data.emoji} to your post.`, req.user!.sub)
+      }
+    }
+    res.json(await reactionSummary(req.params.id, req.user!.sub))
+  }),
+)
+
+// DELETE /api/posts/:id/react — clear the caller's reaction.
+postsRouter.delete(
+  '/:id/react',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    await ensurePostExists(req.params.id)
+    await withTransaction(async (client) => {
+      const del = await client.query(`DELETE FROM post_reactions WHERE post_id = $1 AND user_id = $2`, [
+        req.params.id,
+        req.user!.sub,
+      ])
+      if (del.rowCount) {
+        await client.query(`UPDATE posts SET likes = GREATEST(likes - 1, 0) WHERE id = $1`, [req.params.id])
+      }
+    })
+    res.json(await reactionSummary(req.params.id, req.user!.sub))
   }),
 )
 

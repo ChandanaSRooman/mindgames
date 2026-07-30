@@ -9,7 +9,7 @@
 export const USER_COLS = `id, name, email, phone, photo, profile_tag, email_verified_at, email_digest, avatar, batch_year, course, company, designation, college,
   experience_years, domain, employment_type, city, bio, linkedin, expertise,
   willing_to_mentor, interested_in_startup, connections_count, is_mentor,
-  mentor_rate, sessions_conducted, is_admin`
+  mentor_rate, sessions_conducted, work_email_domain, work_verified_at, is_admin`
 
 export interface UserRow {
   id: string
@@ -39,6 +39,8 @@ export interface UserRow {
   is_mentor: boolean
   mentor_rate: number | null
   sessions_conducted: number | null
+  work_email_domain?: string | null
+  work_verified_at?: Date | string | null
   is_admin?: boolean
 }
 
@@ -71,6 +73,9 @@ export function mapUser(r: UserRow) {
     isMentor: r.is_mentor,
     mentorRate: r.mentor_rate ?? undefined,
     sessionsConducted: r.sessions_conducted ?? undefined,
+    // Employer verification (proves the user works at a company → can post jobs).
+    employerVerified: !!r.work_verified_at,
+    workEmailDomain: r.work_email_domain ?? undefined,
     isAdmin: r.is_admin ?? undefined,
   }
 }
@@ -110,6 +115,9 @@ export interface PostRow {
   active: boolean
   pinned: boolean
   likes: number
+  meta: Record<string, unknown> | null
+  reactions?: Record<string, number> | null
+  my_reaction?: string | null
   created_at: Date | string
   liked_by_me?: boolean
   saved_by_me?: boolean
@@ -144,6 +152,12 @@ export function mapPost(r: PostRow) {
     wantsResume: r.wants_resume || undefined,
     active: r.active,
     pinned: r.pinned || undefined,
+    // Format-specific fields for news posts; omitted when empty so non-news
+    // posts stay lean in the JSON payload.
+    meta: r.meta && Object.keys(r.meta).length ? r.meta : undefined,
+    // Emoji reactions: { '👍': 3, '❤️': 1 } and the current user's own choice.
+    reactions: r.reactions && Object.keys(r.reactions).length ? r.reactions : undefined,
+    myReaction: r.my_reaction ?? undefined,
   }
 }
 

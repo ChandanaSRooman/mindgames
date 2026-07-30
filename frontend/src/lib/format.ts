@@ -53,3 +53,11 @@ export function compact(n: number): string {
   if (n < 1_000_000) return `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k`
   return `${(n / 1_000_000).toFixed(1)}M`
 }
+
+// Only return a URL if it's a safe http(s) link. Blocks javascript:/data: and
+// other schemes before they reach an <a href> (defense-in-depth with the
+// server-side validation). Returns undefined for anything unsafe/empty.
+export function safeUrl(url?: string | null): string | undefined {
+  const u = url?.trim()
+  return u && /^https?:\/\//i.test(u) ? u : undefined
+}

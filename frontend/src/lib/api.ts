@@ -79,10 +79,25 @@ export type Provider = 'google' | 'linkedin'
 // ---- API surface -----------------------------------------------------------
 export const api = {
   // auth
-  signup: (name: string, email: string, password: string) =>
+  // Registration is a 3-step flow.
+  // Step 1: email the new member a 6-digit code to verify the address.
+  // `devCode` is only present in demo mode (SMTP unconfigured / non-prod).
+  signupStart: (email: string) =>
+    http<{ ok: boolean; email: string; simulated: boolean; devCode?: string }>('/api/auth/signup/start', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+  // Step 2: confirm the code, receive a short-lived signup ticket.
+  signupVerify: (email: string, code: string) =>
+    http<{ ok: boolean; ticket: string }>('/api/auth/signup/verify', {
+      method: 'POST',
+      body: JSON.stringify({ email, code }),
+    }),
+  // Step 3: create the account. Email comes from the verified ticket.
+  signup: (ticket: string, name: string, password: string) =>
     http<AuthResponse>('/api/auth/signup', {
       method: 'POST',
-      body: JSON.stringify({ name, email, password }),
+      body: JSON.stringify({ ticket, name, password }),
     }),
 
   login: (email: string, password: string) =>
@@ -136,6 +151,14 @@ export const api = {
   getUser: (id: string) => http<User>(`/api/users/${id}`),
   updateProfile: (patch: Partial<User>) =>
     http<User>('/api/users/me', { method: 'PATCH', body: JSON.stringify(patch) }),
+  // Employer (work-email) verification — required once before posting a job.
+  startWorkEmailVerification: (email: string) =>
+    http<{ ok: boolean; email: string; simulated: boolean }>('/api/users/me/work-email/start', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+  verifyWorkEmail: (code: string) =>
+    http<User>('/api/users/me/work-email/verify', { method: 'POST', body: JSON.stringify({ code }) }),
 
   // posts / feed
   getFeed: () => http<Post[]>('/api/posts'),
@@ -155,6 +178,17 @@ export const api = {
     http<Comment>(`/api/posts/${postId}/comments`, {
       method: 'POST',
       body: JSON.stringify({ text }),
+    }),
+  // Emoji reactions: set/change (POST) or clear (DELETE). Both return the fresh
+  // per-emoji counts + the caller's current reaction.
+  react: (id: string, emoji: string) =>
+    http<{ reactions: Record<string, number>; myReaction: string | null }>(`/api/posts/${id}/react`, {
+      method: 'POST',
+      body: JSON.stringify({ emoji }),
+    }),
+  unreact: (id: string) =>
+    http<{ reactions: Record<string, number>; myReaction: string | null }>(`/api/posts/${id}/react`, {
+      method: 'DELETE',
     }),
 
   // jobs (Hiring posts)

@@ -55,6 +55,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_digest BOOLEAN NOT NULL DEFAULT TRUE;
 -- Current institution name — only meaningful when employment_type = 'Student'.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS college TEXT NOT NULL DEFAULT '';
+
+-- Employer verification: to post a Hiring/job, a user proves they work at a
+-- company by verifying a work email (one-time OTP). work_verified_at NULL =
+-- not a verified employer. Only verified employers (or admins) can post jobs.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS work_email TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS work_email_domain TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS work_verified_at TIMESTAMPTZ;
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_profile_tag_check;
 ALTER TABLE users
   ADD CONSTRAINT users_profile_tag_check
@@ -64,8 +71,12 @@ CREATE TABLE IF NOT EXISTS posts (
   id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   author_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   type         TEXT NOT NULL DEFAULT 'Update'
-                 CHECK (type IN ('Update','Hiring','Open to Work','Mentorship','StartupVarsity')),
+                 CHECK (type IN ('Update','Hiring','Open to Work','Mentorship','StartupVarsity',
+                                 'Achievement','Project','Article','Meetup')),
   content      TEXT NOT NULL,
+  -- Format-specific fields for peer-to-peer news types (Achievement, Project,
+  -- Article, Meetup). Shape varies by type — see mappers.ts / types.ts.
+  meta         JSONB NOT NULL DEFAULT '{}'::jsonb,
   image        TEXT,
   visibility   TEXT NOT NULL DEFAULT 'All Alumni'
                  CHECK (visibility IN ('All Alumni','My Network','Specific Community')),
@@ -93,6 +104,12 @@ CREATE TABLE IF NOT EXISTS posts (
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS questions JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS wants_resume BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+-- Peer-to-peer news formats: structured per-type fields + the widened type set.
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS meta JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE posts DROP CONSTRAINT IF EXISTS posts_type_check;
+ALTER TABLE posts ADD CONSTRAINT posts_type_check
+  CHECK (type IN ('Update','Hiring','Open to Work','Mentorship','StartupVarsity',
+                  'Achievement','Project','Article','Meetup'));
 
 CREATE INDEX IF NOT EXISTS idx_posts_author ON posts (author_id);
 CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts (created_at DESC);
@@ -126,6 +143,23 @@ CREATE TABLE IF NOT EXISTS post_saves (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (post_id, user_id)
 );
+
+-- ---------------------------------------------------------------------------
+-- post_reactions: one emoji reaction per (post, user). Supersedes the plain
+-- like in the UI (👍/🎉/❤️). Counts are derived per emoji.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS post_reactions (
+  post_id    TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  emoji      TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (post_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_post_reactions_post ON post_reactions (post_id);
+-- One-time backfill: existing likes become 👍 reactions so nothing is lost.
+INSERT INTO post_reactions (post_id, user_id, emoji)
+  SELECT post_id, user_id, '👍' FROM post_likes
+  ON CONFLICT (post_id, user_id) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
 -- connections: directed request that becomes a mutual link when accepted.
@@ -251,6 +285,11 @@ ALTER TABLE mentorship_sessions ALTER COLUMN status SET DEFAULT 'requested';
 ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS meeting_link TEXT;
 ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS rating INTEGER;
 ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS review TEXT;
+-- Free allowance: a mentee's first 3 sessions are free; the 4th onward is paid
+-- at the mentor's rate (display-only — payment arranged offline). price is a
+-- ₹ snapshot of the mentor's rate at booking time.
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS is_paid BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS price INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE mentorship_sessions DROP CONSTRAINT IF EXISTS mentorship_sessions_rating_check;
 ALTER TABLE mentorship_sessions
   ADD CONSTRAINT mentorship_sessions_rating_check CHECK (rating IS NULL OR rating BETWEEN 1 AND 5);
@@ -345,12 +384,6 @@ ALTER TABLE events
 ALTER TABLE events ADD COLUMN IF NOT EXISTS is_paid BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS price INTEGER NOT NULL DEFAULT 0;
 
--- Notification types are re-checked here so upgrades pick up new ones.
-ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_type_check;
-ALTER TABLE notifications
-  ADD CONSTRAINT notifications_type_check
-  CHECK (type IN ('connection','like','comment','job','mentorship','community','announcement','event'));
-
 CREATE TABLE IF NOT EXISTS event_rsvps (
   event_id   TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
   user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -410,6 +443,34 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens (user_id, purpose);
 
 -- ---------------------------------------------------------------------------
+-- work_email_otps: short-lived 6-digit codes for employer (work-email)
+-- verification. One active code per user — a resend replaces the row.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS work_email_otps (
+  user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  email      TEXT NOT NULL,
+  code_hash  TEXT NOT NULL,             -- sha256 of the 6-digit code
+  expires_at TIMESTAMPTZ NOT NULL,
+  attempts   INTEGER NOT NULL DEFAULT 0,
+  sent_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------------
+-- signup_otps: short-lived 6-digit codes that verify a new member's email
+-- address during registration, before the account exists. Keyed by email — a
+-- resend replaces the row; the row is consumed when the account is created.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS signup_otps (
+  email      TEXT PRIMARY KEY,          -- lower-cased
+  code_hash  TEXT NOT NULL,             -- sha256 of the 6-digit code
+  expires_at TIMESTAMPTZ NOT NULL,
+  attempts   INTEGER NOT NULL DEFAULT 0,
+  sent_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------------
 -- reports: members flagging posts/users for the admin team to review.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS reports (
@@ -447,3 +508,9 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, created_at DESC);
+
+-- Notification types are re-checked here so upgrades pick up new ones.
+ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_type_check;
+ALTER TABLE notifications
+  ADD CONSTRAINT notifications_type_check
+  CHECK (type IN ('connection','like','comment','job','mentorship','community','announcement','event'));

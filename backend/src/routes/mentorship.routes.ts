@@ -1,11 +1,15 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { query } from '../db/pool.js'
+import { query, withTransaction } from '../db/pool.js'
 import { requireAdmin, requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { pushNotification } from '../notify.js'
 
 export const mentorshipRouter = Router()
+
+// A mentee's first N sessions are free; the (N+1)th onward is paid at the
+// mentor's rate. Keep in sync with FREE_MENTORSHIP_SESSIONS in the frontend.
+const FREE_SESSIONS = 3
 
 interface SessionRow {
   id: string
@@ -18,10 +22,12 @@ interface SessionRow {
   status: 'requested' | 'upcoming' | 'declined' | 'past'
   meeting_link: string | null
   rating: number | null
+  is_paid: boolean
+  price: number
 }
 
 const SESSION_SELECT = `
-  SELECT s.id, s.mentor_id, s.mentee_id, u.name AS mentee_name, s.topic, s.date_label, s.time_label, s.status, s.meeting_link, s.rating
+  SELECT s.id, s.mentor_id, s.mentee_id, u.name AS mentee_name, s.topic, s.date_label, s.time_label, s.status, s.meeting_link, s.rating, s.is_paid, s.price
   FROM mentorship_sessions s
   JOIN users u ON u.id = s.mentee_id`
 
@@ -37,6 +43,8 @@ function mapSession(r: SessionRow) {
     status: r.status,
     meetingLink: r.meeting_link ?? undefined,
     rating: r.rating ?? undefined,
+    isPaid: r.is_paid,
+    price: r.price,
   }
 }
 
@@ -71,31 +79,49 @@ mentorshipRouter.post(
     const { mentorId, topic, date, time } = parsed.data
     if (mentorId === req.user!.sub) throw new ApiError(400, 'Cannot book a session with yourself')
 
-    const mentor = await query<{ name: string; is_mentor: boolean }>(
-      `SELECT name, is_mentor FROM users WHERE id = $1`,
+    const mentor = await query<{ name: string; is_mentor: boolean; mentor_rate: number | null }>(
+      `SELECT name, is_mentor, mentor_rate FROM users WHERE id = $1`,
       [mentorId],
     )
     if (!mentor.rowCount) throw new ApiError(404, 'Mentor not found')
     if (!mentor.rows[0].is_mentor) throw new ApiError(400, 'This member is not a mentor')
 
-    // One pending request per mentor — prevents accidental double-booking.
-    const dup = await query(
-      `SELECT 1 FROM mentorship_sessions
-       WHERE mentor_id = $1 AND mentee_id = $2 AND status = 'requested'`,
-      [mentorId, req.user!.sub],
-    )
-    if (dup.rowCount) {
-      throw new ApiError(
-        409,
-        `You already have a pending request with ${mentor.rows[0].name}. Wait for them to respond.`,
-      )
-    }
+    const mentorRate = mentor.rows[0].mentor_rate ?? 0
+    // Duplicate check + free-allowance count + insert run in one transaction with
+    // the mentee's row locked, so two concurrent requests can't both read the
+    // same "sessions used" count and both be booked as free (mirrors the
+    // event-RSVP capacity lock).
+    const ins = await withTransaction(async (client) => {
+      await client.query(`SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, [req.user!.sub])
 
-    const ins = await query<{ id: string }>(
-      `INSERT INTO mentorship_sessions (mentor_id, mentee_id, topic, date_label, time_label, status)
-       VALUES ($1, $2, $3, $4, $5, 'requested') RETURNING id`,
-      [mentorId, req.user!.sub, topic, date, time],
-    )
+      // One pending request per mentor — prevents accidental double-booking.
+      const dup = await client.query(
+        `SELECT 1 FROM mentorship_sessions
+         WHERE mentor_id = $1 AND mentee_id = $2 AND status = 'requested'`,
+        [mentorId, req.user!.sub],
+      )
+      if (dup.rowCount) {
+        throw new ApiError(
+          409,
+          `You already have a pending request with ${mentor.rows[0].name}. Wait for them to respond.`,
+        )
+      }
+
+      // Free allowance: the mentee's first FREE_SESSIONS non-declined sessions
+      // are free; beyond that the session is paid at the mentor's rate.
+      const used = await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM mentorship_sessions WHERE mentee_id = $1 AND status <> 'declined'`,
+        [req.user!.sub],
+      )
+      const isPaid = used.rows[0].n >= FREE_SESSIONS
+      const price = isPaid ? mentorRate : 0
+
+      return client.query<{ id: string }>(
+        `INSERT INTO mentorship_sessions (mentor_id, mentee_id, topic, date_label, time_label, status, is_paid, price)
+         VALUES ($1, $2, $3, $4, $5, 'requested', $6, $7) RETURNING id`,
+        [mentorId, req.user!.sub, topic, date, time, isPaid, price],
+      )
+    })
     const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
     void pushNotification(
       mentorId,
