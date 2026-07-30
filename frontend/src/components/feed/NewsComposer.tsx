@@ -66,6 +66,16 @@ export function NewsComposer({ onClose }: { onClose: () => void }) {
     if (type === 'Article') (['title', 'category'] as const).forEach((k) => keep(k) && (clean[k] = meta[k] as never))
     if (type === 'Meetup') (['title', 'date', 'location', 'rsvpLink', 'capacity'] as const).forEach((k) => keep(k) && (clean[k] = meta[k] as never))
 
+    // Normalise links: "example.com" → "https://example.com" so the http(s)-only
+    // server check accepts legitimate input (and never a javascript: scheme).
+    const normalizeLink = (v?: string) => {
+      const t = v?.trim()
+      if (!t) return undefined
+      return /^https?:\/\//i.test(t) ? t : `https://${t.replace(/^\/+/, '')}`
+    }
+    if (clean.demoLink) clean.demoLink = normalizeLink(clean.demoLink)
+    if (clean.rsvpLink) clean.rsvpLink = normalizeLink(clean.rsvpLink)
+
     createPost({ type, content, visibility: 'All Alumni', meta: clean })
     onClose()
   }

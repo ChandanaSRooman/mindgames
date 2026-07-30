@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { query } from '../db/pool.js'
+import { query, withTransaction } from '../db/pool.js'
 import { requireAdmin, requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { pushNotification } from '../notify.js'
@@ -86,33 +86,42 @@ mentorshipRouter.post(
     if (!mentor.rowCount) throw new ApiError(404, 'Mentor not found')
     if (!mentor.rows[0].is_mentor) throw new ApiError(400, 'This member is not a mentor')
 
-    // One pending request per mentor — prevents accidental double-booking.
-    const dup = await query(
-      `SELECT 1 FROM mentorship_sessions
-       WHERE mentor_id = $1 AND mentee_id = $2 AND status = 'requested'`,
-      [mentorId, req.user!.sub],
-    )
-    if (dup.rowCount) {
-      throw new ApiError(
-        409,
-        `You already have a pending request with ${mentor.rows[0].name}. Wait for them to respond.`,
+    const mentorRate = mentor.rows[0].mentor_rate ?? 0
+    // Duplicate check + free-allowance count + insert run in one transaction with
+    // the mentee's row locked, so two concurrent requests can't both read the
+    // same "sessions used" count and both be booked as free (mirrors the
+    // event-RSVP capacity lock).
+    const ins = await withTransaction(async (client) => {
+      await client.query(`SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, [req.user!.sub])
+
+      // One pending request per mentor — prevents accidental double-booking.
+      const dup = await client.query(
+        `SELECT 1 FROM mentorship_sessions
+         WHERE mentor_id = $1 AND mentee_id = $2 AND status = 'requested'`,
+        [mentorId, req.user!.sub],
       )
-    }
+      if (dup.rowCount) {
+        throw new ApiError(
+          409,
+          `You already have a pending request with ${mentor.rows[0].name}. Wait for them to respond.`,
+        )
+      }
 
-    // Free allowance: the mentee's first FREE_SESSIONS non-declined sessions are
-    // free; beyond that the session is paid at the mentor's rate.
-    const used = await query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM mentorship_sessions WHERE mentee_id = $1 AND status <> 'declined'`,
-      [req.user!.sub],
-    )
-    const isPaid = used.rows[0].n >= FREE_SESSIONS
-    const price = isPaid ? mentor.rows[0].mentor_rate ?? 0 : 0
+      // Free allowance: the mentee's first FREE_SESSIONS non-declined sessions
+      // are free; beyond that the session is paid at the mentor's rate.
+      const used = await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM mentorship_sessions WHERE mentee_id = $1 AND status <> 'declined'`,
+        [req.user!.sub],
+      )
+      const isPaid = used.rows[0].n >= FREE_SESSIONS
+      const price = isPaid ? mentorRate : 0
 
-    const ins = await query<{ id: string }>(
-      `INSERT INTO mentorship_sessions (mentor_id, mentee_id, topic, date_label, time_label, status, is_paid, price)
-       VALUES ($1, $2, $3, $4, $5, 'requested', $6, $7) RETURNING id`,
-      [mentorId, req.user!.sub, topic, date, time, isPaid, price],
-    )
+      return client.query<{ id: string }>(
+        `INSERT INTO mentorship_sessions (mentor_id, mentee_id, topic, date_label, time_label, status, is_paid, price)
+         VALUES ($1, $2, $3, $4, $5, 'requested', $6, $7) RETURNING id`,
+        [mentorId, req.user!.sub, topic, date, time, isPaid, price],
+      )
+    })
     const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
     void pushNotification(
       mentorId,

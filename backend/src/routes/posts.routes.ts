@@ -44,6 +44,15 @@ postsRouter.get(
   }),
 )
 
+// User-supplied links must be http(s) only — a javascript: or data: URI here
+// would execute when rendered as an <a href> (stored XSS), and the JWT lives in
+// localStorage. Rejected at this trust boundary; the client guards again on render.
+const httpUrl = z
+  .string()
+  .trim()
+  .max(500)
+  .refine((v) => /^https?:\/\//i.test(v), 'links must start with http:// or https://')
+
 // Structured fields for the peer-to-peer news formats. All optional; each
 // format uses the subset relevant to it (see frontend NEWS_FORMATS).
 const newsMetaSchema = z
@@ -54,7 +63,7 @@ const newsMetaSchema = z
     collaborators: z.array(z.string().trim().min(1).max(80)).max(20),
     // Startup / Project
     projectName: z.string().trim().max(120),
-    demoLink: z.string().trim().max(500),
+    demoLink: httpUrl,
     techStack: z.array(z.string().trim().min(1).max(40)).max(30),
     seeking: z.string().trim().max(60),
     // Article / Blog
@@ -63,7 +72,7 @@ const newsMetaSchema = z
     // Meetup
     date: z.string().trim().max(80),
     location: z.string().trim().max(160),
-    rsvpLink: z.string().trim().max(500),
+    rsvpLink: httpUrl,
     capacity: z.number().int().min(0).max(1_000_000),
   })
   .partial()
@@ -316,17 +325,28 @@ postsRouter.post(
     const parsed = reactSchema.safeParse(req.body)
     if (!parsed.success) throw new ApiError(400, 'Unsupported reaction')
     await ensurePostExists(req.params.id)
-    const prev = await query(
-      `SELECT 1 FROM post_reactions WHERE post_id = $1 AND user_id = $2`,
-      [req.params.id, req.user!.sub],
-    )
-    await query(
-      `INSERT INTO post_reactions (post_id, user_id, emoji) VALUES ($1, $2, $3)
-       ON CONFLICT (post_id, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, created_at = now()`,
-      [req.params.id, req.user!.sub, parsed.data.emoji],
-    )
+    // A reaction is one unit of "like" engagement. We keep the denormalised
+    // posts.likes counter in sync (a first-time reaction increments it; changing
+    // emoji doesn't) so the Home "Top" sort, the leaderboard, and the weekly
+    // digest — all of which read posts.likes — stay live now that the Like
+    // button is a reaction. (post_reactions holds the per-emoji detail.)
+    const isNew = await withTransaction(async (client) => {
+      const prev = await client.query(
+        `SELECT 1 FROM post_reactions WHERE post_id = $1 AND user_id = $2`,
+        [req.params.id, req.user!.sub],
+      )
+      await client.query(
+        `INSERT INTO post_reactions (post_id, user_id, emoji) VALUES ($1, $2, $3)
+         ON CONFLICT (post_id, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, created_at = now()`,
+        [req.params.id, req.user!.sub, parsed.data.emoji],
+      )
+      if (!prev.rowCount) {
+        await client.query(`UPDATE posts SET likes = likes + 1 WHERE id = $1`, [req.params.id])
+      }
+      return !prev.rowCount
+    })
     // Notify the author only on a first-time reaction (not emoji swaps, not self).
-    if (!prev.rowCount) {
+    if (isNew) {
       const meta = await query<{ author_id: string; name: string }>(
         `SELECT p.author_id, u.name FROM posts p JOIN users u ON u.id = $2 WHERE p.id = $1`,
         [req.params.id, req.user!.sub],
@@ -346,7 +366,15 @@ postsRouter.delete(
   requireAuth,
   asyncHandler(async (req, res) => {
     await ensurePostExists(req.params.id)
-    await query(`DELETE FROM post_reactions WHERE post_id = $1 AND user_id = $2`, [req.params.id, req.user!.sub])
+    await withTransaction(async (client) => {
+      const del = await client.query(`DELETE FROM post_reactions WHERE post_id = $1 AND user_id = $2`, [
+        req.params.id,
+        req.user!.sub,
+      ])
+      if (del.rowCount) {
+        await client.query(`UPDATE posts SET likes = GREATEST(likes - 1, 0) WHERE id = $1`, [req.params.id])
+      }
+    })
     res.json(await reactionSummary(req.params.id, req.user!.sub))
   }),
 )

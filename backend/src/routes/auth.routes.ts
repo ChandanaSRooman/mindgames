@@ -114,10 +114,12 @@ authRouter.post(
         `If you didn't request this, you can safely ignore this email.\n\n— The Rooman Team`,
     ).catch((err) => console.error('signup verification email failed:', err instanceof Error ? err.message : err))
 
-    // Expose the code to the client outside production, or when SMTP isn't
-    // configured, so registration works without a working mailbox (dev/demo).
-    // In production with SMTP set up, the code only ever goes to the inbox.
-    const exposeCode = !emailEnabled || config.nodeEnv !== 'production'
+    // Only surface the code in the response when there's no other way to get it:
+    // a non-production environment with SMTP unconfigured (dev/demo). Matches the
+    // devResetLink / devVerifyLink guard. Using AND (not OR) is deliberate — a
+    // staging box with real SMTP must NOT echo codes, or anyone who sees the
+    // response could verify an address they don't own.
+    const exposeCode = !emailEnabled && config.nodeEnv !== 'production'
     res.json({ ok: true, email: maskEmail(email), simulated: !emailEnabled, ...(exposeCode ? { devCode: code } : {}) })
   }),
 )

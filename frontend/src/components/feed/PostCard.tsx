@@ -20,7 +20,7 @@ import { useApp } from '../../store/AppStore'
 import { Avatar, Card, PostTypeBadge, VerifiedBadge } from '../ui'
 import { ReportModal } from '../ReportModal'
 import { Markdown } from '../../lib/markdown'
-import { roleLine, timeAgo } from '../../lib/format'
+import { roleLine, safeUrl, timeAgo } from '../../lib/format'
 import { REACTIONS, type Post } from '../../types'
 
 export function PostCard({ post }: { post: Post }) {
@@ -334,6 +334,7 @@ function NewsMeta({ post }: { post: Post }) {
   }
 
   if (post.type === 'Project') {
+    const demo = safeUrl(m.demoLink)
     return (
       <div className="mb-3 rounded-xl border-l-4 border-indigo-400 bg-indigo-50/60 px-3.5 py-2.5">
         <div className="flex flex-wrap items-center gap-2">
@@ -356,9 +357,9 @@ function NewsMeta({ post }: { post: Post }) {
             ))}
           </div>
         ) : null}
-        {m.demoLink && (
+        {demo && (
           <a
-            href={m.demoLink}
+            href={demo}
             target="_blank"
             rel="noopener noreferrer"
             className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-[#ff4500] hover:underline"
@@ -371,6 +372,7 @@ function NewsMeta({ post }: { post: Post }) {
   }
 
   if (post.type === 'Meetup') {
+    const rsvp = safeUrl(m.rsvpLink)
     return (
       <div className="mb-3 rounded-xl border-l-4 border-rose-400 bg-rose-50/60 px-3.5 py-2.5">
         <p className="flex items-center gap-2 text-[15px] font-bold text-[#1c1c1c]">
@@ -382,9 +384,9 @@ function NewsMeta({ post }: { post: Post }) {
           {m.location && <span className="inline-flex items-center gap-1"><MapPin size={13} /> {m.location}</span>}
           {m.capacity ? <span className="inline-flex items-center gap-1"><Users size={13} /> {m.capacity} spots</span> : null}
         </p>
-        {m.rsvpLink && (
+        {rsvp && (
           <a
-            href={m.rsvpLink}
+            href={rsvp}
             target="_blank"
             rel="noopener noreferrer"
             className="mt-2 inline-flex items-center gap-1 rounded-lg bg-rose-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-rose-600"
