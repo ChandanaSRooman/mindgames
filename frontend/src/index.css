@@ -199,6 +199,11 @@ body {
   animation-play-state: paused;
 }
 
+/* Navigation buttons for carousels — smooth transitions between manual and auto modes */
+.carousel-controls {
+  @apply sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-300;
+}
+
 .animate-marquee {
   animation: marquee 28s linear infinite;
 }

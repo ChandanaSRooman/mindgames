@@ -7,6 +7,8 @@ import {
   Briefcase,
   CalendarDays,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Compass,
   GraduationCap,
   Handshake,
@@ -908,28 +910,84 @@ function StoryCard({ t, shown, base }: { t: Testimonial; shown: string; base: nu
 function Testimonials() {
   const { ref, inView } = useInView<HTMLDivElement>(0.12)
   const shown = inView ? 'is-visible' : ''
+  const trackRef = useRef<HTMLDivElement>(null)
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const [isManualMode, setIsManualMode] = useState(false)
+  const [translateX, setTranslateX] = useState(0)
+
+  const cardPx = 360
+  const gapPx = 24
+  const cardWithGap = cardPx + gapPx
+  const trackWidth = TESTIMONIALS.length * cardWithGap - gapPx
+
+  const resumeAutoScroll = () => {
+    setIsManualMode(false)
+    setTranslateX(0)
+  }
+
+  const scheduleAutoResume = () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    timeoutRef.current = setTimeout(resumeAutoScroll, 3000)
+  }
+
+  const handlePrev = () => {
+    setIsManualMode(true)
+    setTranslateX((prev) => Math.min(prev + cardWithGap, 0))
+    scheduleAutoResume()
+  }
+
+  const handleNext = () => {
+    setIsManualMode(true)
+    setTranslateX((prev) => Math.max(prev - cardWithGap, -trackWidth))
+    scheduleAutoResume()
+  }
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    }
+  }, [])
+
+  const animationClass = isManualMode ? '' : 'animate-row-left'
 
   return (
-    <div
-      ref={ref}
-      className="marquee-row mt-12 overflow-hidden py-2 [mask-image:linear-gradient(to_right,transparent,black_6%,black_94%,transparent)]"
-    >
-      <div
-        className="animate-row-left flex w-max items-stretch gap-6"
-        style={{ animationDuration: `${marqueeSeconds(TESTIMONIALS.length, 360)}s` }}
-      >
-        {TESTIMONIALS.map((t, i) => (
-          <StoryCard key={t.name} t={t} shown={shown} base={i * 110} />
-        ))}
-        {/* Duplicate half, so translateX(-50%) lands on a seam. aria-hidden and
-            data-clone so screen readers and reduced-motion users see each story
-            once — see .marquee-row in index.css. */}
-        {TESTIMONIALS.map((t, i) => (
-          <div key={`clone-${t.name}`} data-clone="true" aria-hidden className="flex">
-            <StoryCard t={t} shown={shown} base={i * 110} />
-          </div>
-        ))}
+    <div ref={ref} className="relative group mt-12">
+      <div className="marquee-row overflow-hidden py-2 [mask-image:linear-gradient(to_right,transparent,black_6%,black_94%,transparent)]">
+        <div
+          ref={trackRef}
+          className={`flex w-max items-stretch gap-6 transition-transform duration-500 ease-out ${animationClass}`}
+          style={{ animationDuration: `${marqueeSeconds(TESTIMONIALS.length, 360)}s`, transform: isManualMode ? `translateX(${translateX}px)` : undefined }}
+        >
+          {TESTIMONIALS.map((t, i) => (
+            <StoryCard key={t.name} t={t} shown={shown} base={i * 110} />
+          ))}
+          {/* Duplicate half, so translateX(-50%) lands on a seam. aria-hidden and
+              data-clone so screen readers and reduced-motion users see each story
+              once — see .marquee-row in index.css. */}
+          {TESTIMONIALS.map((t, i) => (
+            <div key={`clone-${t.name}`} data-clone="true" aria-hidden className="flex">
+              <StoryCard t={t} shown={shown} base={i * 110} />
+            </div>
+          ))}
+        </div>
       </div>
+
+      {/* Navigation buttons */}
+      <button
+        onClick={handlePrev}
+        aria-label="Previous stories"
+        className="absolute left-1 top-1/2 -translate-y-1/2 z-10 flex opacity-80 sm:opacity-70 sm:group-hover:opacity-100 items-center justify-center w-10 h-10 rounded-full bg-white/35 backdrop-blur-sm border border-white/50 text-white hover:opacity-100 hover:bg-white/50 hover:shadow-lg transition-all active:scale-95 shadow-md"
+      >
+        <ChevronLeft size={20} />
+      </button>
+
+      <button
+        onClick={handleNext}
+        aria-label="Next stories"
+        className="absolute right-1 top-1/2 -translate-y-1/2 z-10 flex opacity-80 sm:opacity-70 sm:group-hover:opacity-100 items-center justify-center w-10 h-10 rounded-full bg-white/35 backdrop-blur-sm border border-white/50 text-white hover:opacity-100 hover:bg-white/50 hover:shadow-lg transition-all active:scale-95 shadow-md"
+      >
+        <ChevronRight size={20} />
+      </button>
     </div>
   )
 }
@@ -990,23 +1048,88 @@ function FeatureCard({ f }: { f: Feature }) {
  * each feature once. Pauses on hover/focus (see .marquee-row in index.css).
  */
 function FeatureRow({ items, direction }: { items: Feature[]; direction: 'left' | 'right' }) {
+  const trackRef = useRef<HTMLDivElement>(null)
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const [isManualMode, setIsManualMode] = useState(false)
+  const [translateX, setTranslateX] = useState(0)
+
+  const cardPx = 330
+  const gapPx = 24
+  const cardWithGap = cardPx + gapPx
+  const trackWidth = items.length * cardWithGap - gapPx
+
+  const resumeAutoScroll = () => {
+    setIsManualMode(false)
+    setTranslateX(0)
+  }
+
+  const scheduleAutoResume = () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    timeoutRef.current = setTimeout(resumeAutoScroll, 3000)
+  }
+
+  const handlePrev = () => {
+    setIsManualMode(true)
+    setTranslateX((prev) => Math.min(prev + cardWithGap, 0))
+    scheduleAutoResume()
+  }
+
+  const handleNext = () => {
+    setIsManualMode(true)
+    setTranslateX((prev) => Math.max(prev - cardWithGap, -trackWidth))
+    scheduleAutoResume()
+  }
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    }
+  }, [])
+
+  const animationClass = isManualMode
+    ? ''
+    : direction === 'right'
+      ? 'animate-row-right'
+      : 'animate-row-left'
+
   return (
-    <div className="marquee-row overflow-hidden py-5 [mask-image:linear-gradient(to_right,transparent,black_6%,black_94%,transparent)]">
-      <div
-        className={`flex w-max items-stretch gap-6 ${
-          direction === 'right' ? 'animate-row-right' : 'animate-row-left'
-        }`}
-        style={{ animationDuration: `${marqueeSeconds(items.length, 330)}s` }}
-      >
-        {items.map((f) => (
-          <FeatureCard key={f.title} f={f} />
-        ))}
-        {items.map((f) => (
-          <div key={`clone-${f.title}`} data-clone="true" aria-hidden className="flex">
-            <FeatureCard f={f} />
-          </div>
-        ))}
+    <div className="relative group">
+      <div className="marquee-row overflow-hidden py-5 [mask-image:linear-gradient(to_right,transparent,black_6%,black_94%,transparent)]">
+        <div
+          ref={trackRef}
+          className={`flex w-max items-stretch gap-6 transition-transform duration-500 ease-out ${animationClass}`}
+          style={{
+            animationDuration: `${marqueeSeconds(items.length, 330)}s`,
+            transform: isManualMode ? `translateX(${translateX}px)` : undefined,
+          }}
+        >
+          {items.map((f) => (
+            <FeatureCard key={f.title} f={f} />
+          ))}
+          {items.map((f) => (
+            <div key={`clone-${f.title}`} data-clone="true" aria-hidden className="flex">
+              <FeatureCard f={f} />
+            </div>
+          ))}
+        </div>
       </div>
+
+      {/* Navigation buttons */}
+      <button
+        onClick={handlePrev}
+        aria-label="Previous features"
+        className="absolute left-1 top-1/2 -translate-y-1/2 z-10 flex opacity-80 sm:opacity-70 sm:group-hover:opacity-100 items-center justify-center w-10 h-10 rounded-full bg-white/90 backdrop-blur-sm border border-[#d6d7d8] text-[#1c1c1c] hover:opacity-100 hover:bg-white hover:shadow-lg transition-all active:scale-95 shadow-md"
+      >
+        <ChevronLeft size={20} />
+      </button>
+
+      <button
+        onClick={handleNext}
+        aria-label="Next features"
+        className="absolute right-1 top-1/2 -translate-y-1/2 z-10 flex opacity-80 sm:opacity-70 sm:group-hover:opacity-100 items-center justify-center w-10 h-10 rounded-full bg-white/90 backdrop-blur-sm border border-[#d6d7d8] text-[#1c1c1c] hover:opacity-100 hover:bg-white hover:shadow-lg transition-all active:scale-95 shadow-md"
+      >
+        <ChevronRight size={20} />
+      </button>
     </div>
   )
 }
