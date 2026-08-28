@@ -911,7 +911,7 @@ function Testimonials() {
   const { ref, inView } = useInView<HTMLDivElement>(0.12)
   const shown = inView ? 'is-visible' : ''
   const trackRef = useRef<HTMLDivElement>(null)
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isManualMode, setIsManualMode] = useState(false)
   const [translateX, setTranslateX] = useState(0)
 
@@ -1049,7 +1049,7 @@ function FeatureCard({ f }: { f: Feature }) {
  */
 function FeatureRow({ items, direction }: { items: Feature[]; direction: 'left' | 'right' }) {
   const trackRef = useRef<HTMLDivElement>(null)
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isManualMode, setIsManualMode] = useState(false)
   const [translateX, setTranslateX] = useState(0)
 
