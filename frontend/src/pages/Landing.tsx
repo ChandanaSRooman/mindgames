@@ -797,6 +797,68 @@ function marqueeSeconds(count: number, cardPx: number) {
   return Math.round(trackPx / MARQUEE_PX_PER_SEC)
 }
 
+/** Manual carousel navigation with auto-resume after inactivity. */
+function useManualCarousel(itemCount: number, cardPxSmAndUp: number, cardPxMobile: number) {
+  const trackRef = useRef<HTMLDivElement>(null)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [isManualMode, setIsManualMode] = useState(false)
+  const [translateX, setTranslateX] = useState(0)
+  const [cardWidth, setCardWidth] = useState(cardPxSmAndUp)
+
+  // Detect screen size and update card width accordingly
+  useEffect(() => {
+    const updateCardWidth = () => {
+      const isSmOrAbove = window.matchMedia('(min-width: 640px)').matches
+      setCardWidth(isSmOrAbove ? cardPxSmAndUp : cardPxMobile)
+    }
+    updateCardWidth()
+    window.addEventListener('resize', updateCardWidth)
+    return () => window.removeEventListener('resize', updateCardWidth)
+  }, [cardPxSmAndUp, cardPxMobile])
+
+  const cardWithGap = cardWidth + CARD_GAP_PX
+  const trackWidth = itemCount * cardWithGap - CARD_GAP_PX
+
+  const resumeAutoScroll = () => {
+    // Smoothly transition back to the beginning, then re-enable auto-scroll
+    setTranslateX(0)
+    // Delay disabling manual mode so the transition completes first
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    timeoutRef.current = setTimeout(() => setIsManualMode(false), 500)
+  }
+
+  const scheduleAutoResume = () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    timeoutRef.current = setTimeout(resumeAutoScroll, 3000)
+  }
+
+  const handlePrev = () => {
+    setIsManualMode(true)
+    setTranslateX((prev) => Math.min(prev + cardWithGap, 0))
+    scheduleAutoResume()
+  }
+
+  const handleNext = () => {
+    setIsManualMode(true)
+    setTranslateX((prev) => Math.max(prev - cardWithGap, -trackWidth))
+    scheduleAutoResume()
+  }
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    }
+  }, [])
+
+  return {
+    trackRef,
+    isManualMode,
+    translateX,
+    handlePrev,
+    handleNext,
+  }
+}
+
 const BADGE_MS = 420
 const LINE_MS = 460
 /** One badge plus the line that leaves it — the length of a single stage. */
@@ -910,43 +972,11 @@ function StoryCard({ t, shown, base }: { t: Testimonial; shown: string; base: nu
 function Testimonials() {
   const { ref, inView } = useInView<HTMLDivElement>(0.12)
   const shown = inView ? 'is-visible' : ''
-  const trackRef = useRef<HTMLDivElement>(null)
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [isManualMode, setIsManualMode] = useState(false)
-  const [translateX, setTranslateX] = useState(0)
-
-  const cardPx = 360
-  const gapPx = 24
-  const cardWithGap = cardPx + gapPx
-  const trackWidth = TESTIMONIALS.length * cardWithGap - gapPx
-
-  const resumeAutoScroll = () => {
-    setIsManualMode(false)
-    setTranslateX(0)
-  }
-
-  const scheduleAutoResume = () => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current)
-    timeoutRef.current = setTimeout(resumeAutoScroll, 3000)
-  }
-
-  const handlePrev = () => {
-    setIsManualMode(true)
-    setTranslateX((prev) => Math.min(prev + cardWithGap, 0))
-    scheduleAutoResume()
-  }
-
-  const handleNext = () => {
-    setIsManualMode(true)
-    setTranslateX((prev) => Math.max(prev - cardWithGap, -trackWidth))
-    scheduleAutoResume()
-  }
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current)
-    }
-  }, [])
+  const { trackRef, isManualMode, translateX, handlePrev, handleNext } = useManualCarousel(
+    TESTIMONIALS.length,
+    360, // sm and up
+    300, // mobile
+  )
 
   const animationClass = isManualMode ? '' : 'animate-row-left'
 
@@ -956,7 +986,10 @@ function Testimonials() {
         <div
           ref={trackRef}
           className={`flex w-max items-stretch gap-6 transition-transform duration-500 ease-out ${animationClass}`}
-          style={{ animationDuration: `${marqueeSeconds(TESTIMONIALS.length, 360)}s`, transform: isManualMode ? `translateX(${translateX}px)` : undefined }}
+          style={{
+            animationDuration: `${marqueeSeconds(TESTIMONIALS.length, 360)}s`,
+            transform: isManualMode ? `translateX(${translateX}px)` : undefined,
+          }}
         >
           {TESTIMONIALS.map((t, i) => (
             <StoryCard key={t.name} t={t} shown={shown} base={i * 110} />
@@ -1048,43 +1081,11 @@ function FeatureCard({ f }: { f: Feature }) {
  * each feature once. Pauses on hover/focus (see .marquee-row in index.css).
  */
 function FeatureRow({ items, direction }: { items: Feature[]; direction: 'left' | 'right' }) {
-  const trackRef = useRef<HTMLDivElement>(null)
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [isManualMode, setIsManualMode] = useState(false)
-  const [translateX, setTranslateX] = useState(0)
-
-  const cardPx = 330
-  const gapPx = 24
-  const cardWithGap = cardPx + gapPx
-  const trackWidth = items.length * cardWithGap - gapPx
-
-  const resumeAutoScroll = () => {
-    setIsManualMode(false)
-    setTranslateX(0)
-  }
-
-  const scheduleAutoResume = () => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current)
-    timeoutRef.current = setTimeout(resumeAutoScroll, 3000)
-  }
-
-  const handlePrev = () => {
-    setIsManualMode(true)
-    setTranslateX((prev) => Math.min(prev + cardWithGap, 0))
-    scheduleAutoResume()
-  }
-
-  const handleNext = () => {
-    setIsManualMode(true)
-    setTranslateX((prev) => Math.max(prev - cardWithGap, -trackWidth))
-    scheduleAutoResume()
-  }
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current)
-    }
-  }, [])
+  const { trackRef, isManualMode, translateX, handlePrev, handleNext } = useManualCarousel(
+    items.length,
+    330, // sm and up
+    272, // mobile
+  )
 
   const animationClass = isManualMode
     ? ''
