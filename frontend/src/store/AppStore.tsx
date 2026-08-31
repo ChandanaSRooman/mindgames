@@ -172,7 +172,12 @@ interface AppContextValue {
   // messages
   threads: MessageThread[]
   unreadMessages: number
-  sendMessage: (threadId: string, text: string) => void
+  sendMessage: (
+    threadId: string,
+    text: string,
+    attachment?: { name: string; dataBase64: string; mediaType: string },
+  ) => void
+  editMessage: (threadId: string, messageId: string, text: string) => void
   markThreadRead: (threadId: string) => void
   messageUser: (userId: string) => Promise<string>
   refreshThreads: () => Promise<void>
@@ -991,16 +996,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const sendMessage = useCallback(
-    (threadId: string, text: string) => {
-      if (!text.trim()) return
+    (
+      threadId: string,
+      text: string,
+      attachment?: { name: string; dataBase64: string; mediaType: string },
+    ) => {
+      if (!text.trim() && !attachment) return
       sendsInFlight.current++
-      api.sendMessage(threadId, text.trim())
+      api.sendMessage(threadId, text.trim(), attachment)
         .then(
           (msg) =>
             setThreads((list) =>
               list.map((t) =>
                 t.id === threadId
-                  ? { ...t, unread: 0, lastMessage: msg.text, messages: [...t.messages, msg] }
+                  ? {
+                      ...t,
+                      unread: 0,
+                      lastMessage: msg.text || (msg.attachment ? `📎 ${msg.attachment.name}` : ''),
+                      messages: [...t.messages, msg],
+                    }
                   : t,
               ),
             ),
@@ -1009,6 +1023,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .finally(() => {
           sendsInFlight.current--
         })
+    },
+    [notify],
+  )
+
+  const editMessage = useCallback(
+    (threadId: string, messageId: string, text: string) => {
+      if (!text.trim()) return
+      api.editMessage(threadId, messageId, text.trim())
+        .then((msg) =>
+          setThreads((list) =>
+            list.map((t) => {
+              if (t.id !== threadId) return t
+              const messages = t.messages.map((m) => (m.id === messageId ? msg : m))
+              const last = messages[messages.length - 1]
+              return {
+                ...t,
+                messages,
+                lastMessage: last
+                  ? last.text || (last.attachment ? `📎 ${last.attachment.name}` : '')
+                  : t.lastMessage,
+              }
+            }),
+          ),
+        )
+        .catch((err) => notify(err instanceof Error ? err.message : 'Could not edit message.', 'error'))
     },
     [notify],
   )
@@ -1088,6 +1127,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     threads,
     unreadMessages,
     sendMessage,
+    editMessage,
     markThreadRead,
     messageUser,
     refreshThreads,

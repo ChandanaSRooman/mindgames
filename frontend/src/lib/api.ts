@@ -5,6 +5,8 @@ import type {
   Badge,
   Comment,
   Community,
+  Company,
+  CompanyDetail,
   ContactRow,
   EventAttendee,
   EventFeedbackEntry,
@@ -237,13 +239,34 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ userId }),
     }),
-  sendMessage: (conversationId: string, text: string) =>
+  sendMessage: (
+    conversationId: string,
+    text: string,
+    attachment?: { name: string; dataBase64: string; mediaType: string },
+  ) =>
     http<ChatMessage>(`/api/messages/${conversationId}`, {
       method: 'POST',
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text: text || undefined, attachment }),
     }),
   markThreadRead: (conversationId: string) =>
     http<{ ok: boolean }>(`/api/messages/${conversationId}/read`, { method: 'POST' }),
+  editMessage: (conversationId: string, messageId: string, text: string) =>
+    http<ChatMessage>(`/api/messages/${conversationId}/${messageId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ text }),
+    }),
+  // Binary download — bypasses the JSON helper; caller turns the blob into a file.
+  downloadAttachment: async (messageId: string): Promise<Blob> => {
+    const token = getToken()
+    const res = await fetch(`/api/messages/attachments/${messageId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.error || `Download failed (${res.status})`)
+    }
+    return res.blob()
+  },
 
   // communities
   getCommunities: () => http<Community[]>('/api/communities'),
@@ -258,6 +281,14 @@ export const api = {
     http<{ ok: boolean }>(`/api/communities/${id}/approve`, { method: 'POST' }),
   rejectCommunity: (id: string) =>
     http<{ ok: boolean }>(`/api/communities/${id}/reject`, { method: 'POST' }),
+
+  // companies
+  getCompanies: () => http<Company[]>('/api/companies'),
+  getCompany: (id: string) => http<CompanyDetail>(`/api/companies/${id}`),
+  saveCompany: (id: string) =>
+    http<{ saved: boolean }>(`/api/companies/${id}/save`, { method: 'POST' }),
+  unsaveCompany: (id: string) =>
+    http<{ saved: boolean }>(`/api/companies/${id}/save`, { method: 'DELETE' }),
 
   // mentorship
   getSessions: () => http<MentorshipSession[]>('/api/mentorship/sessions'),

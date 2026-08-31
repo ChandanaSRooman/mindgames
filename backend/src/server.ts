@@ -21,6 +21,7 @@ import { startDigestScheduler } from './digest.js'
 import { sseHandler } from './realtime.js'
 import { aiRouter } from './routes/ai.routes.js'
 import { reportsRouter } from './routes/reports.routes.js'
+import { companiesRouter } from './routes/companies.routes.js'
 
 const app = express()
 app.use(cors())
@@ -55,6 +56,7 @@ app.use('/api/events', eventsRouter)
 app.get('/api/stream', sseHandler)
 app.use('/api/ai', aiRouter)
 app.use('/api/reports', reportsRouter)
+app.use('/api/companies', companiesRouter)
 
 // --- Terminal error handler -------------------------------------------------
 app.use(errorHandler)

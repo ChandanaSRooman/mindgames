@@ -161,6 +161,57 @@ export function mapPost(r: PostRow) {
   }
 }
 
+export interface CompanyRow {
+  id: string
+  name: string
+  domain: string | null
+  industry: string
+  alumni_count: number
+  preview_alumni: { id: string; name: string; photo: string | null }[] | null
+  saved_by_me?: boolean
+}
+
+// logo.clearbit.com is a free, keyless logo-by-domain service — no API key
+// or upload flow needed. Frontend falls back to an initials badge on 404.
+export function mapCompany(r: CompanyRow) {
+  return {
+    id: r.id,
+    name: r.name,
+    domain: r.domain ?? undefined,
+    logoUrl: r.domain ? `https://logo.clearbit.com/${r.domain}` : undefined,
+    industry: r.industry,
+    alumniCount: r.alumni_count,
+    previewAlumni: (r.preview_alumni ?? []).map((a) => ({
+      id: a.id,
+      name: a.name,
+      photo: a.photo ?? undefined,
+    })),
+    savedByMe: r.saved_by_me ?? false,
+  }
+}
+
+export interface CompanyAlumnusRow {
+  id: string
+  name: string
+  photo: string | null
+  role: string
+  location: string
+  journey: string
+  mutual_connections: number
+}
+
+export function mapCompanyAlumnus(r: CompanyAlumnusRow) {
+  return {
+    id: r.id,
+    name: r.name,
+    photo: r.photo ?? undefined,
+    role: r.role,
+    location: r.location,
+    journey: r.journey,
+    mutualConnections: r.mutual_connections,
+  }
+}
+
 export interface InviteeRow {
   id: string
   name: string

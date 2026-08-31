@@ -23,6 +23,8 @@ import { NetworkRequests } from './pages/network/NetworkRequests'
 import { NetworkMentors } from './pages/network/NetworkMentors'
 import { NetworkMyNetwork } from './pages/network/NetworkMyNetwork'
 import { Jobs } from './pages/Jobs'
+import { Companies } from './pages/Companies'
+import { CompanyPage } from './pages/CompanyPage'
 import { Mentorship } from './pages/Mentorship'
 import { StartupVarsity } from './pages/StartupVarsity'
 import { News } from './pages/News'
@@ -114,6 +116,8 @@ export default function App() {
               <Route path="host" element={<EventsHost />} />
             </Route>
             <Route path="/jobs" element={<Jobs />} />
+            <Route path="/companies" element={<Companies />} />
+            <Route path="/companies/:id" element={<CompanyPage />} />
             <Route path="/mentorship" element={<Mentorship />} />
             <Route path="/startupvarsity" element={<StartupVarsity />} />
             <Route path="/news" element={<News />} />

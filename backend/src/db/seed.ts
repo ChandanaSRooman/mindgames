@@ -195,6 +195,18 @@ export async function seed(opts: { force?: boolean } = {}): Promise<void> {
         [n.id, n.user_id, n.type, n.text, n.actor_id ?? null, n.read, n.created_at],
       )
     }
+
+    // Re-backfill companies for the freshly-truncated/reinserted users — the
+    // schema.sql backfill (run by migrate() above) only saw the *previous*
+    // set of users, before this transaction replaced them.
+    await client.query(
+      `INSERT INTO companies (name, industry)
+         SELECT DISTINCT TRIM(u.company), 'Other'
+         FROM users u
+         WHERE TRIM(u.company) <> ''
+           AND NOT EXISTS (SELECT 1 FROM companies c WHERE LOWER(c.name) = LOWER(TRIM(u.company)))
+       ON CONFLICT (LOWER(name)) DO NOTHING`,
+    )
   })
 }
 

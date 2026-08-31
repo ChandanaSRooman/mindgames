@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { BadgeCheck, Loader2 } from 'lucide-react'
 import { avatarGradient, initials } from '../../lib/format'
@@ -44,6 +44,72 @@ export function Avatar({
   )
   if (to) return <Link to={to}>{inner}</Link>
   return inner
+}
+
+// ---- Overlapping avatar stack (e.g. "N alumni work here", +N overflow) -----
+export function AvatarStack({
+  people,
+  total,
+  size = 28,
+  max = 4,
+}: {
+  people: { id: string; name: string; photo?: string }[]
+  /** Real total, when it may exceed people.length (drives the "+N" badge). */
+  total?: number
+  size?: number
+  max?: number
+}) {
+  const shown = people.slice(0, max)
+  const extra = Math.max((total ?? people.length) - shown.length, 0)
+  return (
+    <div className="flex -space-x-2">
+      {shown.map((p) => (
+        <span key={p.id} className="rounded-full ring-2 ring-white">
+          <Avatar name={p.name} src={p.photo} size={size} />
+        </span>
+      ))}
+      {extra > 0 && (
+        <span
+          className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#f6f7f8] font-semibold text-[#878a8c] ring-2 ring-white select-none"
+          style={{ width: size, height: size, fontSize: size * 0.35 }}
+        >
+          +{extra}
+        </span>
+      )}
+    </div>
+  )
+}
+
+// ---- Company logo (falls back to an initials badge, like <Avatar>) --------
+export function CompanyLogo({
+  name,
+  logoUrl,
+  size = 48,
+}: {
+  name: string
+  logoUrl?: string
+  size?: number
+}) {
+  const [broken, setBroken] = useState(false)
+  if (logoUrl && !broken) {
+    return (
+      <img
+        src={logoUrl}
+        alt={name}
+        onError={() => setBroken(true)}
+        className="rounded-xl bg-white object-contain ring-1 ring-[#edeff1]"
+        style={{ width: size, height: size, padding: size * 0.12 }}
+      />
+    )
+  }
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${avatarGradient(name)} font-bold text-white select-none`}
+      style={{ width: size, height: size, fontSize: size * 0.38 }}
+    >
+      {initials(name)}
+    </span>
+  )
 }
 
 // ---- Verified badge --------------------------------------------------------

@@ -15,7 +15,6 @@ import {
   Search,
   Trash2,
   UserPlus,
-  X,
 } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { useLayout } from '../components/layout/LayoutContext'
@@ -24,17 +23,18 @@ import { PostCard } from '../components/feed/PostCard'
 import { EditProfileModal } from '../components/profile/EditProfileModal'
 import { ProfilePhoto } from '../components/profile/ProfilePhoto'
 import { ReportModal } from '../components/ReportModal'
+import { ConnectNoteModal } from '../components/referral/ConnectNoteModal'
+import { ReachOutModal } from '../components/referral/ReachOutModal'
 import { compact, roleLine } from '../lib/format'
 import { api } from '../lib/api'
 import { PROFILE_TAGS, type Badge, type ProfileTag, type User } from '../types'
 
 export function Profile() {
   const { id } = useParams<{ id: string }>()
-  const { currentUser, userById, posts, connectionState, sendConnect, updateProfile, notify, messageUser, sendMessage } = useApp()
+  const { currentUser, userById, posts, connectionState, updateProfile, notify } = useApp()
   const [showReferral, setShowReferral] = useState(false)
   const [reportingUser, setReportingUser] = useState(false)
   const [showNoteModal, setShowNoteModal] = useState(false)
-  const [connectionNote, setConnectionNote] = useState('')
   const navigate = useNavigate()
   const { openComposer, openChatWith } = useLayout()
   const [editing, setEditing] = useState(false)
@@ -101,10 +101,7 @@ export function Profile() {
                     icon={<UserPlus size={15} />}
                     variant={conn === 'none' ? 'primary' : 'subtle'}
                     disabled={conn !== 'none'}
-                    onClick={() => {
-                      setShowNoteModal(true)
-                      setConnectionNote('')
-                    }}
+                    onClick={() => setShowNoteModal(true)}
                   >
                     {conn === 'connected' ? 'Connected' : conn === 'pending' ? 'Request sent' : 'Send Note'}
                   </Button>
@@ -175,80 +172,8 @@ export function Profile() {
         />
       )}
       {editing && <EditProfileModal onClose={() => setEditing(false)} />}
-      {showReferral && (
-        <ReferralModal
-          user={user}
-          onClose={() => setShowReferral(false)}
-          onSend={async (role, note) => {
-            const text =
-              `Hi ${user.name.split(' ')[0]}, I'd love a referral at ${user.company}` +
-              (role ? ` for a ${role} role` : '') +
-              (note ? `.\n\n${note}` : '.') +
-              `\n\n(Sent via Request Referral on Root Connect)`
-            const threadId = await messageUser(user.id)
-            sendMessage(threadId, text)
-            setShowReferral(false)
-            notify(`Referral request sent to ${user.name} — check your chat for replies.`)
-            openChatWith(user.id)
-          }}
-        />
-      )}
-
-      {/* Connection note modal */}
-      {showNoteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-bold text-[#1c1c1c]">Add a note to your invitation</h2>
-              <button
-                onClick={() => setShowNoteModal(false)}
-                className="text-[#878a8c] hover:text-[#1c1c1c]"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <p className="mb-4 text-sm text-[#6b6e70]">
-              Write a personal note (minimum 25 words). Root Connect members are more likely to accept connection requests that include a thoughtful message.
-            </p>
-            <textarea
-              value={connectionNote}
-              onChange={(e) => setConnectionNote(e.target.value)}
-              placeholder={`Hi ${user.name.split(' ')[0]}, I'd love to connect with you because…`}
-              maxLength={500}
-              className="mb-2 w-full rounded-lg border border-[#edeff1] p-3 text-sm text-[#1c1c1c] placeholder-[#878a8c] focus:border-[#ff4500] focus:outline-none focus:ring-2 focus:ring-[#ff4500]/20"
-              rows={5}
-            />
-            <div className="mb-4 flex justify-between">
-              <span className={`text-xs font-medium ${connectionNote.split(/\s+/).filter(Boolean).length < 25 ? 'text-red-500' : 'text-green-600'}`}>
-                {connectionNote.split(/\s+/).filter(Boolean).length} / 25 words
-              </span>
-              <span className="text-xs text-[#878a8c]">{connectionNote.length}/500</span>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowNoteModal(false)}
-                className="flex-1 rounded-full border border-[#edeff1] px-4 py-2.5 font-medium text-[#1c1c1c] transition-colors hover:bg-[#f6f7f8]"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  const wordCount = connectionNote.split(/\s+/).filter(Boolean).length
-                  if (wordCount >= 25) {
-                    sendConnect(user.id, connectionNote.trim())
-                    setShowNoteModal(false)
-                    setConnectionNote('')
-                  }
-                }}
-                disabled={connectionNote.split(/\s+/).filter(Boolean).length < 25}
-                className="flex-1 rounded-full bg-[#ff4500] px-4 py-2.5 font-medium text-white transition-colors hover:bg-[#d13a00] disabled:bg-[#c2c2c2] disabled:cursor-not-allowed"
-              >
-                Send
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {showReferral && <ReachOutModal user={user} onClose={() => setShowReferral(false)} />}
+      {showNoteModal && <ConnectNoteModal user={user} onClose={() => setShowNoteModal(false)} />}
     </div>
   )
 }
@@ -417,69 +342,3 @@ function AchievementsCard({ userId, isMe }: { userId: string; isMe: boolean }) {
   )
 }
 
-// Ask a fellow alumnus for a referral at their company (delivered via chat).
-function ReferralModal({
-  user,
-  onClose,
-  onSend,
-}: {
-  user: User
-  onClose: () => void
-  onSend: (role: string, note: string) => Promise<void>
-}) {
-  const [role, setRole] = useState('')
-  const [note, setNote] = useState('')
-  const [sending, setSending] = useState(false)
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="animate-slidein w-full max-w-md rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-[#edeff1] px-5 py-4">
-          <div className="flex items-center gap-2">
-            <Handshake size={18} className="text-[#ff4500]" />
-            <h2 className="font-bold text-[#1c1c1c]">Request a referral</h2>
-          </div>
-          <button onClick={onClose} className="rounded-full p-1.5 text-[#878a8c] hover:bg-gray-100">
-            <X size={18} />
-          </button>
-        </div>
-        <div className="space-y-3 px-5 py-4">
-          <p className="text-sm text-[#878a8c]">
-            Ask <span className="font-semibold text-[#1c1c1c]">{user.name}</span> to refer you at{' '}
-            <span className="font-semibold text-[#1c1c1c]">{user.company}</span>. It lands in your
-            chat so you can continue the conversation there.
-          </p>
-          <input
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            placeholder="Role you're interested in (optional)"
-            className="w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
-          />
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            rows={3}
-            placeholder="A short note — your experience, why you're a fit… (optional)"
-            className="w-full resize-none rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
-          />
-        </div>
-        <div className="flex items-center justify-end gap-2 border-t border-[#edeff1] px-5 py-3">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button
-            disabled={sending}
-            onClick={async () => {
-              setSending(true)
-              try {
-                await onSend(role.trim(), note.trim())
-              } finally {
-                setSending(false)
-              }
-            }}
-          >
-            {sending ? 'Sending…' : 'Send request'}
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}
