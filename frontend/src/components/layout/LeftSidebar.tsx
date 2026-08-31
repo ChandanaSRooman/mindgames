@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   Briefcase,
+  Building2,
   Calendar,
   Compass,
   GraduationCap,
@@ -18,6 +19,7 @@ const NAV = [
   { to: '/network', label: 'My Network', icon: Users },
   { to: '/events', label: 'Events', icon: Calendar },
   { to: '/jobs', label: 'Jobs & Opportunities', icon: Briefcase },
+  { to: '/companies', label: 'Companies', icon: Building2 },
   { to: '/mentorship', label: 'Mentorship', icon: GraduationCap },
   { to: '/startupvarsity', label: 'StartupVarsity', icon: Rocket },
   { to: '/news', label: 'News & Updates', icon: Newspaper },
