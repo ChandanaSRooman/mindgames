@@ -40,8 +40,8 @@ connectionsRouter.get(
   asyncHandler(async (req, res) => {
     const me = req.user!.sub
     const rows = (
-      await query<ConnRow>(
-        `SELECT requester_id, addressee_id, status FROM connections
+      await query<ConnRow & { note?: string }>(
+        `SELECT requester_id, addressee_id, status, note FROM connections
          WHERE requester_id = $1 OR addressee_id = $1`,
         [me],
       )
@@ -50,11 +50,15 @@ connectionsRouter.get(
     const connectionIds = new Set<string>()
     const sentRequestIds = new Set<string>()
     const pendingRequestIds = new Set<string>()
+    const connectionNotes: Record<string, string> = {}
     for (const r of rows) {
       const other = r.requester_id === me ? r.addressee_id : r.requester_id
       if (r.status === 'accepted') connectionIds.add(other)
       else if (r.status === 'pending' && r.requester_id === me) sentRequestIds.add(other)
-      else if (r.status === 'pending' && r.addressee_id === me) pendingRequestIds.add(other)
+      else if (r.status === 'pending' && r.addressee_id === me) {
+        pendingRequestIds.add(other)
+        if (r.note) connectionNotes[other] = r.note
+      }
     }
     // A connected pair can also have a stale pending row in the other
     // direction — connected wins.
@@ -66,6 +70,7 @@ connectionsRouter.get(
       connectionIds: [...connectionIds],
       sentRequestIds: [...sentRequestIds],
       pendingRequestIds: [...pendingRequestIds],
+      connectionNotes,
     })
   }),
 )
@@ -79,6 +84,7 @@ connectionsRouter.post(
   asyncHandler(async (req, res) => {
     const me = req.user!.sub
     const other = req.params.id
+    const { note } = req.body as { note?: string }
     if (other === me) throw new ApiError(400, 'Cannot connect to yourself')
 
     const target = await query('SELECT 1 FROM users WHERE id = $1', [other])
@@ -103,11 +109,11 @@ connectionsRouter.post(
     }
 
     await query(
-      `INSERT INTO connections (requester_id, addressee_id, status)
-       VALUES ($1, $2, 'pending')
+      `INSERT INTO connections (requester_id, addressee_id, status, note)
+       VALUES ($1, $2, 'pending', $3)
        ON CONFLICT (requester_id, addressee_id)
-       DO UPDATE SET status = 'pending', updated_at = now()`,
-      [me, other],
+       DO UPDATE SET status = 'pending', note = $3, updated_at = now()`,
+      [me, other, note || null],
     )
     void pushNotification(other, 'connection', `${myName} sent you a connection request.`, me)
     res.status(201).json({ ok: true, state: 'pending' })

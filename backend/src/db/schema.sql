@@ -180,6 +180,9 @@ CREATE TABLE IF NOT EXISTS connections (
 
 CREATE INDEX IF NOT EXISTS idx_connections_addressee ON connections (addressee_id, status);
 
+-- Connection request note (personal message from requester to addressee).
+ALTER TABLE connections ADD COLUMN IF NOT EXISTS note TEXT;
+
 -- ---------------------------------------------------------------------------
 -- invitees: contacts the admin adds / uploads and invites. On acceptance they
 -- sign up and become a `users` row. (This is the old in-memory "Alumni" list.)

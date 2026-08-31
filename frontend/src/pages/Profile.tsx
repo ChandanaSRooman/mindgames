@@ -33,6 +33,8 @@ export function Profile() {
   const { currentUser, userById, posts, connectionState, sendConnect, updateProfile, notify, messageUser, sendMessage } = useApp()
   const [showReferral, setShowReferral] = useState(false)
   const [reportingUser, setReportingUser] = useState(false)
+  const [showNoteModal, setShowNoteModal] = useState(false)
+  const [connectionNote, setConnectionNote] = useState('')
   const navigate = useNavigate()
   const { openComposer, openChatWith } = useLayout()
   const [editing, setEditing] = useState(false)
@@ -99,9 +101,12 @@ export function Profile() {
                     icon={<UserPlus size={15} />}
                     variant={conn === 'none' ? 'primary' : 'subtle'}
                     disabled={conn !== 'none'}
-                    onClick={() => sendConnect(user.id)}
+                    onClick={() => {
+                      setShowNoteModal(true)
+                      setConnectionNote('')
+                    }}
                   >
-                    {conn === 'connected' ? 'Connected' : conn === 'pending' ? 'Request sent' : 'Connect'}
+                    {conn === 'connected' ? 'Connected' : conn === 'pending' ? 'Request sent' : 'Send Note'}
                   </Button>
                   <Button variant="outline" icon={<MessageSquare size={15} />} onClick={() => openChatWith(user.id)}>Message</Button>
                   {user.company && (
@@ -187,6 +192,62 @@ export function Profile() {
             openChatWith(user.id)
           }}
         />
+      )}
+
+      {/* Connection note modal */}
+      {showNoteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-[#1c1c1c]">Add a note to your invitation</h2>
+              <button
+                onClick={() => setShowNoteModal(false)}
+                className="text-[#878a8c] hover:text-[#1c1c1c]"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <p className="mb-4 text-sm text-[#6b6e70]">
+              Write a personal note (minimum 25 words). Root Connect members are more likely to accept connection requests that include a thoughtful message.
+            </p>
+            <textarea
+              value={connectionNote}
+              onChange={(e) => setConnectionNote(e.target.value)}
+              placeholder={`Hi ${user.name.split(' ')[0]}, I'd love to connect with you because…`}
+              maxLength={500}
+              className="mb-2 w-full rounded-lg border border-[#edeff1] p-3 text-sm text-[#1c1c1c] placeholder-[#878a8c] focus:border-[#ff4500] focus:outline-none focus:ring-2 focus:ring-[#ff4500]/20"
+              rows={5}
+            />
+            <div className="mb-4 flex justify-between">
+              <span className={`text-xs font-medium ${connectionNote.split(/\s+/).filter(Boolean).length < 25 ? 'text-red-500' : 'text-green-600'}`}>
+                {connectionNote.split(/\s+/).filter(Boolean).length} / 25 words
+              </span>
+              <span className="text-xs text-[#878a8c]">{connectionNote.length}/500</span>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowNoteModal(false)}
+                className="flex-1 rounded-full border border-[#edeff1] px-4 py-2.5 font-medium text-[#1c1c1c] transition-colors hover:bg-[#f6f7f8]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const wordCount = connectionNote.split(/\s+/).filter(Boolean).length
+                  if (wordCount >= 25) {
+                    sendConnect(user.id, connectionNote.trim())
+                    setShowNoteModal(false)
+                    setConnectionNote('')
+                  }
+                }}
+                disabled={connectionNote.split(/\s+/).filter(Boolean).length < 25}
+                className="flex-1 rounded-full bg-[#ff4500] px-4 py-2.5 font-medium text-white transition-colors hover:bg-[#d13a00] disabled:bg-[#c2c2c2] disabled:cursor-not-allowed"
+              >
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

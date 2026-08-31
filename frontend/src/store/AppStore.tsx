@@ -102,7 +102,8 @@ interface AppContextValue {
   suggestionIds: string[]
   pendingRequestIds: string[]
   sentRequestIds: string[]
-  sendConnect: (id: string) => void
+  connectionNotes: Record<string, string>
+  sendConnect: (id: string, note?: string) => void
   acceptRequest: (id: string) => void
   ignoreRequest: (id: string) => void
   cancelSentRequest: (id: string) => void
@@ -201,6 +202,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [connectionIds, setConnectionIds] = useState<string[]>([])
   const [sentRequestIds, setSentRequestIds] = useState<string[]>([])
   const [pendingRequestIds, setPendingRequestIds] = useState<string[]>([])
+  const [connectionNotes, setConnectionNotes] = useState<Record<string, string>>({})
   const [threads, setThreads] = useState<MessageThread[]>([])
   const [communities, setCommunities] = useState<Community[]>([])
   const [sessions, setSessions] = useState<MentorshipSession[]>([])
@@ -256,7 +258,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const me = meR.value
     const allUsers = usersR.status === 'fulfilled' ? usersR.value : []
-    const graph = graphR.status === 'fulfilled' ? graphR.value : { connectionIds: [], sentRequestIds: [], pendingRequestIds: [] }
+    const graph = graphR.status === 'fulfilled' ? graphR.value : { connectionIds: [], sentRequestIds: [], pendingRequestIds: [], connectionNotes: {} }
     setUsers(allUsers.some((u) => u.id === me.id) ? allUsers : [me, ...allUsers])
     setCurrentUserId(me.id)
     setPosts(feedR.status === 'fulfilled' ? feedR.value : [])
@@ -264,6 +266,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setConnectionIds(graph.connectionIds)
     setSentRequestIds(graph.sentRequestIds)
     setPendingRequestIds(graph.pendingRequestIds)
+    setConnectionNotes(graph.connectionNotes || {})
     setThreads(threadsR.status === 'fulfilled' ? threadsR.value : [])
     setCommunities(commsR.status === 'fulfilled' ? commsR.value : [])
     setSessions(sessR.status === 'fulfilled' ? sessR.value : [])
@@ -382,6 +385,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setConnectionIds(graph.connectionIds)
       setSentRequestIds(graph.sentRequestIds)
       setPendingRequestIds(graph.pendingRequestIds)
+      setConnectionNotes(graph.connectionNotes || {})
       setNotifications(notifs)
       setUsers((prev) => {
         const me = prev.find((u) => u.id === currentUserId)
@@ -461,10 +465,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const sendConnect = useCallback(
-    (id: string) => {
+    (id: string, note?: string) => {
       setSentRequestIds((s) => (s.includes(id) ? s : [...s, id]))
       const u = users.find((x) => x.id === id)
-      api.connect(id).then(
+      api.connect(id, note).then(
         (r) => {
           if (r.state === 'connected') {
             // The other side had already requested me — instantly connected.
@@ -1040,6 +1044,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     suggestionIds,
     pendingRequestIds,
     sentRequestIds,
+    connectionNotes,
     sendConnect,
     acceptRequest,
     ignoreRequest,
