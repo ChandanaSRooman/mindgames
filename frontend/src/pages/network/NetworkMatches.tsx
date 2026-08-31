@@ -75,11 +75,7 @@ export function NetworkMatches() {
               variant={connectionState(u.id) === 'pending' ? 'subtle' : 'outline'}
               className="mt-3 w-full"
               disabled={connectionState(u.id) === 'pending'}
-              onClick={() => {
-                console.log('Connect button clicked for', u.id)
-                setNoteModal({ userId: u.id, name: u.name })
-                setNote('')
-              }}
+              onClick={() => handleConnect(u.id)}
             >
               {connectionState(u.id) === 'pending' ? 'Request sent' : 'Connect'}
             </Button>
