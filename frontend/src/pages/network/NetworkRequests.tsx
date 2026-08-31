@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { Briefcase, Check, GraduationCap, X } from 'lucide-react'
+import { Briefcase, Check, GraduationCap, MessageCircle, Users, X } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { Avatar, Button, Card, SectionTitle } from '../../components/ui'
 import { roleLine } from '../../lib/format'
@@ -40,11 +41,15 @@ export function NetworkRequests() {
     acceptRequest,
     ignoreRequest,
     cancelSentRequest,
+    connectionNotes,
   } = useApp()
   const { openQuickView } = useOutletContext<NetworkOutletContext>()
+  const [selectedRequest, setSelectedRequest] = useState<string | null>(null)
   const get = (id: string) => users.find((u) => u.id === id)!
   const pending = pendingRequestIds.map(get).filter(Boolean)
   const sent = sentRequestIds.map(get).filter(Boolean)
+  const selectedUser = selectedRequest ? get(selectedRequest) : null
+  const selectedNote = selectedRequest ? connectionNotes[selectedRequest] : null
 
   return (
     <div className="flex flex-col gap-6">
@@ -68,6 +73,14 @@ export function NetworkRequests() {
                 </button>
                 {roleLine(u) && <p className="truncate text-xs text-[#878a8c]">{roleLine(u)}</p>}
                 <RequestTags requester={u} me={currentUser} posts={posts} />
+                {connectionNotes[u.id] && (
+                  <button
+                    onClick={() => setSelectedRequest(u.id)}
+                    className="mt-2 inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-100"
+                  >
+                    <MessageCircle size={12} /> Read note
+                  </button>
+                )}
               </div>
               <Button onClick={() => acceptRequest(u.id)} className="!px-3 !py-1.5 text-xs">
                 <Check size={15} /> Accept
@@ -114,6 +127,74 @@ export function NetworkRequests() {
           ))}
         </div>
       </section>
+
+      {/* Connection note modal */}
+      {selectedUser && selectedNote && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
+            {/* Close button */}
+            <button
+              onClick={() => setSelectedRequest(null)}
+              className="absolute right-4 top-4 text-[#878a8c] hover:text-[#1c1c1c]"
+            >
+              <X size={20} />
+            </button>
+
+            {/* Sender's profile summary */}
+            <div className="mb-5 flex items-center gap-3">
+              <Avatar name={selectedUser.name} src={selectedUser.photo} size={56} />
+              <div className="min-w-0 flex-1">
+                <h3 className="font-bold text-[#1c1c1c]">{selectedUser.name}</h3>
+                {roleLine(selectedUser) && (
+                  <p className="truncate text-sm text-[#6b6e70]">{roleLine(selectedUser)}</p>
+                )}
+                <p className="mt-1 flex items-center gap-1 text-xs text-[#878a8c]">
+                  <Users size={12} />
+                  {selectedUser.connectionsCount} connections
+                </p>
+              </div>
+            </div>
+
+            {/* Note - highlighted */}
+            <div className="mb-5 rounded-lg border-2 border-blue-200 bg-blue-50 p-4">
+              <p className="mb-2 text-xs font-semibold tracking-widest text-blue-600 uppercase">
+                Connection Message
+              </p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-[#1c1c1c]">
+                {selectedNote}
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex flex-col gap-2">
+              <Button
+                onClick={() => {
+                  acceptRequest(selectedUser.id)
+                  setSelectedRequest(null)
+                }}
+                className="w-full"
+              >
+                <Check size={16} /> Accept Connection
+              </Button>
+              <button
+                onClick={() => openQuickView(selectedUser.id)}
+                className="rounded-full border border-[#edeff1] px-4 py-2.5 text-sm font-medium text-[#1c1c1c] transition-colors hover:bg-[#f6f7f8]"
+              >
+                View Full Profile
+              </button>
+              <button
+                onClick={() => {
+                  ignoreRequest(selectedUser.id)
+                  setSelectedRequest(null)
+                }}
+                className="rounded-full px-4 py-2.5 text-sm font-medium text-[#d13a00] transition-colors hover:bg-red-50"
+              >
+                Ignore Request
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

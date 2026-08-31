@@ -72,6 +72,7 @@ export interface ConnectionGraph {
   connectionIds: string[]
   sentRequestIds: string[]
   pendingRequestIds: string[]
+  connectionNotes?: Record<string, string>
 }
 
 export type Provider = 'google' | 'linkedin'
@@ -217,8 +218,11 @@ export const api = {
 
   // connections
   getConnections: () => http<ConnectionGraph>('/api/connections'),
-  connect: (id: string) =>
-    http<{ ok: boolean; state: 'pending' | 'connected' }>(`/api/connections/${id}`, { method: 'POST' }),
+  connect: (id: string, note?: string) =>
+    http<{ ok: boolean; state: 'pending' | 'connected' }>(`/api/connections/${id}`, {
+      method: 'POST',
+      body: JSON.stringify({ note: note || undefined }),
+    }),
   acceptConnection: (id: string) =>
     http<{ ok: boolean; state: string }>(`/api/connections/${id}/accept`, { method: 'POST' }),
   ignoreConnection: (id: string) =>

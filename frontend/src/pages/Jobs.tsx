@@ -28,6 +28,8 @@ export function Jobs() {
   const [tab, setTab] = useState<Tab>('Hiring')
   const [domain, setDomain] = useState<Domain | 'All'>('All')
   const [showCreate, setShowCreate] = useState(false)
+  const [noteModal, setNoteModal] = useState<{ userId: string; name: string } | null>(null)
+  const [note, setNote] = useState('')
 
   const q = query.trim().toLowerCase()
 
@@ -127,7 +129,10 @@ export function Jobs() {
                 variant="outline"
                 className="mt-4 w-full"
                 disabled={connectionState(u.id) !== 'none'}
-                onClick={() => sendConnect(u.id)}
+                onClick={() => {
+                  setNoteModal({ userId: u.id, name: u.name })
+                  setNote('')
+                }}
               >
                 {connectionState(u.id) === 'connected' ? 'Connected' : connectionState(u.id) === 'pending' ? 'Request sent' : 'Connect'}
               </Button>
@@ -139,6 +144,62 @@ export function Jobs() {
 
       {showCreate && (
         <PostCreateModal prefill={{ type: tab }} onClose={() => setShowCreate(false)} />
+      )}
+
+      {/* Connection note modal */}
+      {noteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-[#1c1c1c]">Add a note to your invitation</h2>
+              <button
+                onClick={() => setNoteModal(null)}
+                className="text-[#878a8c] hover:text-[#1c1c1c]"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <p className="mb-4 text-sm text-[#6b6e70]">
+              Write a personal note (minimum 25 words). Root Connect members are more likely to accept connection requests that include a thoughtful message.
+            </p>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={`Hi ${noteModal.name.split(' ')[0]}, I'd love to connect with you because…`}
+              maxLength={500}
+              className="mb-2 w-full rounded-lg border border-[#edeff1] p-3 text-sm text-[#1c1c1c] placeholder-[#878a8c] focus:border-[#ff4500] focus:outline-none focus:ring-2 focus:ring-[#ff4500]/20"
+              rows={5}
+            />
+            <div className="mb-4 flex justify-between">
+              <span className={`text-xs font-medium ${note.split(/\s+/).filter(Boolean).length < 25 ? 'text-red-500' : 'text-green-600'}`}>
+                {note.split(/\s+/).filter(Boolean).length} / 25 words
+              </span>
+              <span className="text-xs text-[#878a8c]">{note.length}/500</span>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setNoteModal(null)}
+                className="flex-1 rounded-full border border-[#edeff1] px-4 py-2.5 font-medium text-[#1c1c1c] transition-colors hover:bg-[#f6f7f8]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const wordCount = note.split(/\s+/).filter(Boolean).length
+                  if (noteModal && wordCount >= 25) {
+                    sendConnect(noteModal.userId, note.trim())
+                    setNoteModal(null)
+                    setNote('')
+                  }
+                }}
+                disabled={note.split(/\s+/).filter(Boolean).length < 25}
+                className="flex-1 rounded-full bg-[#ff4500] px-4 py-2.5 font-medium text-white transition-colors hover:bg-[#d13a00] disabled:bg-[#c2c2c2] disabled:cursor-not-allowed"
+              >
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
