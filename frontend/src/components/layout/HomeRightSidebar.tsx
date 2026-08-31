@@ -1,0 +1,272 @@
+import { useEffect, useRef, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
+import { useApp } from '../../store/AppStore'
+import { Avatar } from '../ui'
+import { timeAgo } from '../../lib/format'
+import { api } from '../../lib/api'
+
+type SortMode = 'Best' | 'Hot' | 'New' | 'Top' | 'Rising'
+
+function sortPostsBySortMode(posts: any[], mode: SortMode): any[] {
+  const now = Date.now()
+
+  switch (mode) {
+    case 'New':
+      return [...posts].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+    case 'Top':
+      return [...posts].sort((a, b) => b.likes - a.likes)
+    case 'Best':
+      return [...posts].sort((a, b) => {
+        const scoreA = a.likes * 2 + a.comments.length * 3
+        const scoreB = b.likes * 2 + b.comments.length * 3
+        return scoreB - scoreA || +new Date(b.createdAt) - +new Date(a.createdAt)
+      })
+    case 'Hot': {
+      return [...posts].sort((a, b) => {
+        const ageHoursA = (now - +new Date(a.createdAt)) / (1000 * 60 * 60)
+        const ageHoursB = (now - +new Date(b.createdAt)) / (1000 * 60 * 60)
+        const scoreA = a.likes / Math.pow(ageHoursA + 2, 1.5)
+        const scoreB = b.likes / Math.pow(ageHoursB + 2, 1.5)
+        return scoreB - scoreA || +new Date(b.createdAt) - +new Date(a.createdAt)
+      })
+    }
+    case 'Rising': {
+      const recent = posts.filter((p) => +new Date(p.createdAt) > now - 24 * 60 * 60 * 1000)
+      if (recent.length === 0) return [...posts].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+      return recent.sort((a, b) => {
+        const ageHoursA = (now - +new Date(a.createdAt)) / (1000 * 60 * 60) + 0.01
+        const ageHoursB = (now - +new Date(b.createdAt)) / (1000 * 60 * 60) + 0.01
+        const scoreA = a.likes / ageHoursA
+        const scoreB = b.likes / ageHoursB
+        return scoreB - scoreA || +new Date(b.createdAt) - +new Date(a.createdAt)
+      })
+    }
+    default:
+      return posts
+  }
+}
+
+function PostCard({ p, author, index }: any) {
+  return (
+    <a
+      href={`#post-${p.id}`}
+      style={{ animationDelay: `${index * 60}ms` }}
+      className="flex items-start gap-2.5 bg-white border border-[#e0e0e0] p-2.5 hover:border-[#ff4500] transition-all duration-300 animate-in fade-in slide-in-from-bottom-2 group"
+    >
+      <Avatar name={author?.name ?? '?'} src={author?.photo} size={28} />
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-semibold text-black">{author?.name}</p>
+        <p className="mt-0.5 line-clamp-2 text-xs text-[#333] leading-snug">{p.content}</p>
+        <div className="mt-1.5 flex gap-3 text-[10px] text-[#666]">
+          <span>❤️ {p.likes || 0}</span>
+          <span>💬 {p.comments?.length || 0}</span>
+          <span>{timeAgo(p.createdAt)}</span>
+        </div>
+      </div>
+    </a>
+  )
+}
+
+export function HomeRightSidebar() {
+  const { posts, currentUser, connectionIds, events, userById } = useApp()
+  const [sort, setSort] = useState<SortMode>('Hot')
+  const [showDropdown, setShowDropdown] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  const [leaders, setLeaders] = useState<Awaited<ReturnType<typeof api.getLeaderboard>>>([])
+  useEffect(() => {
+    api.getLeaderboard().then(setLeaders, () => {})
+  }, [])
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowDropdown(false)
+      }
+    }
+    if (showDropdown) document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showDropdown])
+
+  const topPosts = sortPostsBySortMode(posts, sort).slice(0, 3)
+  const now = Date.now()
+  const trendingPostsData = sortPostsBySortMode(posts, 'Hot').slice(0, 3)
+
+  const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000
+  const recentPosts = posts.filter((p) => +new Date(p.createdAt) > sevenDaysAgo)
+  const topicCounts = new Map<string, number>()
+  recentPosts.forEach((p) => {
+    if (p.domain) topicCounts.set(p.domain, (topicCounts.get(p.domain) ?? 0) + 1)
+  })
+  const trendingTopics = Array.from(topicCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+
+  const postsForYou = posts
+    .filter((p) => p.authorId !== currentUser.id)
+    .map((p) => {
+      let score = 0
+      if (p.domain === currentUser.domain) score += 3
+      if (p.city === currentUser.city) score += 2
+      if (connectionIds.includes(p.authorId)) score += 4
+      return { post: p, score }
+    })
+    .sort((a, b) => b.score - a.score || +new Date(b.post.createdAt) - +new Date(a.post.createdAt))
+    .slice(0, 3)
+    .map((x) => x.post)
+
+  const nextEvents = events
+    .filter((e) => +new Date(e.startsAt) >= Date.now())
+    .sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt))
+    .slice(0, 2)
+
+  return (
+    <aside className="fixed bottom-0 right-[var(--shell-gutter)] top-14 hidden w-[300px] overflow-y-auto px-4 py-4 xl:block bg-[#f5f5f5]">
+      <div className="flex flex-col gap-3.5">
+        {/* Sort filter */}
+        <div className="relative" ref={dropdownRef}>
+          <button
+            onClick={() => setShowDropdown(!showDropdown)}
+            className="w-full flex items-center justify-between bg-[#ff4500] border border-[#ff4500] px-3 py-2 text-sm font-bold text-white hover:bg-[#ff6534] transition-all duration-200"
+          >
+            <span>{sort}</span>
+            <ChevronDown size={14} className={`transition-transform duration-300 ${showDropdown ? 'rotate-180' : ''}`} />
+          </button>
+          {showDropdown && (
+            <div className="absolute top-10 left-0 right-0 z-10 border border-[#e0e0e0] bg-white shadow-lg animate-in fade-in">
+              {(['Best', 'Hot', 'New', 'Top', 'Rising'] as SortMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => {
+                    setSort(mode)
+                    setShowDropdown(false)
+                  }}
+                  className={`w-full text-left px-3 py-2 text-sm font-medium transition-all duration-200 text-black ${
+                    sort === mode
+                      ? 'bg-orange-100 font-bold border-l-2 border-[#ff4500]'
+                      : 'hover:bg-[#f9f9f9]'
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Top posts */}
+        {topPosts.length > 0 && (
+          <div className="animate-in fade-in slide-in-from-bottom-2" style={{ animationDelay: '100ms' }}>
+            <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">{sort}</h3>
+            <div className="flex flex-col gap-2">
+              {topPosts.map((p, i) => (
+                <PostCard key={p.id} p={p} author={userById(p.authorId)} index={i} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Trending posts */}
+        {trendingPostsData.length > 0 && sort !== 'Hot' && (
+          <div className="animate-in fade-in slide-in-from-bottom-2" style={{ animationDelay: '150ms' }}>
+            <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">🔥 Trending Now</h3>
+            <div className="flex flex-col gap-2">
+              {trendingPostsData.map((p, i) => (
+                <PostCard key={p.id} p={p} author={userById(p.authorId)} index={i} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Trending topics */}
+        {trendingTopics.length > 0 && (
+          <div className="animate-in fade-in slide-in-from-bottom-2" style={{ animationDelay: '200ms' }}>
+            <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">Trending Topics</h3>
+            <div className="flex flex-wrap gap-1.5">
+              {trendingTopics.map(([topic, count], i) => (
+                <div
+                  key={topic}
+                  style={{ animationDelay: `${i * 40}ms` }}
+                  className="animate-in fade-in"
+                >
+                  <div className="bg-white border border-[#e0e0e0] px-2.5 py-1.5 text-[10px] font-semibold text-black cursor-pointer hover:border-[#ff4500] transition-all duration-300">
+                    {topic} · {count}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Posts for you */}
+        {postsForYou.length > 0 && (
+          <div className="animate-in fade-in slide-in-from-bottom-2" style={{ animationDelay: '250ms' }}>
+            <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">For You</h3>
+            <div className="flex flex-col gap-2">
+              {postsForYou.map((p, i) => (
+                <PostCard key={p.id} p={p} author={userById(p.authorId)} index={i} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Top contributors */}
+        {leaders.length > 0 && (
+          <div className="animate-in fade-in slide-in-from-bottom-2" style={{ animationDelay: '300ms' }}>
+            <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">Top Contributors</h3>
+            <div className="flex flex-col gap-1.5">
+              {leaders.slice(0, 4).map((l, i) => (
+                <a
+                  key={l.id}
+                  href={`/profile/${l.id}`}
+                  style={{ animationDelay: `${i * 50}ms` }}
+                  className="group flex items-center gap-2.5 bg-white border border-[#e0e0e0] px-2.5 py-2 hover:border-[#ff4500] transition-all duration-300 animate-in fade-in"
+                >
+                  <div
+                    className={`flex h-6 w-6 items-center justify-center text-xs font-bold text-white ${
+                      i === 0 ? 'bg-[#ffa500]' : i === 1 ? 'bg-[#c0c0c0]' : i === 2 ? 'bg-[#cd7f32]' : 'bg-[#999]'
+                    }`}
+                  >
+                    {i + 1}
+                  </div>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-semibold text-black">
+                      {l.name}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-xs font-bold text-[#ff4500]">{l.points}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Upcoming events */}
+        {nextEvents.length > 0 && (
+          <div className="animate-in fade-in slide-in-from-bottom-2" style={{ animationDelay: '350ms' }}>
+            <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">Events</h3>
+            <div className="flex flex-col gap-1.5">
+              {nextEvents.map((e, i) => (
+                <a
+                  key={e.id}
+                  href="/events"
+                  style={{ animationDelay: `${i * 50}ms` }}
+                  className="group bg-white border border-[#e0e0e0] p-2.5 text-xs hover:border-[#ff4500] transition-all duration-300 animate-in fade-in"
+                >
+                  <p className="font-semibold text-black">{e.title}</p>
+                  <p className="mt-0.5 text-[10px] text-[#666]">
+                    {new Date(e.startsAt).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
+                  </p>
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-3 px-1 text-[10px] text-[#999] animate-in fade-in" style={{ animationDelay: '400ms' }}>
+          Root Connect · Alumni Network
+        </div>
+      </div>
+    </aside>
+  )
+}

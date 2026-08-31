@@ -18,11 +18,6 @@ export function NetworkMatches() {
   const [noteModal, setNoteModal] = useState<{ userId: string; name: string } | null>(null)
   const [note, setNote] = useState('')
 
-  const handleConnect = (userId: string) => {
-    setNoteModal({ userId, name: users.find((u) => u.id === userId)?.name || 'Member' })
-    setNote('')
-  }
-
   const handleSendWithNote = () => {
     const wordCount = note.split(/\s+/).filter(Boolean).length
     if (noteModal && wordCount >= 25) {

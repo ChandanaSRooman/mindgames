@@ -558,8 +558,8 @@ export const messageThreads: MessageThread[] = [
     lastMessage: 'Sure, send the calendar invite for Monday.',
     unread: 1,
     messages: [
-      { id: 'mm1', fromMe: true, text: 'Hi Aarav! Could we do the system design session Monday?', time: '9:02 AM' },
-      { id: 'mm2', fromMe: false, text: 'Sure, send the calendar invite for Monday.', time: '9:10 AM' },
+      { id: 'mm1', fromMe: true, text: 'Hi Aarav! Could we do the system design session Monday?', time: '9:02 AM', createdAt: '2026-08-31T09:02:00Z' },
+      { id: 'mm2', fromMe: false, text: 'Sure, send the calendar invite for Monday.', time: '9:10 AM', createdAt: '2026-08-31T09:10:00Z' },
     ],
   },
   {
@@ -568,7 +568,7 @@ export const messageThreads: MessageThread[] = [
     lastMessage: 'Loved your portfolio revamp 🔥',
     unread: 0,
     messages: [
-      { id: 'mm3', fromMe: false, text: 'Loved your portfolio revamp 🔥', time: 'Yesterday' },
+      { id: 'mm3', fromMe: false, text: 'Loved your portfolio revamp 🔥', time: 'Yesterday', createdAt: '2026-08-30T14:00:00Z' },
     ],
   },
   {
@@ -577,8 +577,8 @@ export const messageThreads: MessageThread[] = [
     lastMessage: 'Congrats on the 10 customers!',
     unread: 0,
     messages: [
-      { id: 'mm4', fromMe: true, text: 'Congrats on the 10 customers!', time: 'Tue' },
-      { id: 'mm5', fromMe: false, text: 'Thank you! StartupVarsity made it happen.', time: 'Tue' },
+      { id: 'mm4', fromMe: true, text: 'Congrats on the 10 customers!', time: 'Tue', createdAt: '2026-08-26T10:00:00Z' },
+      { id: 'mm5', fromMe: false, text: 'Thank you! StartupVarsity made it happen.', time: 'Tue', createdAt: '2026-08-26T10:05:00Z' },
     ],
   },
 ]

@@ -1,15 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useApp } from '../store/AppStore'
 import { CreatePostBox } from '../components/feed/CreatePostBox'
 import { PostCard } from '../components/feed/PostCard'
 import { matchesPostQuery } from '../lib/search'
 
-type Sort = 'Latest' | 'Top' | 'For You'
-const SORTS: Sort[] = ['Latest', 'Top', 'For You']
-
 export function Home() {
-  const { posts, users, currentUser, query } = useApp()
-  const [sort, setSort] = useState<Sort>('Latest')
+  const { posts, users, query } = useApp()
 
   // Shared post links (/home#post-<id>) scroll to the post once the feed is in.
   useEffect(() => {
@@ -24,41 +20,15 @@ export function Home() {
 
   const visible = useMemo(() => {
     let list = posts.filter((p) => matchesPostQuery(p, users, query))
-    if (sort === 'Top') {
-      list = [...list].sort((a, b) => b.likes - a.likes)
-    } else if (sort === 'For You') {
-      list = [...list].sort((a, b) => {
-        const score = (x: typeof a) => (x.domain === currentUser.domain ? 1 : 0)
-        return score(b) - score(a) || +new Date(b.createdAt) - +new Date(a.createdAt)
-      })
-    } else {
-      list = [...list].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
-    }
+    // Sort by newest first
+    list = [...list].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
     // Pinned Rooman announcements always float to the top.
     return [...list].sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false))
-  }, [posts, users, query, sort, currentUser.domain])
+  }, [posts, users, query])
 
   return (
     <div className="flex flex-col gap-2">
       <CreatePostBox />
-
-      {/* Sort bar */}
-      <div className="flex items-center rounded-xl border border-[#edeff1] bg-white px-2 shadow-sm">
-        {SORTS.map((s) => (
-          <button
-            key={s}
-            onClick={() => setSort(s)}
-            className={`relative px-4 py-3 text-sm font-semibold transition-colors ${
-              sort === s ? 'text-[#ff4500]' : 'text-[#878a8c] hover:text-[#1c1c1c]'
-            }`}
-          >
-            {s}
-            {sort === s && (
-              <span className="absolute inset-x-3 bottom-0 h-[3px] rounded-t-full bg-[#ff4500]" />
-            )}
-          </button>
-        ))}
-      </div>
 
       {visible.map((p) => (
         <PostCard key={p.id} post={p} />
