@@ -222,6 +222,16 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages (conversation_id, created_at);
 
+-- Optional file attachment on a chat message (e.g. sharing a resume in a
+-- referral conversation). Mirrors job_applications' resume_* columns —
+-- inline storage, same ~5MB cap enforced in the route.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachment_name TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachment_type TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachment_data BYTEA;
+
+-- Set when the sender edits a message (route enforces a 5-minute window).
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+
 -- Per-user read cursor: unread = messages from the other party after last_read_at.
 CREATE TABLE IF NOT EXISTS conversation_reads (
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -487,6 +497,81 @@ CREATE TABLE IF NOT EXISTS reports (
 );
 
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports (status, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- companies: browsable employer directory for the Companies page. Alumni are
+-- matched to a company by comparing users.company (free text) case/whitespace
+-- -insensitively — no FK on users, so existing profile data is untouched.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS companies (
+  id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  name       TEXT NOT NULL,
+  domain     TEXT,          -- e.g. 'google.com'; drives the logo, nullable
+  industry   TEXT NOT NULL DEFAULT 'Other',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_name ON companies (LOWER(name));
+
+-- Bookmarked companies ("Save Company"), mirrors post_saves.
+CREATE TABLE IF NOT EXISTS company_saves (
+  company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (company_id, user_id)
+);
+
+-- Curated employers with a known domain (real logo via a domain-based logo
+-- service on the frontend). Idempotent — re-running never duplicates rows.
+INSERT INTO companies (name, domain, industry) VALUES
+  ('Google', 'google.com', 'Technology'),
+  ('Microsoft', 'microsoft.com', 'Technology'),
+  ('Amazon', 'amazon.com', 'Technology'),
+  ('Meta', 'meta.com', 'Technology'),
+  ('Apple', 'apple.com', 'Technology'),
+  ('Netflix', 'netflix.com', 'Technology'),
+  ('Adobe', 'adobe.com', 'Technology'),
+  ('Oracle', 'oracle.com', 'Technology'),
+  ('Salesforce', 'salesforce.com', 'Technology'),
+  ('IBM', 'ibm.com', 'Technology'),
+  ('TCS', 'tcs.com', 'IT Services'),
+  ('Infosys', 'infosys.com', 'IT Services'),
+  ('Wipro', 'wipro.com', 'IT Services'),
+  ('Accenture', 'accenture.com', 'IT Services'),
+  ('Cognizant', 'cognizant.com', 'IT Services'),
+  ('HCLTech', 'hcltech.com', 'IT Services'),
+  ('Tech Mahindra', 'techmahindra.com', 'IT Services'),
+  ('Capgemini', 'capgemini.com', 'IT Services'),
+  ('Flipkart', 'flipkart.com', 'Product'),
+  ('Swiggy', 'swiggy.com', 'Product'),
+  ('Zomato', 'zomato.com', 'Product'),
+  ('Paytm', 'paytm.com', 'Product'),
+  ('PhonePe', 'phonepe.com', 'Product'),
+  ('Razorpay', 'razorpay.com', 'Product'),
+  ('Freshworks', 'freshworks.com', 'Product'),
+  ('Zoho', 'zoho.com', 'Product'),
+  ('Goldman Sachs', 'goldmansachs.com', 'Finance'),
+  ('JPMorgan Chase', 'jpmorganchase.com', 'Finance'),
+  ('Morgan Stanley', 'morganstanley.com', 'Finance'),
+  ('Deloitte', 'deloitte.com', 'Consulting'),
+  ('EY', 'ey.com', 'Consulting'),
+  ('PwC', 'pwc.com', 'Consulting'),
+  ('KPMG', 'kpmg.com', 'Consulting'),
+  ('McKinsey & Company', 'mckinsey.com', 'Consulting'),
+  ('BCG', 'bcg.com', 'Consulting'),
+  ('Larsen & Toubro', 'larsentoubro.com', 'Manufacturing'),
+  ('Tata Motors', 'tatamotors.com', 'Manufacturing')
+ON CONFLICT (LOWER(name)) DO NOTHING;
+
+-- Backfill: any employer alumni have actually typed on their profile that
+-- isn't already in the curated list above still shows up on the Companies
+-- page (no logo — the frontend falls back to an initials badge).
+INSERT INTO companies (name, industry)
+  SELECT DISTINCT TRIM(u.company), 'Other'
+  FROM users u
+  WHERE TRIM(u.company) <> ''
+    AND NOT EXISTS (SELECT 1 FROM companies c WHERE LOWER(c.name) = LOWER(TRIM(u.company)))
+ON CONFLICT (LOWER(name)) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
 -- app_meta: tiny key/value store (e.g. when the weekly digest last went out).

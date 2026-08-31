@@ -313,6 +313,37 @@ export interface PendingCommunity extends Community {
   creatorName: string
 }
 
+export interface CompanyAlumnusPreview {
+  id: string
+  name: string
+  photo?: string
+}
+
+export interface Company {
+  id: string
+  name: string
+  domain?: string
+  logoUrl?: string
+  industry: string
+  alumniCount: number
+  previewAlumni: CompanyAlumnusPreview[]
+  savedByMe: boolean
+}
+
+export interface CompanyAlumnus {
+  id: string
+  name: string
+  photo?: string
+  role: string
+  location: string
+  journey: string
+  mutualConnections: number
+}
+
+export interface CompanyDetail extends Company {
+  alumni: CompanyAlumnus[]
+}
+
 // requested → (mentor accepts) upcoming → (mentor completes) past; or declined.
 export type SessionStatus = 'requested' | 'upcoming' | 'declined' | 'past'
 
@@ -384,7 +415,15 @@ export interface MessageThread {
   withUserId: string
   lastMessage: string
   unread: number
-  messages: { id: string; fromMe: boolean; text: string; time: string }[]
+  messages: {
+    id: string
+    fromMe: boolean
+    text: string
+    time: string
+    createdAt: string
+    editedAt?: string
+    attachment?: { name: string; type: string }
+  }[]
 }
 
 // Connection state between the current user and others.

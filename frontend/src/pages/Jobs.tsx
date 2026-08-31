@@ -7,21 +7,12 @@ import { api } from '../lib/api'
 import { PostCreateModal } from '../components/feed/PostCreateModal'
 import { Avatar, Button, Card, Pill } from '../components/ui'
 import { roleLine, timeAgo } from '../lib/format'
+import { toBase64 } from '../lib/file'
 import { DOMAINS, type Domain, type JobApplicant, type Post } from '../types'
 
 type Tab = 'Hiring' | 'Open to Work'
 
 type ResumeAttachment = { name: string; dataBase64: string; mediaType: string }
-
-// Read a File as a base64 string (without the data: URL prefix).
-function toBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '')
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
-  })
-}
 
 export function Jobs() {
   const { posts, users, userById, query, sendConnect, connectionState, currentUser, applyToJob } = useApp()

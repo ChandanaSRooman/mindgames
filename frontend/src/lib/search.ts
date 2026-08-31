@@ -1,4 +1,4 @@
-import type { Community, Post, User } from '../types'
+import type { Community, Company, Post, User } from '../types'
 
 export function matchesPostQuery(post: Post, users: User[], query: string): boolean {
   const q = query.trim().toLowerCase()
@@ -38,4 +38,10 @@ export function matchesCommunityQuery(c: Community, query: string): boolean {
   const q = query.trim().toLowerCase()
   if (!q) return true
   return [c.name, c.description, c.tag, c.category].some((s) => s.toLowerCase().includes(q))
+}
+
+export function matchesCompanyQuery(c: Company, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  return [c.name, c.industry].some((s) => s.toLowerCase().includes(q))
 }
