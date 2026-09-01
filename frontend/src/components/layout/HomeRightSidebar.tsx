@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { useApp } from '../../store/AppStore'
 import { Avatar } from '../ui'
 import { timeAgo } from '../../lib/format'
 import { api } from '../../lib/api'
+import type { Post, User } from '../../types'
 
 type SortMode = 'Best' | 'Hot' | 'New' | 'Top' | 'Rising'
 
-function sortPostsBySortMode(posts: any[], mode: SortMode): any[] {
+function sortPostsBySortMode(posts: Post[], mode: SortMode): Post[] {
   const now = Date.now()
 
   switch (mode) {
@@ -46,12 +48,11 @@ function sortPostsBySortMode(posts: any[], mode: SortMode): any[] {
   }
 }
 
-function PostCard({ p, author, index }: any) {
+function PostCard({ p, author, index }: { p: Post; author: User | undefined; index: number }) {
   return (
-    <a
-      href={`#post-${p.id}`}
+    <div
       style={{ animationDelay: `${index * 60}ms` }}
-      className="flex items-start gap-2.5 bg-white border border-[#e0e0e0] p-2.5 hover:border-[#ff4500] transition-all duration-300 animate-in fade-in slide-in-from-bottom-2 group"
+      className="flex items-start gap-2.5 bg-white border border-[#e0e0e0] p-2.5 hover:border-[#ff4500] transition-all duration-300 group"
     >
       <Avatar name={author?.name ?? '?'} src={author?.photo} size={28} />
       <div className="min-w-0 flex-1">
@@ -63,7 +64,7 @@ function PostCard({ p, author, index }: any) {
           <span>{timeAgo(p.createdAt)}</span>
         </div>
       </div>
-    </a>
+    </div>
   )
 }
 
@@ -88,37 +89,52 @@ export function HomeRightSidebar() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showDropdown])
 
-  const topPosts = sortPostsBySortMode(posts, sort).slice(0, 3)
   const now = Date.now()
-  const trendingPostsData = sortPostsBySortMode(posts, 'Hot').slice(0, 3)
 
-  const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000
-  const recentPosts = posts.filter((p) => +new Date(p.createdAt) > sevenDaysAgo)
-  const topicCounts = new Map<string, number>()
-  recentPosts.forEach((p) => {
-    if (p.domain) topicCounts.set(p.domain, (topicCounts.get(p.domain) ?? 0) + 1)
-  })
-  const trendingTopics = Array.from(topicCounts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
+  const topPosts = useMemo(
+    () => sortPostsBySortMode(posts, sort).slice(0, 3),
+    [posts, sort]
+  )
 
-  const postsForYou = posts
-    .filter((p) => p.authorId !== currentUser.id)
-    .map((p) => {
-      let score = 0
-      if (p.domain === currentUser.domain) score += 3
-      if (p.city === currentUser.city) score += 2
-      if (connectionIds.includes(p.authorId)) score += 4
-      return { post: p, score }
+  const trendingPostsData = useMemo(
+    () => sortPostsBySortMode(posts, 'Hot').slice(0, 3),
+    [posts]
+  )
+
+  const trendingTopics = useMemo(() => {
+    const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000
+    const recentPosts = posts.filter((p) => +new Date(p.createdAt) > sevenDaysAgo)
+    const topicCounts = new Map<string, number>()
+    recentPosts.forEach((p) => {
+      if (p.domain) topicCounts.set(p.domain, (topicCounts.get(p.domain) ?? 0) + 1)
     })
-    .sort((a, b) => b.score - a.score || +new Date(b.post.createdAt) - +new Date(a.post.createdAt))
-    .slice(0, 3)
-    .map((x) => x.post)
+    return Array.from(topicCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+  }, [posts])
 
-  const nextEvents = events
-    .filter((e) => +new Date(e.startsAt) >= Date.now())
-    .sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt))
-    .slice(0, 2)
+  const postsForYou = useMemo(() => {
+    return posts
+      .filter((p) => p.authorId !== currentUser.id)
+      .map((p) => {
+        let score = 0
+        if (p.domain === currentUser.domain) score += 3
+        if (p.city === currentUser.city) score += 2
+        if (connectionIds.includes(p.authorId)) score += 4
+        return { post: p, score }
+      })
+      .sort((a, b) => b.score - a.score || +new Date(b.post.createdAt) - +new Date(a.post.createdAt))
+      .slice(0, 3)
+      .map((x) => x.post)
+  }, [posts, currentUser.id, currentUser.domain, currentUser.city, connectionIds])
+
+  const nextEvents = useMemo(
+    () => events
+      .filter((e) => e.status === 'approved' && +new Date(e.startsAt) >= Date.now())
+      .sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt))
+      .slice(0, 2),
+    [events]
+  )
 
   return (
     <aside className="fixed bottom-0 right-[var(--shell-gutter)] top-14 hidden w-[300px] overflow-y-auto px-4 py-4 xl:block bg-[#f5f5f5]">
@@ -156,7 +172,7 @@ export function HomeRightSidebar() {
 
         {/* Top posts */}
         {topPosts.length > 0 && (
-          <div className="animate-in fade-in slide-in-from-bottom-2" style={{ animationDelay: '100ms' }}>
+          <div style={{ animationDelay: '100ms' }}>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">{sort}</h3>
             <div className="flex flex-col gap-2">
               {topPosts.map((p, i) => (
@@ -168,7 +184,7 @@ export function HomeRightSidebar() {
 
         {/* Trending posts */}
         {trendingPostsData.length > 0 && sort !== 'Hot' && (
-          <div className="animate-in fade-in slide-in-from-bottom-2" style={{ animationDelay: '150ms' }}>
+          <div style={{ animationDelay: '150ms' }}>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">🔥 Trending Now</h3>
             <div className="flex flex-col gap-2">
               {trendingPostsData.map((p, i) => (
@@ -180,19 +196,18 @@ export function HomeRightSidebar() {
 
         {/* Trending topics */}
         {trendingTopics.length > 0 && (
-          <div className="animate-in fade-in slide-in-from-bottom-2" style={{ animationDelay: '200ms' }}>
+          <div style={{ animationDelay: '200ms' }}>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">Trending Topics</h3>
             <div className="flex flex-wrap gap-1.5">
               {trendingTopics.map(([topic, count], i) => (
-                <div
+                <Link
                   key={topic}
+                  to={`/?domain=${encodeURIComponent(topic)}`}
                   style={{ animationDelay: `${i * 40}ms` }}
-                  className="animate-in fade-in"
+                  className="bg-white border border-[#e0e0e0] px-2.5 py-1.5 text-[10px] font-semibold text-black hover:border-[#ff4500] transition-all duration-300"
                 >
-                  <div className="bg-white border border-[#e0e0e0] px-2.5 py-1.5 text-[10px] font-semibold text-black cursor-pointer hover:border-[#ff4500] transition-all duration-300">
-                    {topic} · {count}
-                  </div>
-                </div>
+                  {topic} · {count}
+                </Link>
               ))}
             </div>
           </div>
@@ -200,7 +215,7 @@ export function HomeRightSidebar() {
 
         {/* Posts for you */}
         {postsForYou.length > 0 && (
-          <div className="animate-in fade-in slide-in-from-bottom-2" style={{ animationDelay: '250ms' }}>
+          <div style={{ animationDelay: '250ms' }}>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">For You</h3>
             <div className="flex flex-col gap-2">
               {postsForYou.map((p, i) => (
@@ -212,15 +227,15 @@ export function HomeRightSidebar() {
 
         {/* Top contributors */}
         {leaders.length > 0 && (
-          <div className="animate-in fade-in slide-in-from-bottom-2" style={{ animationDelay: '300ms' }}>
+          <div style={{ animationDelay: '300ms' }}>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">Top Contributors</h3>
             <div className="flex flex-col gap-1.5">
               {leaders.slice(0, 4).map((l, i) => (
-                <a
+                <Link
                   key={l.id}
-                  href={`/profile/${l.id}`}
+                  to={`/profile/${l.id}`}
                   style={{ animationDelay: `${i * 50}ms` }}
-                  className="group flex items-center gap-2.5 bg-white border border-[#e0e0e0] px-2.5 py-2 hover:border-[#ff4500] transition-all duration-300 animate-in fade-in"
+                  className="group flex items-center gap-2.5 bg-white border border-[#e0e0e0] px-2.5 py-2 hover:border-[#ff4500] transition-all duration-300"
                 >
                   <div
                     className={`flex h-6 w-6 items-center justify-center text-xs font-bold text-white ${
@@ -235,7 +250,7 @@ export function HomeRightSidebar() {
                     </span>
                   </span>
                   <span className="shrink-0 text-xs font-bold text-[#ff4500]">{l.points}</span>
-                </a>
+                </Link>
               ))}
             </div>
           </div>
@@ -243,27 +258,27 @@ export function HomeRightSidebar() {
 
         {/* Upcoming events */}
         {nextEvents.length > 0 && (
-          <div className="animate-in fade-in slide-in-from-bottom-2" style={{ animationDelay: '350ms' }}>
+          <div style={{ animationDelay: '350ms' }}>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">Events</h3>
             <div className="flex flex-col gap-1.5">
               {nextEvents.map((e, i) => (
-                <a
+                <Link
                   key={e.id}
-                  href="/events"
+                  to="/events"
                   style={{ animationDelay: `${i * 50}ms` }}
-                  className="group bg-white border border-[#e0e0e0] p-2.5 text-xs hover:border-[#ff4500] transition-all duration-300 animate-in fade-in"
+                  className="group bg-white border border-[#e0e0e0] p-2.5 text-xs hover:border-[#ff4500] transition-all duration-300"
                 >
                   <p className="font-semibold text-black">{e.title}</p>
                   <p className="mt-0.5 text-[10px] text-[#666]">
                     {new Date(e.startsAt).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
                   </p>
-                </a>
+                </Link>
               ))}
             </div>
           </div>
         )}
 
-        <div className="mt-3 px-1 text-[10px] text-[#999] animate-in fade-in" style={{ animationDelay: '400ms' }}>
+        <div className="mt-3 px-1 text-[10px] text-[#999]" style={{ animationDelay: '400ms' }}>
           Root Connect · Alumni Network
         </div>
       </div>

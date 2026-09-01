@@ -70,7 +70,7 @@ export function NetworkMatches() {
               variant={connectionState(u.id) === 'pending' ? 'subtle' : 'outline'}
               className="mt-3 w-full"
               disabled={connectionState(u.id) === 'pending'}
-              onClick={() => handleConnect(u.id)}
+              onClick={() => setNoteModal({ userId: u.id, name: u.name })}
             >
               {connectionState(u.id) === 'pending' ? 'Request sent' : 'Connect'}
             </Button>
@@ -83,8 +83,8 @@ export function NetworkMatches() {
 
       {/* Connection note modal */}
       {noteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 p-4" onClick={() => setNoteModal(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-bold text-[#1c1c1c]">Add a note to your invitation</h2>
               <button
