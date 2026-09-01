@@ -3,6 +3,7 @@ import { useOutletContext } from 'react-router-dom'
 import { MapPin, X } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { Avatar, Button, Card, Pill, SectionTitle } from '../../components/ui'
+import { GrowCatchupSection } from '../../components/grow/GrowCatchupSection'
 import { roleLine } from '../../lib/format'
 import { DOMAINS } from '../../types'
 import type { NetworkOutletContext } from './NetworkLayout'
@@ -40,8 +41,16 @@ export function NetworkMatches() {
   )
 
   return (
-    <section>
-      <SectionTitle>People You May Know</SectionTitle>
+    <section className="space-y-8">
+      {/* Grow & Catch Up */}
+      <div>
+        <SectionTitle>Network Highlights</SectionTitle>
+        <GrowCatchupSection />
+      </div>
+
+      {/* People You May Know */}
+      <div>
+        <SectionTitle>People You May Know</SectionTitle>
       <div className="mb-3 flex flex-wrap gap-2">
         <Pill active={domainFilter === 'All'} onClick={() => setDomainFilter('All')}>All</Pill>
         {DOMAINS.map((d) => (
@@ -70,7 +79,10 @@ export function NetworkMatches() {
               variant={connectionState(u.id) === 'pending' ? 'subtle' : 'outline'}
               className="mt-3 w-full"
               disabled={connectionState(u.id) === 'pending'}
-              onClick={() => setNoteModal({ userId: u.id, name: u.name })}
+              onClick={() => {
+                setNoteModal({ userId: u.id, name: u.name })
+                setNote('')
+              }}
             >
               {connectionState(u.id) === 'pending' ? 'Request sent' : 'Connect'}
             </Button>
@@ -79,6 +91,7 @@ export function NetworkMatches() {
         {suggestions.length === 0 && (
           <p className="text-sm text-[#878a8c]">No suggestions match your filters.</p>
         )}
+      </div>
       </div>
 
       {/* Connection note modal */}

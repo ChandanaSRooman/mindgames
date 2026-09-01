@@ -95,9 +95,22 @@ export function statusOf(employmentType: EmploymentType | ''): CurrentStatus | '
 
 export type Visibility = 'All Alumni' | 'My Network' | 'Specific Community'
 
-export type ProfileTag = 'Mentor' | 'Hiring' | 'Open to Work'
+export type ProfileTag =
+  | 'Mentor'
+  | 'Hiring'
+  | 'Open to Work'
+  | 'Willing to give referral'
+  | 'Need mentorship'
 
-export const PROFILE_TAGS: ProfileTag[] = ['Mentor', 'Hiring', 'Open to Work']
+export const PROFILE_TAGS: ProfileTag[] = [
+  'Mentor',
+  'Hiring',
+  'Open to Work',
+  'Willing to give referral',
+  'Need mentorship'
+]
+
+export type TagVerificationStatus = 'verified' | 'unverified' | 'flagged'
 
 export interface User {
   id: string
@@ -106,8 +119,12 @@ export interface User {
   phone?: string
   // Small data-URL profile photo; absent → initials avatar.
   photo?: string | null
-  // Status tag shown on the profile header.
+  // Status tag shown on the profile header (legacy single tag).
   profileTag?: ProfileTag | null
+  // Multiple selectable tags on profile
+  profileTags?: ProfileTag[]
+  // Verification status for each tag
+  profileTagsVerified?: Record<ProfileTag, TagVerificationStatus>
   // Set once the user clicks the verification link emailed at signup.
   emailVerified?: boolean
   // Weekly digest email preference (Settings toggle).
@@ -135,6 +152,10 @@ export interface User {
   // Verified employer: confirmed a work email → allowed to post jobs.
   employerVerified?: boolean
   workEmailDomain?: string
+  // Trust score: based on connections, account age, verification status
+  trustScore?: number
+  // Reports against this user (for flagging)
+  reportCount?: number
   isAdmin?: boolean
 }
 

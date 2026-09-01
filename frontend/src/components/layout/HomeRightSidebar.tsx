@@ -48,12 +48,9 @@ function sortPostsBySortMode(posts: Post[], mode: SortMode): Post[] {
   }
 }
 
-function PostCard({ p, author, index }: { p: Post; author: User | undefined; index: number }) {
+function PostCard({ p, author }: { p: Post; author: User | undefined; index?: number }) {
   return (
-    <div
-      style={{ animationDelay: `${index * 60}ms` }}
-      className="flex items-start gap-2.5 bg-white border border-[#e0e0e0] p-2.5 hover:border-[#ff4500] transition-all duration-300 group"
-    >
+    <div className="flex items-start gap-2.5 bg-white border border-[#e0e0e0] p-2.5 hover:border-[#ff4500] transition-all duration-300 group">
       <Avatar name={author?.name ?? '?'} src={author?.photo} size={28} />
       <div className="min-w-0 flex-1">
         <p className="text-xs font-semibold text-black">{author?.name}</p>
@@ -89,8 +86,6 @@ export function HomeRightSidebar() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showDropdown])
 
-  const now = Date.now()
-
   const topPosts = useMemo(
     () => sortPostsBySortMode(posts, sort).slice(0, 3),
     [posts, sort]
@@ -102,6 +97,7 @@ export function HomeRightSidebar() {
   )
 
   const trendingTopics = useMemo(() => {
+    const now = Date.now()
     const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000
     const recentPosts = posts.filter((p) => +new Date(p.createdAt) > sevenDaysAgo)
     const topicCounts = new Map<string, number>()
@@ -172,7 +168,7 @@ export function HomeRightSidebar() {
 
         {/* Top posts */}
         {topPosts.length > 0 && (
-          <div style={{ animationDelay: '100ms' }}>
+          <div>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">{sort}</h3>
             <div className="flex flex-col gap-2">
               {topPosts.map((p, i) => (
@@ -184,7 +180,7 @@ export function HomeRightSidebar() {
 
         {/* Trending posts */}
         {trendingPostsData.length > 0 && sort !== 'Hot' && (
-          <div style={{ animationDelay: '150ms' }}>
+          <div>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">🔥 Trending Now</h3>
             <div className="flex flex-col gap-2">
               {trendingPostsData.map((p, i) => (
@@ -196,18 +192,16 @@ export function HomeRightSidebar() {
 
         {/* Trending topics */}
         {trendingTopics.length > 0 && (
-          <div style={{ animationDelay: '200ms' }}>
+          <div>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">Trending Topics</h3>
             <div className="flex flex-wrap gap-1.5">
-              {trendingTopics.map(([topic, count], i) => (
-                <Link
+              {trendingTopics.map(([topic]) => (
+                <div
                   key={topic}
-                  to={`/?domain=${encodeURIComponent(topic)}`}
-                  style={{ animationDelay: `${i * 40}ms` }}
-                  className="bg-white border border-[#e0e0e0] px-2.5 py-1.5 text-[10px] font-semibold text-black hover:border-[#ff4500] transition-all duration-300"
+                  className="bg-white border border-[#e0e0e0] px-2.5 py-1.5 text-[10px] font-semibold text-black cursor-default transition-all duration-300"
                 >
-                  {topic} · {count}
-                </Link>
+                  {topic}
+                </div>
               ))}
             </div>
           </div>
@@ -215,7 +209,7 @@ export function HomeRightSidebar() {
 
         {/* Posts for you */}
         {postsForYou.length > 0 && (
-          <div style={{ animationDelay: '250ms' }}>
+          <div>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">For You</h3>
             <div className="flex flex-col gap-2">
               {postsForYou.map((p, i) => (
@@ -227,7 +221,7 @@ export function HomeRightSidebar() {
 
         {/* Top contributors */}
         {leaders.length > 0 && (
-          <div style={{ animationDelay: '300ms' }}>
+          <div>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">Top Contributors</h3>
             <div className="flex flex-col gap-1.5">
               {leaders.slice(0, 4).map((l, i) => (
@@ -258,7 +252,7 @@ export function HomeRightSidebar() {
 
         {/* Upcoming events */}
         {nextEvents.length > 0 && (
-          <div style={{ animationDelay: '350ms' }}>
+          <div>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">Events</h3>
             <div className="flex flex-col gap-1.5">
               {nextEvents.map((e, i) => (
@@ -278,7 +272,7 @@ export function HomeRightSidebar() {
           </div>
         )}
 
-        <div className="mt-3 px-1 text-[10px] text-[#999]" style={{ animationDelay: '400ms' }}>
+        <div className="mt-3 px-1 text-[10px] text-[#999]">
           Root Connect · Alumni Network
         </div>
       </div>

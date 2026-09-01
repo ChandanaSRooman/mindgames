@@ -64,14 +64,14 @@ export function Companies() {
         <Button
           variant="outline"
           icon={<Sparkles size={15} />}
-          onClick={() => window.open('https://hiresolution.ai/career-profiler', '_blank')}
+          onClick={() => window.open('https://hiresolution.ai/career-profiler', '_blank', 'noopener,noreferrer')}
         >
           Take a test on Hire AI
         </Button>
         <Button
           variant="outline"
           icon={<BookOpen size={15} />}
-          onClick={() => window.open('https://lms.rooman.com/', '_blank')}
+          onClick={() => window.open('https://lms.rooman.com/', '_blank', 'noopener,noreferrer')}
         >
           Prepare using our Rooman LMS
         </Button>
