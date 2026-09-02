@@ -20,6 +20,7 @@ export function AppLayout() {
   const [chat, setChat] = useState<{ open: boolean; userId?: string }>({ open: false })
   const [verifyDismissed, setVerifyDismissed] = useState(false)
   const [resending, setResending] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const showVerifyBanner =
     !verifyDismissed && !currentUser.isAdmin && currentUser.emailVerified === false
 
@@ -44,9 +45,10 @@ export function AppLayout() {
   )
   const toggleChat = useCallback(() => setChat((c) => ({ open: !c.open })), [])
   const openChatWith = useCallback((userId: string) => setChat({ open: true, userId }), [])
+  const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), [])
 
   return (
-    <LayoutContext.Provider value={{ openComposer, toggleChat, openChatWith }}>
+    <LayoutContext.Provider value={{ openComposer, toggleChat, openChatWith, sidebarOpen, toggleSidebar }}>
       <Navbar />
       <LeftSidebar />
       <RightSidebar />
@@ -58,8 +60,19 @@ export function AppLayout() {
         gutter even at exactly 1280px, where 260 + 720 + 300 would otherwise
         leave the feed touching both sidebars.
       */}
-      <main className="min-h-screen pt-14 lg:pl-[calc(276px+var(--shell-gutter))] xl:pr-[calc(316px+var(--shell-gutter))]">
-        <div className="mx-auto w-full max-w-[720px] px-4 py-5">
+      <main className={`min-h-screen pt-14 transition-all duration-200 xl:pr-[calc(316px+var(--shell-gutter))] ${
+        sidebarOpen
+          ? 'lg:pl-[calc(276px+var(--shell-gutter))]'
+          : 'lg:pl-[calc(64px+var(--shell-gutter))]'
+      }`}>
+        {/*
+          With the sidebar collapsed the 720px column would just centre itself
+          in the freed space, so widen it instead — the point of collapsing is
+          more room for the content, not more margin.
+        */}
+        <div className={`mx-auto w-full px-4 py-5 transition-all duration-200 ${
+          sidebarOpen ? 'max-w-[720px]' : 'max-w-[1100px]'
+        }`}>
           {showVerifyBanner && (
             <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
               <MailWarning size={16} className="shrink-0" />
