@@ -5,6 +5,8 @@ export interface LayoutContextValue {
   openComposer: (prefill?: { type?: PostType; communityId?: string }) => void
   toggleChat: () => void
   openChatWith: (userId: string) => void
+  sidebarOpen: boolean
+  toggleSidebar: () => void
 }
 
 export const LayoutContext = createContext<LayoutContextValue | null>(null)
