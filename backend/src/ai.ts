@@ -71,18 +71,19 @@ const OPENROUTER_ASKROO_MODEL = 'nvidia/nemotron-3.5-lightning:free'
 // faster in testing (~1-2s vs. 30-60s+ on Ultra).
 const OPENROUTER_RESUME_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free'
 
-// Which provider actually answers AI calls.
-// 'anthropic'  = paid Claude via ANT_KEY. The DEFAULT, and what production
-//   runs: no rate ceiling, enforced JSON-schema output.
-// 'openrouter' = free NVIDIA Nemotron (dev only) — no cost, but capped at ~50
-//   requests/day on OpenRouter's free tier and frequently overloaded upstream.
-//   Strictly opt-in via AI_PROVIDER=openrouter.
+// Which provider answers Ask Roo and resume parsing.
+// 'openrouter' = free NVIDIA Nemotron models via OPENROUTER_API_KEY. The
+//   DEFAULT: this is the intended provider for both AI features. Capped at
+//   ~50 requests/day on OpenRouter's free tier, and the upstream NVIDIA
+//   endpoints are frequently overloaded, hence the retry logic below.
+// 'anthropic'  = paid Claude via ANT_KEY. Escape hatch, kept working so a
+//   deployment that needs no rate ceiling can set AI_PROVIDER=anthropic.
 //
-// Opt-in rather than opt-out on purpose: defaulting to OpenRouter would have
-// silently downgraded any existing deployment that has ANT_KEY but no
-// AI_PROVIDER set, and — with no OPENROUTER_API_KEY — would have flipped
-// aiEnabled off and served demo data as if it were a real parse.
-const AI_PROVIDER = process.env.AI_PROVIDER === 'openrouter' ? 'openrouter' : 'anthropic'
+// A server that selects a provider whose key is missing serves no AI at all
+// (see aiEnabled) and every call fails with an explicit 503 naming the
+// variable — it never falls back to the other provider, and never to canned
+// data, because both would misrepresent where an answer came from.
+const AI_PROVIDER = process.env.AI_PROVIDER === 'anthropic' ? 'anthropic' : 'openrouter'
 
 export const aiEnabled = AI_PROVIDER === 'anthropic' ? !!client : !!openRouterApiKey
 
@@ -260,7 +261,7 @@ async function callOpenRouterOnce(
     if (res.status === 401) throw new Error('OpenRouter rejected the API key. Check OPENROUTER_API_KEY.')
     if (res.status === 429) {
       throw new AiRateLimitError(
-        "OpenRouter's free tier limit was reached. Please try again later, or unset AI_PROVIDER to use Claude via ANT_KEY instead.",
+        "OpenRouter's free tier limit was reached. Please try again later, or set AI_PROVIDER=anthropic to use Claude via ANT_KEY instead.",
       )
     }
     const body = await res.text().catch(() => '')
@@ -311,7 +312,7 @@ async function callOpenRouter(
     }
   }
   throw new Error(
-    `${lastTransient?.message ?? 'OpenRouter request failed.'} The free tier is busy — please try again in a moment, or unset AI_PROVIDER to use Claude via ANT_KEY.`,
+    `${lastTransient?.message ?? 'OpenRouter request failed.'} The free tier is busy — please try again in a moment, or set AI_PROVIDER=anthropic to use Claude via ANT_KEY.`,
   )
 }
 
