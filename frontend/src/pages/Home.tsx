@@ -8,30 +8,32 @@ import { matchesPostQuery } from '../lib/search'
 /** Feed window: posts from your network published in the last 48 hours. */
 const FEED_WINDOW_MS = 48 * 60 * 60 * 1000
 
+/** `/home#post-<id>` → `<id>`. Any other hash is not a post deep link. */
+function focusedPostId(hash: string): string | null {
+  const match = /^#post-(.+)$/.exec(hash)
+  return match ? match[1] : null
+}
+
 export function Home() {
   const { posts, users, query, connectionIds } = useApp()
 
-  // Post links (/home#post-<id>) scroll to the post once the feed is in — both
-  // when arriving from outside and when the hash changes while already here
-  // (e.g. clicking a preview card in the right sidebar), hence the hash dep.
-  const { hash } = useLocation()
-  useEffect(() => {
-    if (!hash || posts.length === 0) return
-    const el = document.getElementById(hash.slice(1))
-    if (!el) return
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    el.classList.add('ring-2', 'ring-[#ff4500]')
-    const timer = setTimeout(() => el.classList.remove('ring-2', 'ring-[#ff4500]'), 2500)
-    return () => {
-      clearTimeout(timer)
-      el.classList.remove('ring-2', 'ring-[#ff4500]')
-    }
-  }, [hash, posts.length])
+  // `key` changes on every navigation, including a repeat click on a link to
+  // the hash we are already at — without it, clicking the same sidebar preview
+  // card twice would leave `hash` untouched and silently do nothing.
+  const { hash, key: locationKey } = useLocation()
+  const focusId = focusedPostId(hash)
 
   const visible = useMemo(() => {
-    const matching = posts.filter((p) => matchesPostQuery(p, users, query))
-    const byNewest = (a: (typeof matching)[number], b: (typeof matching)[number]) =>
+    type FeedPost = (typeof posts)[number]
+    const byNewest = (a: FeedPost, b: FeedPost) =>
       +new Date(b.createdAt) - +new Date(a.createdAt)
+
+    const matching = posts.filter((p) => matchesPostQuery(p, users, query))
+
+    // An active search searches the whole feed. Layering the network/48h rule
+    // on top of the query dropped matching posts from outside your network with
+    // no indication why, which just reads as search being broken.
+    if (query.trim()) return [...matching].sort(byNewest)
 
     // Pinned Rooman announcements are official and always shown, regardless of
     // who posted them or how old they are.
@@ -48,8 +50,35 @@ export function Home() {
     const body =
       recentFromNetwork.length > 0 ? recentFromNetwork : fromNetwork.length > 0 ? fromNetwork : rest
 
-    return [...pinned, ...[...body].sort(byNewest)]
-  }, [posts, users, query, connectionIds])
+    const ordered = [...pinned, ...[...body].sort(byNewest)]
+
+    // The right sidebar ranks over *every* post (Top/Hot/Rising, "For You"),
+    // but the feed shows only the window above — so a preview card's
+    // /home#post-<id> target was usually absent and the link did nothing.
+    // Pull an explicitly linked post in so every preview card goes somewhere.
+    if (focusId && !ordered.some((p) => p.id === focusId)) {
+      const focused = posts.find((p) => p.id === focusId)
+      if (focused) return [...ordered, focused]
+    }
+
+    return ordered
+  }, [posts, users, query, connectionIds, focusId])
+
+  // Scroll to a deep-linked post once it is actually rendered, and highlight it
+  // briefly. Depends on `visible.length` rather than `posts.length` because the
+  // element only exists after the focused post has made it into the feed.
+  useEffect(() => {
+    if (!hash || visible.length === 0) return
+    const el = document.getElementById(hash.slice(1))
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.classList.add('ring-2', 'ring-[#ff4500]')
+    const timer = setTimeout(() => el.classList.remove('ring-2', 'ring-[#ff4500]'), 2500)
+    return () => {
+      clearTimeout(timer)
+      el.classList.remove('ring-2', 'ring-[#ff4500]')
+    }
+  }, [hash, locationKey, visible.length])
 
   return (
     <div className="flex flex-col gap-2">
@@ -61,7 +90,7 @@ export function Home() {
 
       {visible.length === 0 && (
         <div className="rounded-xl border border-[#edeff1] bg-white py-16 text-center text-[#878a8c] shadow-sm">
-          No posts match “{query}”.
+          {query.trim() ? <>No posts match “{query}”.</> : 'No posts yet.'}
         </div>
       )}
     </div>
