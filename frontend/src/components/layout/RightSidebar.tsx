@@ -1,14 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { Briefcase, Calendar, Trophy, X } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { Avatar, Button, Card } from '../ui'
 import { roleLine, timeAgo } from '../../lib/format'
-import { api } from '../../lib/api'
+import { useLeaderboard } from '../../hooks/useLeaderboard'
+import { useUpcomingEvents } from '../../hooks/useUpcomingEvents'
 
 export function RightSidebar() {
-  const { users, suggestionIds, sendConnect, connectionState, posts, sessions, userById , events } = useApp()
+  const { users, suggestionIds, sendConnect, connectionState, posts, sessions, userById } = useApp()
   const [noteModal, setNoteModal] = useState<{ userId: string; name: string } | null>(null)
   const [note, setNote] = useState('')
 
@@ -32,15 +33,10 @@ export function RightSidebar() {
     .slice(0, 3) as NonNullable<ReturnType<typeof userById>>[]
 
   const openings = posts.filter((p) => p.type === 'Hiring' && p.active !== false).slice(0, 3)
-  const [leaders, setLeaders] = useState<Awaited<ReturnType<typeof api.getLeaderboard>>>([])
-  useEffect(() => {
-    api.getLeaderboard().then(setLeaders, () => {})
-  }, [])
-
-  const nextEvents = events
-    .filter((e) => +new Date(e.startsAt) >= Date.now())
-    .sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt))
-    .slice(0, 2)
+  const leaders = useLeaderboard()
+  // Approved-only: /api/events also returns the caller's own pending/rejected
+  // events, which are host-only and must not surface here.
+  const nextEvents = useUpcomingEvents(2)
   // Confirmed sessions first, then requests still awaiting the mentor.
   const upcoming = [
     ...sessions.filter((s) => s.status === 'upcoming'),
