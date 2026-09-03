@@ -97,6 +97,8 @@ aiRouter.post(
       res.json({ answer })
     } catch (err) {
       console.error('Ask Roo failed:', err instanceof Error ? err.message : err)
+      const msg = err instanceof Error ? err.message : ''
+      if (/rate limit/i.test(msg)) throw new ApiError(503, msg)
       throw new ApiError(502, 'Roo had trouble answering — please try again.')
     }
   }),
