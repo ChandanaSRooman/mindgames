@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { query } from '../db/pool.js'
 import { requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
-import { aiEnabled, askRoo, type RooTurn } from '../ai.js'
+import { AiRateLimitError, aiEnabled, askRoo, type RooTurn } from '../ai.js'
 
 export const aiRouter = Router()
 
@@ -97,8 +97,8 @@ aiRouter.post(
       res.json({ answer })
     } catch (err) {
       console.error('Ask Roo failed:', err instanceof Error ? err.message : err)
-      const msg = err instanceof Error ? err.message : ''
-      if (/rate limit/i.test(msg)) throw new ApiError(503, msg)
+      // Usage limits are actionable, so surface the reason verbatim as a 503.
+      if (err instanceof AiRateLimitError) throw new ApiError(503, err.message)
       throw new ApiError(502, 'Roo had trouble answering — please try again.')
     }
   }),

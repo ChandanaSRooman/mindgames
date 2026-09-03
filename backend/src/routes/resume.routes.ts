@@ -4,9 +4,10 @@ import { parseResume, ResumeParseError } from '../ai.js'
 
 export const resumeRouter = Router()
 
-// POST /api/resume/parse — real AI extraction (Claude) for PDF/DOCX when
-// ANT_KEY is set; a fixed demo result (source: 'fallback') otherwise.
-// Parse failures surface as real errors instead of invented profile data.
+// POST /api/resume/parse — real AI extraction for PDF/DOCX via the configured
+// provider (Claude/ANT_KEY by default). An unconfigured server returns 503:
+// failures surface as real errors rather than invented profile data, since the
+// caller merges the result straight into the member's onboarding form.
 resumeRouter.post(
   '/parse',
   asyncHandler(async (req, res) => {

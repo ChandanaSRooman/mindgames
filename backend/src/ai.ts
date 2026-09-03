@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Anthropic from '@anthropic-ai/sdk'
 import mammoth from 'mammoth'
-import { resumeParseResult, type ResumeParseResult } from './data.js'
+import { type ResumeParseResult } from './data.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -72,12 +72,17 @@ const OPENROUTER_ASKROO_MODEL = 'nvidia/nemotron-3.5-lightning:free'
 const OPENROUTER_RESUME_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free'
 
 // Which provider actually answers AI calls.
-// 'openrouter' = free NVIDIA Nemotron 3.5 Lightning (dev) — no cost, but capped
-//   at ~50 requests/day on OpenRouter's free tier, and no native JSON-schema
-//   enforcement, so callers must parse/validate defensively.
-// 'anthropic'  = paid Claude (production-ready) — no rate ceiling, enforced
-//   JSON-schema output. Set AI_PROVIDER=anthropic to switch.
-const AI_PROVIDER = process.env.AI_PROVIDER === 'anthropic' ? 'anthropic' : 'openrouter'
+// 'anthropic'  = paid Claude via ANT_KEY. The DEFAULT, and what production
+//   runs: no rate ceiling, enforced JSON-schema output.
+// 'openrouter' = free NVIDIA Nemotron (dev only) — no cost, but capped at ~50
+//   requests/day on OpenRouter's free tier and frequently overloaded upstream.
+//   Strictly opt-in via AI_PROVIDER=openrouter.
+//
+// Opt-in rather than opt-out on purpose: defaulting to OpenRouter would have
+// silently downgraded any existing deployment that has ANT_KEY but no
+// AI_PROVIDER set, and — with no OPENROUTER_API_KEY — would have flipped
+// aiEnabled off and served demo data as if it were a real parse.
+const AI_PROVIDER = process.env.AI_PROVIDER === 'openrouter' ? 'openrouter' : 'anthropic'
 
 export const aiEnabled = AI_PROVIDER === 'anthropic' ? !!client : !!openRouterApiKey
 
@@ -204,6 +209,12 @@ type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
  * failure rather than a problem with the request itself. */
 class TransientOpenRouterError extends Error {}
 
+/** The provider refused the call because a usage limit was hit. A distinct type
+ * rather than a message substring: callers need to map this to 503 (and show
+ * the reason verbatim), and matching on wording silently broke the moment the
+ * message said "free tier limit" instead of "rate limit". */
+export class AiRateLimitError extends Error {}
+
 async function callOpenRouterOnce(
   model: string,
   messages: ChatMessage[],
@@ -248,8 +259,8 @@ async function callOpenRouterOnce(
   if (!res.ok) {
     if (res.status === 401) throw new Error('OpenRouter rejected the API key. Check OPENROUTER_API_KEY.')
     if (res.status === 429) {
-      throw new Error(
-        "OpenRouter's free tier limit was reached. Please try again later, or set AI_PROVIDER=anthropic to use paid Claude instead.",
+      throw new AiRateLimitError(
+        "OpenRouter's free tier limit was reached. Please try again later, or unset AI_PROVIDER to use Claude via ANT_KEY instead.",
       )
     }
     const body = await res.text().catch(() => '')
@@ -300,7 +311,7 @@ async function callOpenRouter(
     }
   }
   throw new Error(
-    `${lastTransient?.message ?? 'OpenRouter request failed.'} The free tier is busy — please try again in a moment, or set AI_PROVIDER=anthropic to use paid Claude.`,
+    `${lastTransient?.message ?? 'OpenRouter request failed.'} The free tier is busy — please try again in a moment, or unset AI_PROVIDER to use Claude via ANT_KEY.`,
   )
 }
 
@@ -450,11 +461,9 @@ async function parseResumeOpenRouter(dataBase64: string, mediaType?: string): Pr
     parsed = await callOpenRouterJson(OPENROUTER_RESUME_MODEL, messages, 4096, SCHEMA, false)
   } catch (err) {
     console.error('Resume parse (OpenRouter) failed:', err instanceof Error ? err.message : err)
-    const msg = err instanceof Error ? err.message : ''
-    throw new ResumeParseError(
-      /rate limit/i.test(msg) ? 503 : 502,
-      /rate limit/i.test(msg) ? msg : 'Resume parsing failed. Please try again, or fill in your details manually.',
-    )
+    // Usage limits are actionable, so pass the reason through verbatim.
+    if (err instanceof AiRateLimitError) throw new ResumeParseError(503, err.message)
+    throw new ResumeParseError(502, 'Resume parsing failed. Please try again, or fill in your details manually.')
   }
 
   // Never trust the free model's JSON blindly — a minimal shape check before use.
@@ -467,14 +476,25 @@ async function parseResumeOpenRouter(dataBase64: string, mediaType?: string): Pr
 
 /**
  * Parse a resume — real extraction for PDF and DOCX via whichever provider is
- * configured (see AI_PROVIDER above). Demo mode: with no provider configured,
- * returns a fixed sample result marked source: 'fallback' so the UI can say so.
+ * configured (see AI_PROVIDER above).
+ *
+ * There is no demo mode. An unconfigured server fails loudly instead of
+ * returning the sample profile: the caller merges whatever comes back straight
+ * into the onboarding form, so canned data would land in a real member's
+ * profile as if it had been read off their resume.
  */
 export async function parseResume(
   dataBase64?: string,
   mediaType?: string,
 ): Promise<ResumeParseResult> {
-  if (!aiEnabled) return resumeParseResult
+  if (!aiEnabled) {
+    throw new ResumeParseError(
+      503,
+      AI_PROVIDER === 'openrouter'
+        ? 'Resume parsing is not configured on this server (OPENROUTER_API_KEY missing). Please fill in your details manually.'
+        : 'Resume parsing is not configured on this server (ANT_KEY missing). Please fill in your details manually.',
+    )
+  }
 
   if (!dataBase64) {
     throw new ResumeParseError(400, 'No file received — please re-upload your resume.')
@@ -484,7 +504,11 @@ export async function parseResume(
     return parseResumeOpenRouter(dataBase64, mediaType)
   }
 
-  if (!client) return resumeParseResult
+  // aiEnabled already guarantees a client on the anthropic path; this keeps the
+  // narrowing explicit rather than asserting non-null.
+  if (!client) {
+    throw new ResumeParseError(503, 'Resume parsing is not configured on this server (ANT_KEY missing).')
+  }
 
   const content = await buildContent(dataBase64, mediaType)
 
