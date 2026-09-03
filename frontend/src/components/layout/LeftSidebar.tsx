@@ -11,8 +11,10 @@ import {
   Rocket,
   ShieldCheck,
   Users,
+  Menu,
 } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
+import { useLayout } from './LayoutContext'
 
 const NAV = [
   { to: '/home', label: 'Home', icon: Home },
@@ -28,11 +30,34 @@ const NAV = [
 
 export function LeftSidebar() {
   const { communities, currentUser } = useApp()
+  const { sidebarOpen, toggleSidebar } = useLayout()
   const navigate = useNavigate()
   const joined = communities.filter((c) => c.joined)
 
   return (
-    <aside className="fixed bottom-0 left-[var(--shell-gutter)] top-14 hidden w-[260px] overflow-y-auto border-r border-[#edeff1] bg-white px-3 py-4 lg:block">
+    <>
+      {/*
+        Collapse handle — a circular button that straddles the sidebar's right
+        border. When the sidebar is closed it parks at the left edge so it can
+        be reopened. Lives outside <aside> because that scrolls and would clip it.
+      */}
+      <button
+        onClick={toggleSidebar}
+        className={`fixed top-20 z-50 hidden h-9 w-9 items-center justify-center rounded-full border border-[#edeff1] bg-white text-[#878a8c] shadow-sm transition-all duration-200 hover:bg-gray-100 hover:text-[#1c1c1c] lg:flex ${
+          sidebarOpen
+            ? 'left-[calc(var(--shell-gutter)+260px-18px)]'
+            : 'left-[calc(var(--shell-gutter)+8px)]'
+        }`}
+        aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+        aria-expanded={sidebarOpen}
+      >
+        <Menu size={18} />
+      </button>
+
+      {/* Sidebar — slides fully off-screen when closed */}
+      <aside className={`fixed bottom-0 top-14 z-40 hidden w-[260px] overflow-y-auto border-r border-[#edeff1] bg-white px-3 py-4 transition-all duration-200 lg:block ${
+        sidebarOpen ? 'left-[var(--shell-gutter)]' : '-left-[280px]'
+      }`}>
       <nav className="flex flex-col gap-0.5">
         {NAV.map(({ to, label, icon: Icon }) => (
           <NavLink
@@ -100,5 +125,6 @@ export function LeftSidebar() {
         )}
       </div>
     </aside>
+    </>
   )
 }
