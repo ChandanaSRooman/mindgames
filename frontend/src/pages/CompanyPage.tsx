@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
-import { Bookmark, Briefcase, Handshake, MapPin, Sparkles, UserPlus, Users } from 'lucide-react'
+import { Bookmark, Briefcase, Handshake, MapPin, UserPlus, Users } from 'lucide-react'
 import { api } from '../lib/api'
-import { useApp } from '../store/AppStore'
 import { Avatar, Button, Card, CompanyLogo } from '../components/ui'
 import { ReachOutModal } from '../components/referral/ReachOutModal'
 import { ConnectNoteModal } from '../components/referral/ConnectNoteModal'
@@ -10,7 +9,6 @@ import type { CompanyAlumnus, CompanyDetail } from '../types'
 
 export function CompanyPage() {
   const { id } = useParams<{ id: string }>()
-  const { notify } = useApp()
   const [company, setCompany] = useState<CompanyDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -60,13 +58,6 @@ export function CompanyPage() {
               onClick={toggleSave}
             >
               {company.savedByMe ? 'Saved' : 'Save'}
-            </Button>
-            <Button
-              variant="outline"
-              icon={<Sparkles size={15} />}
-              onClick={() => notify('Hire AI integration is coming soon.')}
-            >
-              Take a test on Hire AI
             </Button>
           </div>
         </div>

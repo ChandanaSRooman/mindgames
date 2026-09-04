@@ -411,10 +411,10 @@ export const api = {
   getBadges: (userId: string) => http<{ points: number; badges: Badge[] }>(`/api/users/${userId}/badges`),
 
   // reports / moderation
-  report: (targetType: 'post' | 'user', targetId: string, reason: string) =>
+  report: (targetType: 'post' | 'user', targetId: string, reason: string, evidence?: string) =>
     http<{ ok: boolean; already?: boolean }>('/api/reports', {
       method: 'POST',
-      body: JSON.stringify({ targetType, targetId, reason }),
+      body: JSON.stringify({ targetType, targetId, reason, evidence }),
     }),
   getReports: () =>
     http<Array<{ id: string; targetType: 'post' | 'user'; targetId: string; reason: string; status: string; reporterName: string; summary: string; createdAt: string }>>('/api/reports'),

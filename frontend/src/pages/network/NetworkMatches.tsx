@@ -3,6 +3,7 @@ import { useOutletContext } from 'react-router-dom'
 import { MapPin, X } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { Avatar, Button, Card, Pill, SectionTitle } from '../../components/ui'
+import { GrowCatchupSection } from '../../components/grow/GrowCatchupSection'
 import { roleLine } from '../../lib/format'
 import { DOMAINS } from '../../types'
 import type { NetworkOutletContext } from './NetworkLayout'
@@ -17,11 +18,6 @@ export function NetworkMatches() {
   const [domainFilter, setDomainFilter] = useState<string>('All')
   const [noteModal, setNoteModal] = useState<{ userId: string; name: string } | null>(null)
   const [note, setNote] = useState('')
-
-  const handleConnect = (userId: string) => {
-    setNoteModal({ userId, name: users.find((u) => u.id === userId)?.name || 'Member' })
-    setNote('')
-  }
 
   const handleSendWithNote = () => {
     const wordCount = note.split(/\s+/).filter(Boolean).length
@@ -45,8 +41,16 @@ export function NetworkMatches() {
   )
 
   return (
-    <section>
-      <SectionTitle>People You May Know</SectionTitle>
+    <section className="space-y-8">
+      {/* Grow & Catch Up */}
+      <div>
+        <SectionTitle>Network Highlights</SectionTitle>
+        <GrowCatchupSection />
+      </div>
+
+      {/* People You May Know */}
+      <div>
+        <SectionTitle>People You May Know</SectionTitle>
       <div className="mb-3 flex flex-wrap gap-2">
         <Pill active={domainFilter === 'All'} onClick={() => setDomainFilter('All')}>All</Pill>
         {DOMAINS.map((d) => (
@@ -75,7 +79,10 @@ export function NetworkMatches() {
               variant={connectionState(u.id) === 'pending' ? 'subtle' : 'outline'}
               className="mt-3 w-full"
               disabled={connectionState(u.id) === 'pending'}
-              onClick={() => handleConnect(u.id)}
+              onClick={() => {
+                setNoteModal({ userId: u.id, name: u.name })
+                setNote('')
+              }}
             >
               {connectionState(u.id) === 'pending' ? 'Request sent' : 'Connect'}
             </Button>
@@ -85,11 +92,12 @@ export function NetworkMatches() {
           <p className="text-sm text-[#878a8c]">No suggestions match your filters.</p>
         )}
       </div>
+      </div>
 
       {/* Connection note modal */}
       {noteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 p-4" onClick={() => setNoteModal(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-bold text-[#1c1c1c]">Add a note to your invitation</h2>
               <button

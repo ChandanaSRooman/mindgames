@@ -1,11 +1,12 @@
 import { useCallback, useState } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Outlet, useLocation } from 'react-router-dom'
 import { MailWarning, X } from 'lucide-react'
 import { api } from '../../lib/api'
 import { useApp } from '../../store/AppStore'
 import { Navbar } from './Navbar'
 import { LeftSidebar } from './LeftSidebar'
 import { RightSidebar } from './RightSidebar'
+import { HomeRightSidebar } from './HomeRightSidebar'
 import { ChatPanel } from './ChatPanel'
 import { AskRoo } from './AskRoo'
 import { PostCreateModal } from '../feed/PostCreateModal'
@@ -14,6 +15,7 @@ import type { PostType } from '../../types'
 
 export function AppLayout() {
   const { currentUser, notify } = useApp()
+  const { pathname } = useLocation()
   const [composer, setComposer] = useState<{ open: boolean; type?: PostType; communityId?: string }>({
     open: false,
   })
@@ -51,7 +53,7 @@ export function AppLayout() {
     <LayoutContext.Provider value={{ openComposer, toggleChat, openChatWith, sidebarOpen, toggleSidebar }}>
       <Navbar />
       <LeftSidebar />
-      <RightSidebar />
+      {pathname === '/home' ? <HomeRightSidebar /> : <RightSidebar />}
 
       {/*
         Padding tracks the sidebars, which are offset by --shell-gutter so the

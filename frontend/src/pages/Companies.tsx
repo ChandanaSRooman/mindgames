@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Bookmark, Building2, Search } from 'lucide-react'
+import { Bookmark, BookOpen, Building2, Search, Sparkles } from 'lucide-react'
 import { api } from '../lib/api'
 import { matchesCompanyQuery } from '../lib/search'
-import { AvatarStack, Card, CompanyLogo, Pill } from '../components/ui'
+import { AvatarStack, Button, Card, CompanyLogo, Pill } from '../components/ui'
 import type { Company } from '../types'
 
 export function Companies() {
@@ -57,6 +57,24 @@ export function Companies() {
           placeholder="Search your dream company…"
           className="w-full rounded-full border border-[#edeff1] bg-white py-3.5 pr-4 pl-11 text-sm text-[#1c1c1c] shadow-sm outline-none focus:border-[#ff4500] focus:ring-2 focus:ring-[#ff4500]/20"
         />
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          icon={<Sparkles size={15} />}
+          onClick={() => window.open('https://hiresolution.ai/career-profiler', '_blank', 'noopener,noreferrer')}
+        >
+          Take a test on Hire AI
+        </Button>
+        <Button
+          variant="outline"
+          icon={<BookOpen size={15} />}
+          onClick={() => window.open('https://lms.rooman.com/', '_blank', 'noopener,noreferrer')}
+        >
+          Prepare using our Rooman LMS
+        </Button>
       </div>
 
       {/* Filters */}

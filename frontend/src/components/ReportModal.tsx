@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { Flag, X } from 'lucide-react'
+import { Flag, X, Link as LinkIcon } from 'lucide-react'
 import { api } from '../lib/api'
 import { useApp } from '../store/AppStore'
 import { Button } from './ui'
 
-/** Flag a post or member for the admin team. */
+/** Flag a post or member for the admin team with optional evidence. */
 export function ReportModal({
   targetType,
   targetId,
@@ -18,13 +18,14 @@ export function ReportModal({
 }) {
   const { notify } = useApp()
   const [reason, setReason] = useState('')
+  const [evidence, setEvidence] = useState('')
   const [sending, setSending] = useState(false)
 
   async function submit() {
     if (reason.trim().length < 3) return
     setSending(true)
     try {
-      const r = await api.report(targetType, targetId, reason.trim())
+      const r = await api.report(targetType, targetId, reason.trim(), evidence.trim() || undefined)
       notify(
         r.already
           ? 'You already reported this — the admin team is on it.'
@@ -38,6 +39,8 @@ export function ReportModal({
     }
   }
 
+  const canSubmit = reason.trim().length >= 3 && !sending
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="animate-slidein w-full max-w-md rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -50,22 +53,44 @@ export function ReportModal({
             <X size={18} />
           </button>
         </div>
-        <div className="space-y-3 px-5 py-4">
+        <div className="space-y-4 px-5 py-4">
           <p className="text-sm text-[#878a8c]">
             Reporting <span className="font-semibold text-[#1c1c1c]">{targetLabel}</span>. Only the
             Rooman admin team sees this.
           </p>
-          <textarea
-            value={reason}
-            onChange={(e) => setReason(e.target.value.slice(0, 500))}
-            rows={3}
-            placeholder="What's wrong? (spam, harassment, fake job, impersonation…)"
-            className="w-full resize-none rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
-          />
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-[#1c1c1c]">What's the issue?</label>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value.slice(0, 500))}
+              rows={3}
+              placeholder="Describe what happened (spam, harassment, fake job offer, scam, etc.)"
+              className="w-full resize-none rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
+            />
+            <p className="mt-1 text-xs text-[#878a8c]">{reason.length}/500 characters</p>
+          </div>
+
+          {targetType === 'user' && (
+            <div>
+              <label className="mb-2 flex items-center gap-1.5 text-sm font-medium text-[#1c1c1c]">
+                <LinkIcon size={14} />
+                Evidence (optional)
+              </label>
+              <textarea
+                value={evidence}
+                onChange={(e) => setEvidence(e.target.value.slice(0, 500))}
+                rows={2}
+                placeholder="Links to fake job posts, screenshots, profile links that confirm the issue..."
+                className="w-full resize-none rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
+              />
+              <p className="mt-1 text-xs text-[#878a8c]">Paste links or describe evidence that supports your report</p>
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-[#edeff1] px-5 py-3">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button disabled={reason.trim().length < 3 || sending} onClick={submit}>
+          <Button variant="ghost" onClick={onClose} disabled={sending}>Cancel</Button>
+          <Button disabled={!canSubmit} onClick={submit} loading={sending}>
             {sending ? 'Sending…' : 'Send report'}
           </Button>
         </div>
