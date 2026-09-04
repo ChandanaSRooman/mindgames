@@ -7,11 +7,27 @@ import { type ResumeParseResult } from './data.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+/** Thrown when parsing fails for a reason the user can act on. */
+export class ResumeParseError extends Error {
+  constructor(public status: number, message: string) {
+    super(message)
+  }
+}
+
 // pdf-parse ships an old bundled pdf.js that throws at module-init time when
 // loaded under tsx — tsx installs a process-wide require-transform hook (not
 // just for top-level imports) that this legacy webpack bundle doesn't survive.
 // Running the extraction in a genuine plain `node` child process (no tsx hook
 // active there at all) sidesteps this entirely — confirmed working standalone.
+
+// A hung extraction must not be able to pin a request or leak a process:
+// pdf.js can spin forever on a malformed or crafted file, in which case `close`
+// never fires — the promise would never settle and the child would survive the
+// request. Since /api/resume/parse accepts uploads, an unbounded spawn is a
+// process-exhaustion lever, so every child gets a hard deadline and a SIGKILL.
+// 20s is ~10x the worst real extraction seen in testing (a 12-page PDF).
+const PDF_EXTRACT_TIMEOUT_MS = 20_000
+
 function extractPdfText(buffer: Buffer): Promise<string> {
   return new Promise((resolve, reject) => {
     // The bundled pdf.js writes font warnings ("Warning: TT: undefined
@@ -31,26 +47,58 @@ function extractPdfText(buffer: Buffer): Promise<string> {
       cwd: path.join(__dirname, '..'), // backend/ — so require('pdf-parse') resolves via its node_modules
       stdio: ['pipe', 'pipe', 'pipe'],
     })
-    let out = ''
-    let errOut = ''
-    child.stdout.on('data', (d) => (out += d))
-    child.stderr.on('data', (d) => (errOut += d))
-    child.on('error', reject)
-    child.stdin.on('error', reject) // e.g. EPIPE if the child dies mid-write
-    child.on('close', () => {
-      try {
-        // Defensive: slice to the JSON object in case anything still leaks to
-        // stdout ahead of/after it.
-        const start = out.indexOf('{')
-        const end = out.lastIndexOf('}')
-        const json = start !== -1 && end > start ? out.slice(start, end + 1) : out
-        const parsed = JSON.parse(json) as { text?: string; error?: string }
-        if (parsed.error) return reject(new Error(parsed.error))
-        resolve(parsed.text ?? '')
-      } catch {
-        reject(new Error(errOut || 'pdf extraction process returned no usable output'))
-      }
-    })
+    // Collect raw chunks and decode once at the end. Concatenating each chunk
+    // as a string decodes it in isolation, so a multi-byte character (an
+    // accented name, ₹) straddling a pipe-chunk boundary is corrupted into
+    // replacement characters — which can also break the JSON.parse below.
+    const outChunks: Buffer[] = []
+    const errChunks: Buffer[] = []
+    // Every exit path runs through settle(), so the deadline is always cleared
+    // and neither resolve nor reject can fire twice (a timeout kill emits
+    // 'close' right after we have already rejected).
+    let settled = false
+    const settle = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(deadline)
+      fn()
+    }
+    const deadline = setTimeout(() => {
+      // SIGKILL, not SIGTERM: a pdf.js parse stuck in a tight loop never
+      // reaches a handler that could act on a polite signal.
+      child.kill('SIGKILL')
+      settle(() =>
+        reject(
+          new ResumeParseError(
+            422,
+            'That PDF took too long to read and was stopped. Please try a simpler PDF, or fill in your details manually.',
+          ),
+        ),
+      )
+    }, PDF_EXTRACT_TIMEOUT_MS)
+
+    child.stdout.on('data', (d: Buffer) => outChunks.push(d))
+    child.stderr.on('data', (d: Buffer) => errChunks.push(d))
+    child.on('error', (err) => settle(() => reject(err)))
+    child.stdin.on('error', (err) => settle(() => reject(err))) // e.g. EPIPE if the child dies mid-write
+    child.on('close', () =>
+      settle(() => {
+        const out = Buffer.concat(outChunks).toString('utf8')
+        try {
+          // Defensive: slice to the JSON object in case anything still leaks to
+          // stdout ahead of/after it.
+          const start = out.indexOf('{')
+          const end = out.lastIndexOf('}')
+          const json = start !== -1 && end > start ? out.slice(start, end + 1) : out
+          const parsed = JSON.parse(json) as { text?: string; error?: string }
+          if (parsed.error) return reject(new Error(parsed.error))
+          resolve(parsed.text ?? '')
+        } catch {
+          const errOut = Buffer.concat(errChunks).toString('utf8')
+          reject(new Error(errOut || 'pdf extraction process returned no usable output'))
+        }
+      }),
+    )
     child.stdin.write(buffer)
     child.stdin.end()
   })
@@ -86,13 +134,6 @@ const OPENROUTER_RESUME_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free'
 const AI_PROVIDER = process.env.AI_PROVIDER === 'anthropic' ? 'anthropic' : 'openrouter'
 
 export const aiEnabled = AI_PROVIDER === 'anthropic' ? !!client : !!openRouterApiKey
-
-/** Thrown when parsing fails for a reason the user can act on. */
-export class ResumeParseError extends Error {
-  constructor(public status: number, message: string) {
-    super(message)
-  }
-}
 
 // Must stay in sync with DOMAINS / EMPLOYMENT_TYPES in frontend/src/types.ts.
 // "" means "could not tell from the resume" — the form keeps its own value then.
@@ -216,78 +257,108 @@ class TransientOpenRouterError extends Error {}
  * message said "free tier limit" instead of "rate limit". */
 export class AiRateLimitError extends Error {}
 
+const isAbort = (err: unknown): boolean => err instanceof Error && err.name === 'AbortError'
+
+// Per-attempt ceiling, and a ceiling on everything spent inside one AI call
+// (all retries plus, for resume parsing, the corrective re-ask). Without the
+// second one a single upload could occupy a handler for ~6 minutes — 3 attempts
+// x 60s, then the same again for the re-ask — far past most proxy timeouts, so
+// the client has already given up while the server keeps working.
+const OPENROUTER_ATTEMPT_TIMEOUT_MS = 60_000
+const OPENROUTER_TOTAL_BUDGET_MS = 75_000
+
 async function callOpenRouterOnce(
   model: string,
   messages: ChatMessage[],
   maxTokens: number,
   reasoningEnabled: boolean | undefined,
-  jsonSchema?: object,
+  jsonSchema: object | undefined,
+  deadline: number,
 ): Promise<string> {
   if (!openRouterApiKey) throw new Error('OPENROUTER_API_KEY is not configured.')
 
-  let res: Response
+  const remaining = Math.min(OPENROUTER_ATTEMPT_TIMEOUT_MS, deadline - Date.now())
+  if (remaining <= 0) {
+    throw new TransientOpenRouterError('Ran out of time waiting for OpenRouter — the free tier is congested.')
+  }
+
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 60_000) // free-tier can be slow; fail clearly rather than hang
+  // The abort has to stay armed until the body has been read, not just until
+  // the headers arrive: fetch() resolves on headers, so clearing the timeout
+  // there leaves a stalled body stream hanging with nothing left to abort it.
+  const timeout = setTimeout(() => controller.abort(), remaining)
   try {
-    const payload: Record<string, unknown> = { model, messages, max_tokens: maxTokens }
-    if (reasoningEnabled !== undefined) payload.reasoning = { enabled: reasoningEnabled }
-    // Native schema enforcement, when the model supports it — structurally
-    // guarantees parseable output instead of relying on the prompt alone.
-    if (jsonSchema) {
-      payload.response_format = {
-        type: 'json_schema',
-        json_schema: { name: 'result', strict: true, schema: jsonSchema },
+    let res: Response
+    try {
+      const payload: Record<string, unknown> = { model, messages, max_tokens: maxTokens }
+      if (reasoningEnabled !== undefined) payload.reasoning = { enabled: reasoningEnabled }
+      // Native schema enforcement, when the model supports it — structurally
+      // guarantees parseable output instead of relying on the prompt alone.
+      if (jsonSchema) {
+        payload.response_format = {
+          type: 'json_schema',
+          json_schema: { name: 'result', strict: true, schema: jsonSchema },
+        }
       }
+      res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${openRouterApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      })
+    } catch (err) {
+      if (isAbort(err)) {
+        throw new TransientOpenRouterError('OpenRouter took too long to respond — the free tier can be slow or congested.')
+      }
+      throw new TransientOpenRouterError('Could not reach OpenRouter.')
     }
-    res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${openRouterApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    })
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new TransientOpenRouterError('OpenRouter took too long to respond (over 60s) — the free tier can be slow or congested.')
+
+    if (!res.ok) {
+      if (res.status === 401) throw new Error('OpenRouter rejected the API key. Check OPENROUTER_API_KEY.')
+      if (res.status === 429) {
+        throw new AiRateLimitError(
+          "OpenRouter's free tier limit was reached. Please try again later, or set AI_PROVIDER=anthropic to use Claude via ANT_KEY instead.",
+        )
+      }
+      const body = await res.text().catch(() => '')
+      if (res.status >= 500) throw new TransientOpenRouterError(`OpenRouter upstream error (${res.status}).`)
+      throw new Error(`OpenRouter request failed (${res.status}): ${body.slice(0, 200)}`)
     }
-    throw new TransientOpenRouterError('Could not reach OpenRouter.')
+
+    // OpenRouter reports upstream provider failures as HTTP 200 with an `error`
+    // field in the body (e.g. {"message":"Upstream error from Nvidia: Service
+    // temporarily overloaded","code":502}) — so a 200 alone does not mean success.
+    let data: {
+      choices?: { message?: { content?: string } }[]
+      error?: { message?: string; code?: number }
+    }
+    try {
+      data = await res.json()
+    } catch (err) {
+      throw new TransientOpenRouterError(
+        isAbort(err)
+          ? 'OpenRouter stopped sending its reply partway through — the free tier can be slow or congested.'
+          : 'OpenRouter returned a malformed response body.',
+      )
+    }
+    if (data.error) {
+      const message = data.error.message ?? 'Unknown OpenRouter error'
+      const code = data.error.code ?? 0
+      if (code >= 500 || /overloaded|timeout|temporarily/i.test(message)) {
+        throw new TransientOpenRouterError(message)
+      }
+      throw new Error(`OpenRouter error: ${message}`)
+    }
+
+    const text = data.choices?.[0]?.message?.content
+    if (!text) throw new TransientOpenRouterError('OpenRouter returned an empty response.')
+    return text
   } finally {
     clearTimeout(timeout)
   }
-
-  if (!res.ok) {
-    if (res.status === 401) throw new Error('OpenRouter rejected the API key. Check OPENROUTER_API_KEY.')
-    if (res.status === 429) {
-      throw new AiRateLimitError(
-        "OpenRouter's free tier limit was reached. Please try again later, or set AI_PROVIDER=anthropic to use Claude via ANT_KEY instead.",
-      )
-    }
-    const body = await res.text().catch(() => '')
-    if (res.status >= 500) throw new TransientOpenRouterError(`OpenRouter upstream error (${res.status}).`)
-    throw new Error(`OpenRouter request failed (${res.status}): ${body.slice(0, 200)}`)
-  }
-
-  // OpenRouter reports upstream provider failures as HTTP 200 with an `error`
-  // field in the body (e.g. {"message":"Upstream error from Nvidia: Service
-  // temporarily overloaded","code":502}) — so a 200 alone does not mean success.
-  const data = (await res.json()) as {
-    choices?: { message?: { content?: string } }[]
-    error?: { message?: string; code?: number }
-  }
-  if (data.error) {
-    const message = data.error.message ?? 'Unknown OpenRouter error'
-    const code = data.error.code ?? 0
-    if (code >= 500 || /overloaded|timeout|temporarily/i.test(message)) {
-      throw new TransientOpenRouterError(message)
-    }
-    throw new Error(`OpenRouter error: ${message}`)
-  }
-
-  const text = data.choices?.[0]?.message?.content
-  if (!text) throw new TransientOpenRouterError('OpenRouter returned an empty response.')
-  return text
 }
 
 /** Calls OpenRouter, retrying a couple of times when the free upstream endpoint
@@ -298,17 +369,27 @@ async function callOpenRouter(
   maxTokens: number,
   reasoningEnabled: boolean | undefined,
   jsonSchema?: object,
+  // Shared wall-clock budget. Callers that make more than one request (see
+  // callOpenRouterJson) pass the same deadline to every one of them, so the
+  // whole operation stays inside a single bound instead of multiplying.
+  deadline: number = Date.now() + OPENROUTER_TOTAL_BUDGET_MS,
 ): Promise<string> {
   const MAX_ATTEMPTS = 3
   let lastTransient: Error | null = null
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (Date.now() >= deadline) break
     try {
-      return await callOpenRouterOnce(model, messages, maxTokens, reasoningEnabled, jsonSchema)
+      return await callOpenRouterOnce(model, messages, maxTokens, reasoningEnabled, jsonSchema, deadline)
     } catch (err) {
       if (!(err instanceof TransientOpenRouterError)) throw err
       lastTransient = err
       console.warn(`OpenRouter attempt ${attempt}/${MAX_ATTEMPTS} failed (transient): ${err.message}`)
-      if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, 2000 * attempt))
+      const backoff = 2000 * attempt
+      // Don't sleep into (or past) the deadline — that burns the remaining
+      // budget on waiting and leaves nothing for the retry itself.
+      if (attempt < MAX_ATTEMPTS && Date.now() + backoff < deadline) {
+        await new Promise((r) => setTimeout(r, backoff))
+      }
     }
   }
   throw new Error(
@@ -352,7 +433,9 @@ async function callOpenRouterJson(
   jsonSchema?: object,
   reasoningEnabled?: boolean,
 ): Promise<unknown> {
-  const first = await callOpenRouter(model, messages, maxTokens, reasoningEnabled, jsonSchema)
+  // One budget for the first call and the corrective re-ask together.
+  const deadline = Date.now() + OPENROUTER_TOTAL_BUDGET_MS
+  const first = await callOpenRouter(model, messages, maxTokens, reasoningEnabled, jsonSchema, deadline)
   try {
     return JSON.parse(extractJsonObject(first))
   } catch {
@@ -366,7 +449,7 @@ async function callOpenRouterJson(
         content: 'Your entire reply must be ONLY the JSON object — starting with { and ending with }. No words before or after it, no markdown, no code fence. Output the JSON object now.',
       },
     ]
-    const second = await callOpenRouter(model, retryMessages, maxTokens, reasoningEnabled, jsonSchema)
+    const second = await callOpenRouter(model, retryMessages, maxTokens, reasoningEnabled, jsonSchema, deadline)
     return JSON.parse(extractJsonObject(second)) // still invalid → let it throw, caller maps to a clean error
   }
 }
@@ -467,12 +550,58 @@ async function parseResumeOpenRouter(dataBase64: string, mediaType?: string): Pr
     throw new ResumeParseError(502, 'Resume parsing failed. Please try again, or fill in your details manually.')
   }
 
-  // Never trust the free model's JSON blindly — a minimal shape check before use.
-  if (typeof parsed !== 'object' || parsed === null || typeof (parsed as { name?: unknown }).name !== 'string') {
-    throw new ResumeParseError(502, 'The AI returned an unexpected response. Please try again or fill in your details manually.')
-  }
+  return validateParsedResume(parsed)
+}
 
-  return { ...(parsed as Omit<ResumeParseResult, 'source'>), source: 'ai' }
+const isExperienceEntry = (v: unknown): v is ResumeParseResult['experience'][number] =>
+  typeof v === 'object' &&
+  v !== null &&
+  (['role', 'company', 'period', 'summary'] as const).every(
+    (k) => typeof (v as Record<string, unknown>)[k] === 'string',
+  )
+
+/**
+ * Never trust the free model's JSON blindly, and never hand a partial object to
+ * the caller. The onboarding form indexes `experience[0]` and calls
+ * `skills.length` / `skills.join()` directly, so a reply of `{"name":"Jane"}` —
+ * which a free model with advisory schema adherence can absolutely return —
+ * would pass a name-only check and then throw a TypeError in the browser,
+ * killing the upload flow instead of showing a "fill it in manually" error.
+ *
+ * Every field is therefore checked and rebuilt rather than spread through:
+ * missing strings become "", malformed experience entries are dropped, and a
+ * reply missing `name`, `experience` or `skills` outright is rejected.
+ */
+function validateParsedResume(parsed: unknown): ResumeParseResult {
+  const reject = () => {
+    throw new ResumeParseError(
+      502,
+      'The AI returned an unexpected response. Please try again or fill in your details manually.',
+    )
+  }
+  if (typeof parsed !== 'object' || parsed === null) reject()
+  const raw = parsed as Record<string, unknown>
+  if (typeof raw.name !== 'string' || !Array.isArray(raw.experience) || !Array.isArray(raw.skills)) reject()
+
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+  return {
+    name: str(raw.name),
+    email: str(raw.email),
+    phone: str(raw.phone),
+    linkedin: str(raw.linkedin),
+    city: str(raw.city),
+    headline: str(raw.headline),
+    bio: str(raw.bio),
+    batchYear: str(raw.batchYear),
+    course: str(raw.course),
+    experienceYears: str(raw.experienceYears),
+    domain: str(raw.domain),
+    employmentType: str(raw.employmentType),
+    college: str(raw.college),
+    experience: (raw.experience as unknown[]).filter(isExperienceEntry),
+    skills: (raw.skills as unknown[]).filter((s): s is string => typeof s === 'string'),
+    source: 'ai',
+  }
 }
 
 /**
@@ -532,8 +661,9 @@ export async function parseResume(
     if (!text) {
       throw new ResumeParseError(502, 'The AI returned an empty response. Please try again.')
     }
-    const parsed = JSON.parse(text) as Omit<ResumeParseResult, 'source'>
-    return { ...parsed, source: 'ai' }
+    // Schema-enforced here, so this should always pass — validated anyway so
+    // both providers are guaranteed to return the same complete shape.
+    return validateParsedResume(JSON.parse(text))
   } catch (err) {
     if (err instanceof ResumeParseError) throw err
     if (err instanceof Anthropic.AuthenticationError) {
