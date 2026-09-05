@@ -1,12 +1,11 @@
+import { spawn } from 'node:child_process'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import Anthropic from '@anthropic-ai/sdk'
 import mammoth from 'mammoth'
-import { resumeParseResult, type ResumeParseResult } from './data.js'
+import { type ResumeParseResult } from './data.js'
 
-// ANT_KEY is this app's config name; ANTHROPIC_API_KEY is the standard SDK var.
-const apiKey = process.env.ANT_KEY || process.env.ANTHROPIC_API_KEY
-const client = apiKey ? new Anthropic({ apiKey }) : null
-
-export const aiEnabled = !!client
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 /** Thrown when parsing fails for a reason the user can act on. */
 export class ResumeParseError extends Error {
@@ -14,6 +13,127 @@ export class ResumeParseError extends Error {
     super(message)
   }
 }
+
+// pdf-parse ships an old bundled pdf.js that throws at module-init time when
+// loaded under tsx — tsx installs a process-wide require-transform hook (not
+// just for top-level imports) that this legacy webpack bundle doesn't survive.
+// Running the extraction in a genuine plain `node` child process (no tsx hook
+// active there at all) sidesteps this entirely — confirmed working standalone.
+
+// A hung extraction must not be able to pin a request or leak a process:
+// pdf.js can spin forever on a malformed or crafted file, in which case `close`
+// never fires — the promise would never settle and the child would survive the
+// request. Since /api/resume/parse accepts uploads, an unbounded spawn is a
+// process-exhaustion lever, so every child gets a hard deadline and a SIGKILL.
+// 20s is ~10x the worst real extraction seen in testing (a 12-page PDF).
+const PDF_EXTRACT_TIMEOUT_MS = 20_000
+
+function extractPdfText(buffer: Buffer): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // The bundled pdf.js writes font warnings ("Warning: TT: undefined
+    // function: 32", emitted for many real-world PDFs with embedded TrueType
+    // fonts) to STDOUT, not stderr — which would corrupt the JSON we read back.
+    // So the child silences stdout while parsing, then restores it to emit only
+    // the JSON result.
+    const script =
+      "const c=[];process.stdin.on('data',d=>c.push(d));process.stdin.on('end',()=>{" +
+      'const w=process.stdout.write.bind(process.stdout);' +
+      'process.stdout.write=()=>true;' +
+      'const done=o=>{process.stdout.write=w;w(JSON.stringify(o))};' +
+      "require('pdf-parse')(Buffer.concat(c))" +
+      '.then(r=>done({text:r.text}))' +
+      '.catch(e=>done({error:e.message}))})'
+    const child = spawn(process.execPath, ['-e', script], {
+      cwd: path.join(__dirname, '..'), // backend/ — so require('pdf-parse') resolves via its node_modules
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    // Collect raw chunks and decode once at the end. Concatenating each chunk
+    // as a string decodes it in isolation, so a multi-byte character (an
+    // accented name, ₹) straddling a pipe-chunk boundary is corrupted into
+    // replacement characters — which can also break the JSON.parse below.
+    const outChunks: Buffer[] = []
+    const errChunks: Buffer[] = []
+    // Every exit path runs through settle(), so the deadline is always cleared
+    // and neither resolve nor reject can fire twice (a timeout kill emits
+    // 'close' right after we have already rejected).
+    let settled = false
+    const settle = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(deadline)
+      fn()
+    }
+    const deadline = setTimeout(() => {
+      // SIGKILL, not SIGTERM: a pdf.js parse stuck in a tight loop never
+      // reaches a handler that could act on a polite signal.
+      child.kill('SIGKILL')
+      settle(() =>
+        reject(
+          new ResumeParseError(
+            422,
+            'That PDF took too long to read and was stopped. Please try a simpler PDF, or fill in your details manually.',
+          ),
+        ),
+      )
+    }, PDF_EXTRACT_TIMEOUT_MS)
+
+    child.stdout.on('data', (d: Buffer) => outChunks.push(d))
+    child.stderr.on('data', (d: Buffer) => errChunks.push(d))
+    child.on('error', (err) => settle(() => reject(err)))
+    child.stdin.on('error', (err) => settle(() => reject(err))) // e.g. EPIPE if the child dies mid-write
+    child.on('close', () =>
+      settle(() => {
+        const out = Buffer.concat(outChunks).toString('utf8')
+        try {
+          // Defensive: slice to the JSON object in case anything still leaks to
+          // stdout ahead of/after it.
+          const start = out.indexOf('{')
+          const end = out.lastIndexOf('}')
+          const json = start !== -1 && end > start ? out.slice(start, end + 1) : out
+          const parsed = JSON.parse(json) as { text?: string; error?: string }
+          if (parsed.error) return reject(new Error(parsed.error))
+          resolve(parsed.text ?? '')
+        } catch {
+          const errOut = Buffer.concat(errChunks).toString('utf8')
+          reject(new Error(errOut || 'pdf extraction process returned no usable output'))
+        }
+      }),
+    )
+    child.stdin.write(buffer)
+    child.stdin.end()
+  })
+}
+
+// ANT_KEY is this app's config name; ANTHROPIC_API_KEY is the standard SDK var.
+const apiKey = process.env.ANT_KEY || process.env.ANTHROPIC_API_KEY
+const client = apiKey ? new Anthropic({ apiKey }) : null
+
+const openRouterApiKey = process.env.OPENROUTER_API_KEY
+// Ask Roo: small/fast model — free chat, works well, no reason to use anything bigger.
+const OPENROUTER_ASKROO_MODEL = 'nvidia/nemotron-3.5-lightning:free'
+// Resume parsing: needs reliable structured JSON. Unlike Lightning and Ultra
+// (neither supports `response_format`, so both needed prompt-and-pray JSON with
+// defensive parsing — Lightning echoed prose, Ultra's free endpoint is routinely
+// "temporarily overloaded"), Nemotron 3 Super natively supports json_schema
+// enforcement, which makes the output structurally guaranteed. It's also far
+// faster in testing (~1-2s vs. 30-60s+ on Ultra).
+const OPENROUTER_RESUME_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free'
+
+// Which provider answers Ask Roo and resume parsing.
+// 'openrouter' = free NVIDIA Nemotron models via OPENROUTER_API_KEY. The
+//   DEFAULT: this is the intended provider for both AI features. Capped at
+//   ~50 requests/day on OpenRouter's free tier, and the upstream NVIDIA
+//   endpoints are frequently overloaded, hence the retry logic below.
+// 'anthropic'  = paid Claude via ANT_KEY. Escape hatch, kept working so a
+//   deployment that needs no rate ceiling can set AI_PROVIDER=anthropic.
+//
+// A server that selects a provider whose key is missing serves no AI at all
+// (see aiEnabled) and every call fails with an explicit 503 naming the
+// variable — it never falls back to the other provider, and never to canned
+// data, because both would misrepresent where an answer came from.
+const AI_PROVIDER = process.env.AI_PROVIDER === 'anthropic' ? 'anthropic' : 'openrouter'
+
+export const aiEnabled = AI_PROVIDER === 'anthropic' ? !!client : !!openRouterApiKey
 
 // Must stay in sync with DOMAINS / EMPLOYMENT_TYPES in frontend/src/types.ts.
 // "" means "could not tell from the resume" — the form keeps its own value then.
@@ -113,20 +233,411 @@ async function buildContent(dataBase64: string, mediaType?: string): Promise<Use
   throw new ResumeParseError(415, 'Unsupported file type. Please upload a PDF or .docx resume.')
 }
 
+// ---------------------------------------------------------------------------
+// OpenRouter (free, dev-only) — plain fetch, no SDK. OpenAI-compatible REST API.
+// ---------------------------------------------------------------------------
+
+type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
+
+/** Minimal OpenRouter chat-completions call. Returns the assistant's raw text.
+ * `reasoningEnabled` is model-specific: Lightning writes its chain-of-thought
+ * straight into `content` unless reasoning is explicitly disabled (garbles
+ * Ask Roo's answers) — pass `false` for it. Nemotron 3 Ultra's JSON output
+ * only worked in testing with the `reasoning` field omitted entirely (passing
+ * an explicit `enabled: true` produced empty responses, not equivalent to
+ * omitting it) — pass `undefined` for it. */
+/** Marks an error as worth retrying — the free NVIDIA endpoints are frequently
+ * "temporarily overloaded", which OpenRouter reports as a transient upstream
+ * failure rather than a problem with the request itself. */
+class TransientOpenRouterError extends Error {}
+
+/** The provider refused the call because a usage limit was hit. A distinct type
+ * rather than a message substring: callers need to map this to 503 (and show
+ * the reason verbatim), and matching on wording silently broke the moment the
+ * message said "free tier limit" instead of "rate limit". */
+export class AiRateLimitError extends Error {}
+
+const isAbort = (err: unknown): boolean => err instanceof Error && err.name === 'AbortError'
+
+// Per-attempt ceiling, and a ceiling on everything spent inside one AI call
+// (all retries plus, for resume parsing, the corrective re-ask). Without the
+// second one a single upload could occupy a handler for ~6 minutes — 3 attempts
+// x 60s, then the same again for the re-ask — far past most proxy timeouts, so
+// the client has already given up while the server keeps working.
+const OPENROUTER_ATTEMPT_TIMEOUT_MS = 60_000
+const OPENROUTER_TOTAL_BUDGET_MS = 75_000
+
+async function callOpenRouterOnce(
+  model: string,
+  messages: ChatMessage[],
+  maxTokens: number,
+  reasoningEnabled: boolean | undefined,
+  jsonSchema: object | undefined,
+  deadline: number,
+): Promise<string> {
+  if (!openRouterApiKey) throw new Error('OPENROUTER_API_KEY is not configured.')
+
+  const remaining = Math.min(OPENROUTER_ATTEMPT_TIMEOUT_MS, deadline - Date.now())
+  if (remaining <= 0) {
+    throw new TransientOpenRouterError('Ran out of time waiting for OpenRouter — the free tier is congested.')
+  }
+
+  const controller = new AbortController()
+  // The abort has to stay armed until the body has been read, not just until
+  // the headers arrive: fetch() resolves on headers, so clearing the timeout
+  // there leaves a stalled body stream hanging with nothing left to abort it.
+  const timeout = setTimeout(() => controller.abort(), remaining)
+  try {
+    let res: Response
+    try {
+      const payload: Record<string, unknown> = { model, messages, max_tokens: maxTokens }
+      if (reasoningEnabled !== undefined) payload.reasoning = { enabled: reasoningEnabled }
+      // Native schema enforcement, when the model supports it — structurally
+      // guarantees parseable output instead of relying on the prompt alone.
+      if (jsonSchema) {
+        payload.response_format = {
+          type: 'json_schema',
+          json_schema: { name: 'result', strict: true, schema: jsonSchema },
+        }
+      }
+      res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${openRouterApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      })
+    } catch (err) {
+      if (isAbort(err)) {
+        throw new TransientOpenRouterError('OpenRouter took too long to respond — the free tier can be slow or congested.')
+      }
+      throw new TransientOpenRouterError('Could not reach OpenRouter.')
+    }
+
+    if (!res.ok) {
+      if (res.status === 401) throw new Error('OpenRouter rejected the API key. Check OPENROUTER_API_KEY.')
+      if (res.status === 429) {
+        throw new AiRateLimitError(
+          "OpenRouter's free tier limit was reached. Please try again later, or set AI_PROVIDER=anthropic to use Claude via ANT_KEY instead.",
+        )
+      }
+      const body = await res.text().catch(() => '')
+      if (res.status >= 500) throw new TransientOpenRouterError(`OpenRouter upstream error (${res.status}).`)
+      throw new Error(`OpenRouter request failed (${res.status}): ${body.slice(0, 200)}`)
+    }
+
+    // OpenRouter reports upstream provider failures as HTTP 200 with an `error`
+    // field in the body (e.g. {"message":"Upstream error from Nvidia: Service
+    // temporarily overloaded","code":502}) — so a 200 alone does not mean success.
+    let data: {
+      choices?: { message?: { content?: string } }[]
+      error?: { message?: string; code?: number }
+    }
+    try {
+      data = await res.json()
+    } catch (err) {
+      throw new TransientOpenRouterError(
+        isAbort(err)
+          ? 'OpenRouter stopped sending its reply partway through — the free tier can be slow or congested.'
+          : 'OpenRouter returned a malformed response body.',
+      )
+    }
+    if (data.error) {
+      const message = data.error.message ?? 'Unknown OpenRouter error'
+      const code = data.error.code ?? 0
+      if (code >= 500 || /overloaded|timeout|temporarily/i.test(message)) {
+        throw new TransientOpenRouterError(message)
+      }
+      throw new Error(`OpenRouter error: ${message}`)
+    }
+
+    const text = data.choices?.[0]?.message?.content
+    if (!text) throw new TransientOpenRouterError('OpenRouter returned an empty response.')
+    return text
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+/** Calls OpenRouter, retrying a couple of times when the free upstream endpoint
+ * reports a transient failure (very common on the free NVIDIA tier). */
+async function callOpenRouter(
+  model: string,
+  messages: ChatMessage[],
+  maxTokens: number,
+  reasoningEnabled: boolean | undefined,
+  jsonSchema?: object,
+  // Shared wall-clock budget. Callers that make more than one request (see
+  // callOpenRouterJson) pass the same deadline to every one of them, so the
+  // whole operation stays inside a single bound instead of multiplying.
+  deadline: number = Date.now() + OPENROUTER_TOTAL_BUDGET_MS,
+): Promise<string> {
+  const MAX_ATTEMPTS = 3
+  let lastTransient: Error | null = null
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (Date.now() >= deadline) break
+    try {
+      return await callOpenRouterOnce(model, messages, maxTokens, reasoningEnabled, jsonSchema, deadline)
+    } catch (err) {
+      if (!(err instanceof TransientOpenRouterError)) throw err
+      lastTransient = err
+      console.warn(`OpenRouter attempt ${attempt}/${MAX_ATTEMPTS} failed (transient): ${err.message}`)
+      const backoff = 2000 * attempt
+      // Don't sleep into (or past) the deadline — that burns the remaining
+      // budget on waiting and leaves nothing for the retry itself.
+      if (attempt < MAX_ATTEMPTS && Date.now() + backoff < deadline) {
+        await new Promise((r) => setTimeout(r, backoff))
+      }
+    }
+  }
+  throw new Error(
+    `${lastTransient?.message ?? 'OpenRouter request failed.'} The free tier is busy — please try again in a moment, or set AI_PROVIDER=anthropic to use Claude via ANT_KEY.`,
+  )
+}
+
+/** Extracts the JSON object from a free-form model response, defensively:
+ * strips a ```json ... ``` fence if present, then — since a small free model
+ * may still wrap the object in a sentence or two despite instructions —
+ * slices from the first `{` to the matching last `}` rather than requiring
+ * the entire response to be nothing but JSON. */
+function extractJsonObject(text: string): string {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const body = (fenced ? fenced[1] : text).trim()
+  const end = body.lastIndexOf('}')
+  if (end === -1) return body
+  // Try each '{' as a start position until one parses. A plain first-brace slice
+  // isn't enough: some models emit a stray leading brace or a line of prose
+  // before the real object (Nemotron 3 Super reliably prefixes an extra "{"),
+  // which would make the whole slice unparseable.
+  for (let i = body.indexOf('{'); i !== -1 && i < end; i = body.indexOf('{', i + 1)) {
+    const candidate = body.slice(i, end + 1)
+    try {
+      JSON.parse(candidate)
+      return candidate
+    } catch {
+      // not a valid object starting here — try the next brace
+    }
+  }
+  return body
+}
+
+/** Calls OpenRouter and parses the response as JSON, defensively — the free
+ * model has no enforced schema, so retry once with a corrective follow-up
+ * before giving up. Throws if still invalid after the retry. */
+async function callOpenRouterJson(
+  model: string,
+  messages: ChatMessage[],
+  maxTokens: number,
+  jsonSchema?: object,
+  reasoningEnabled?: boolean,
+): Promise<unknown> {
+  // One budget for the first call and the corrective re-ask together.
+  const deadline = Date.now() + OPENROUTER_TOTAL_BUDGET_MS
+  const first = await callOpenRouter(model, messages, maxTokens, reasoningEnabled, jsonSchema, deadline)
+  try {
+    return JSON.parse(extractJsonObject(first))
+  } catch {
+    // Only reachable when the model has no real schema enforcement; kept as a
+    // safety net for models where response_format is advisory.
+    const retryMessages: ChatMessage[] = [
+      ...messages,
+      { role: 'assistant', content: first },
+      {
+        role: 'user',
+        content: 'Your entire reply must be ONLY the JSON object — starting with { and ending with }. No words before or after it, no markdown, no code fence. Output the JSON object now.',
+      },
+    ]
+    const second = await callOpenRouter(model, retryMessages, maxTokens, reasoningEnabled, jsonSchema, deadline)
+    return JSON.parse(extractJsonObject(second)) // still invalid → let it throw, caller maps to a clean error
+  }
+}
+
+// A concrete filled-in example (rather than a formal JSON Schema definition)
+// — smaller free models follow a shown example far more reliably than an
+// abstract schema, and putting it AFTER the resume text (closest to where
+// generation starts) keeps the instruction from getting "lost" in a long
+// prompt.
+const OPENROUTER_RESUME_EXAMPLE = JSON.stringify(
+  {
+    name: 'Full Name',
+    email: 'name@example.com (or "" if not stated)',
+    phone: '+91 98765 43210 (or "")',
+    linkedin: 'https://linkedin.com/in/... (or "")',
+    city: 'City (or "")',
+    headline: 'One-line professional headline',
+    bio: '2-3 sentence first-person professional bio grounded in the resume',
+    batchYear: '4-digit year, e.g. "2018" (or "")',
+    course: 'Degree/course name (or "")',
+    experienceYears: 'Total years as digits, e.g. "6" (or "")',
+    domain: `one of: ${DOMAINS.filter(Boolean).join(', ')} (or "")`,
+    employmentType: `one of: ${EMPLOYMENT_TYPES.filter(Boolean).join(', ')} (or "")`,
+    college: 'Institution name if currently a Student, else ""',
+    experience: [{ role: 'Job title', company: 'Company name', period: '2022 — Present', summary: 'One achievement-focused sentence' }],
+    skills: ['skill one', 'skill two'],
+  },
+  null,
+  2,
+)
+
+function buildOpenRouterResumePrompt(resumeText: string): string {
+  return (
+    `Resume text:\n\n${resumeText}\n\n---\n\n${PROMPT}\n\n` +
+    `Fill in real values from the resume above into exactly this JSON shape:\n${OPENROUTER_RESUME_EXAMPLE}\n\n` +
+    'Your entire response must be ONLY that JSON object — starting with { and ending with }. No markdown, no code fence, no explanation, no text before or after it.'
+  )
+}
+
+/** Extracts plain text from the uploaded resume — used by the OpenRouter path,
+ * which (unlike Claude) has no confirmed native PDF/document understanding. */
+async function extractResumeText(dataBase64: string, mediaType?: string): Promise<string> {
+  const clean = dataBase64.replace(/\s/g, '')
+  const buffer = Buffer.from(clean, 'base64')
+
+  if (mediaType === 'application/pdf') {
+    try {
+      const text = await extractPdfText(buffer)
+      const trimmed = text.trim()
+      if (!trimmed) {
+        throw new ResumeParseError(422, 'Could not read text from that PDF — it may be a scanned image. Please fill in your details manually.')
+      }
+      return trimmed
+    } catch (err) {
+      if (err instanceof ResumeParseError) throw err
+      console.error('extractResumeText (PDF) failed:', err instanceof Error ? err.stack ?? err.message : err)
+      throw new ResumeParseError(422, 'Could not read that PDF. Please check the file or fill in your details manually.')
+    }
+  }
+
+  if (mediaType === DOCX_MIME) {
+    let text = ''
+    try {
+      const { value } = await mammoth.extractRawText({ buffer })
+      text = value.trim()
+    } catch {
+      throw new ResumeParseError(422, 'Could not read that Word document. Please export it as a PDF and try again.')
+    }
+    if (!text) {
+      throw new ResumeParseError(422, 'That Word document appears to be empty. Please check the file or upload a PDF.')
+    }
+    return text
+  }
+
+  if (mediaType === 'application/msword') {
+    throw new ResumeParseError(415, 'Legacy .doc files are not supported. Please save your resume as PDF or .docx and try again.')
+  }
+
+  throw new ResumeParseError(415, 'Unsupported file type. Please upload a PDF or .docx resume.')
+}
+
+async function parseResumeOpenRouter(dataBase64: string, mediaType?: string): Promise<ResumeParseResult> {
+  const text = await extractResumeText(dataBase64, mediaType)
+  const messages: ChatMessage[] = [{ role: 'user', content: buildOpenRouterResumePrompt(text) }]
+
+  let parsed: unknown
+  try {
+    // reasoning disabled: with it on, this model spent ~1,000-1,900 of its token
+    // budget on internal reasoning and got truncated mid-JSON (finish_reason
+    // "length"), which is what produced the malformed/garbled output. Off, it
+    // completes in ~650 tokens, runs ~3x faster, and extracts more accurately.
+    // 4096 is generous headroom over that real ~650-token need.
+    parsed = await callOpenRouterJson(OPENROUTER_RESUME_MODEL, messages, 4096, SCHEMA, false)
+  } catch (err) {
+    console.error('Resume parse (OpenRouter) failed:', err instanceof Error ? err.message : err)
+    // Usage limits are actionable, so pass the reason through verbatim.
+    if (err instanceof AiRateLimitError) throw new ResumeParseError(503, err.message)
+    throw new ResumeParseError(502, 'Resume parsing failed. Please try again, or fill in your details manually.')
+  }
+
+  return validateParsedResume(parsed)
+}
+
+const isExperienceEntry = (v: unknown): v is ResumeParseResult['experience'][number] =>
+  typeof v === 'object' &&
+  v !== null &&
+  (['role', 'company', 'period', 'summary'] as const).every(
+    (k) => typeof (v as Record<string, unknown>)[k] === 'string',
+  )
+
 /**
- * Parse a resume with Claude (real extraction for PDF and DOCX).
- * Demo mode: with no ANT_KEY configured, returns a fixed sample result marked
- * source: 'fallback' so the UI can say so. With a key configured, failures
- * throw ResumeParseError — no silently invented profile data.
+ * Never trust the free model's JSON blindly, and never hand a partial object to
+ * the caller. The onboarding form indexes `experience[0]` and calls
+ * `skills.length` / `skills.join()` directly, so a reply of `{"name":"Jane"}` —
+ * which a free model with advisory schema adherence can absolutely return —
+ * would pass a name-only check and then throw a TypeError in the browser,
+ * killing the upload flow instead of showing a "fill it in manually" error.
+ *
+ * Every field is therefore checked and rebuilt rather than spread through:
+ * missing strings become "", malformed experience entries are dropped, and a
+ * reply missing `name`, `experience` or `skills` outright is rejected.
+ */
+function validateParsedResume(parsed: unknown): ResumeParseResult {
+  const reject = () => {
+    throw new ResumeParseError(
+      502,
+      'The AI returned an unexpected response. Please try again or fill in your details manually.',
+    )
+  }
+  if (typeof parsed !== 'object' || parsed === null) reject()
+  const raw = parsed as Record<string, unknown>
+  if (typeof raw.name !== 'string' || !Array.isArray(raw.experience) || !Array.isArray(raw.skills)) reject()
+
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+  return {
+    name: str(raw.name),
+    email: str(raw.email),
+    phone: str(raw.phone),
+    linkedin: str(raw.linkedin),
+    city: str(raw.city),
+    headline: str(raw.headline),
+    bio: str(raw.bio),
+    batchYear: str(raw.batchYear),
+    course: str(raw.course),
+    experienceYears: str(raw.experienceYears),
+    domain: str(raw.domain),
+    employmentType: str(raw.employmentType),
+    college: str(raw.college),
+    experience: (raw.experience as unknown[]).filter(isExperienceEntry),
+    skills: (raw.skills as unknown[]).filter((s): s is string => typeof s === 'string'),
+    source: 'ai',
+  }
+}
+
+/**
+ * Parse a resume — real extraction for PDF and DOCX via whichever provider is
+ * configured (see AI_PROVIDER above).
+ *
+ * There is no demo mode. An unconfigured server fails loudly instead of
+ * returning the sample profile: the caller merges whatever comes back straight
+ * into the onboarding form, so canned data would land in a real member's
+ * profile as if it had been read off their resume.
  */
 export async function parseResume(
   dataBase64?: string,
   mediaType?: string,
 ): Promise<ResumeParseResult> {
-  if (!client) return resumeParseResult
+  if (!aiEnabled) {
+    throw new ResumeParseError(
+      503,
+      AI_PROVIDER === 'openrouter'
+        ? 'Resume parsing is not configured on this server (OPENROUTER_API_KEY missing). Please fill in your details manually.'
+        : 'Resume parsing is not configured on this server (ANT_KEY missing). Please fill in your details manually.',
+    )
+  }
 
   if (!dataBase64) {
     throw new ResumeParseError(400, 'No file received — please re-upload your resume.')
+  }
+
+  if (AI_PROVIDER === 'openrouter') {
+    return parseResumeOpenRouter(dataBase64, mediaType)
+  }
+
+  // aiEnabled already guarantees a client on the anthropic path; this keeps the
+  // narrowing explicit rather than asserting non-null.
+  if (!client) {
+    throw new ResumeParseError(503, 'Resume parsing is not configured on this server (ANT_KEY missing).')
   }
 
   const content = await buildContent(dataBase64, mediaType)
@@ -150,8 +661,9 @@ export async function parseResume(
     if (!text) {
       throw new ResumeParseError(502, 'The AI returned an empty response. Please try again.')
     }
-    const parsed = JSON.parse(text) as Omit<ResumeParseResult, 'source'>
-    return { ...parsed, source: 'ai' }
+    // Schema-enforced here, so this should always pass — validated anyway so
+    // both providers are guaranteed to return the same complete shape.
+    return validateParsedResume(JSON.parse(text))
   } catch (err) {
     if (err instanceof ResumeParseError) throw err
     if (err instanceof Anthropic.AuthenticationError) {
@@ -174,7 +686,7 @@ const ROO_SYSTEM =
   'Answer questions using ONLY the network data snapshot provided below. Never invent people, jobs, ' +
   'events or numbers. Be brief (2-4 sentences), warm and practical. When it helps, tell the user ' +
   'where to click: the Jobs page for openings, Mentorship for booking sessions, Events for RSVPs, ' +
-  'My Network to connect, or a person\u2019s profile. If the data does not contain the answer, say so ' +
+  'My Network to connect, or a person’s profile. If the data does not contain the answer, say so ' +
   'plainly and suggest the closest thing it does contain.'
 
 export interface RooTurn {
@@ -182,15 +694,32 @@ export interface RooTurn {
   content: string
 }
 
-/** Ask Claude a question grounded in a snapshot of the network's data. */
+/** Ask the configured AI provider a question grounded in a snapshot of the
+ * network's data (see AI_PROVIDER above). */
 export async function askRoo(question: string, history: RooTurn[], context: string): Promise<string> {
+  const systemWithContext = `${ROO_SYSTEM}\n\n=== NETWORK DATA SNAPSHOT ===\n${context}`
+
+  if (AI_PROVIDER === 'openrouter') {
+    if (!openRouterApiKey) {
+      throw new Error('AI is not configured on this server (OPENROUTER_API_KEY missing).')
+    }
+    const messages: ChatMessage[] = [
+      { role: 'system', content: systemWithContext },
+      ...history.slice(-6).map((h): ChatMessage => ({ role: h.role, content: h.content })),
+      { role: 'user', content: question },
+    ]
+    // Reasoning OFF — Lightning writes its chain-of-thought straight into
+    // `content` otherwise, garbling the visible answer (confirmed in testing).
+    return callOpenRouter(OPENROUTER_ASKROO_MODEL, messages, 1024, false)
+  }
+
   if (!client) {
     throw new Error('AI is not configured on this server (ANT_KEY missing).')
   }
   const res = await client.messages.create({
     model: 'claude-opus-4-8',
     max_tokens: 1024,
-    system: `${ROO_SYSTEM}\n\n=== NETWORK DATA SNAPSHOT ===\n${context}`,
+    system: systemWithContext,
     messages: [...history.slice(-6), { role: 'user', content: question }],
   } as Anthropic.MessageCreateParamsNonStreaming)
   if (res.stop_reason === 'refusal') {
