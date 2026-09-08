@@ -106,7 +106,9 @@ assert.equal(
 // ARE asked for availability, because that is what makes an "open to work"
 // profile actionable — and with it they reach 100 on education, projects,
 // certifications, a post and availability alone.
-const fresher: User = { ...student, employmentType: 'Looking for opportunity', college: '' }
+// A job-seeker is asked where they STUDIED, not for a work history they may
+// not have, plus the availability details that make the profile actionable.
+const fresher: User = { ...student, employmentType: 'Looking for opportunity' }
 assert.ok(
   profileCompleteness(fresher, { postCount: 1 }).percent < 100,
   'a job-seeker without availability details is not finished',
@@ -117,7 +119,12 @@ assert.equal(
     { postCount: 1 },
   ).percent,
   100,
-  'a fresher with no employer and no college must still be able to reach 100%',
+  'a fresher with a college and availability must be able to reach 100%',
+)
+// And they are never asked for an employer.
+assert.ok(
+  !profileCompleteness(fresher).missing.some((m) => m.label.includes('company')),
+  'a job-seeker must not be asked for a current company',
 )
 
 // Education, projects and certifications carry real weight for everyone who
@@ -128,7 +135,8 @@ const noProof = (u: User) =>
     .percent
 const studentCost = 100 - noProof({ ...student, experience: [] })
 const workingCost = 100 - noProof(pro)
-assert.ok(studentCost >= 50, `a student should lose 50+ points without them, lost ${studentCost}`)
+// Student: education(20) + proof(25) = 45. Working: education(10) + proof(15) = 25.
+assert.ok(studentCost >= 40, `a student should lose 40+ points without them, lost ${studentCost}`)
 assert.ok(workingCost >= 20, `a working member should still lose 20+, lost ${workingCost}`)
 assert.ok(
   studentCost > workingCost,
@@ -208,6 +216,7 @@ const seeking: User = {
   employmentType: 'Looking for opportunity',
   company: '',
   designation: '',
+  college: 'RV College',
 }
 assert.ok(
   profileCompleteness(seeking, { postCount: 3 }).percent < 100,
@@ -221,7 +230,7 @@ assert.equal(
   100,
 )
 
-// A verified mentor is asked what they can teach, whatever their day job.
+// A verified mentor is asked what they can teach AND when they are free.
 const mentorUser: User = { ...pro, isMentor: true, mentorVerified: true, willingToMentor: true }
 assert.ok(
   profileCompleteness(mentorUser, { postCount: 3 }).percent < 100,
@@ -229,11 +238,36 @@ assert.ok(
 )
 assert.equal(
   profileCompleteness(
-    { ...mentorUser, mentorTopics: ['System design'], mentorAvailability: '2 hrs/week' },
+    {
+      ...mentorUser,
+      mentorTopics: ['System design'],
+      mentorAvailability: '2 hrs/week',
+      mentorshipMode: 'Call',
+      noticePeriod: '2 months',
+      preferredLocations: ['Bengaluru'],
+      workMode: 'Hybrid',
+    },
     { postCount: 3 },
   ).percent,
   100,
 )
+
+// The mentoring bucket is dormant for someone who never offered to mentor, so
+// they are not marked down for declining.
+assert.ok(
+  !profileCompleteness(pro, { postCount: 3 }).missing.some((m) => m.label.includes('mentor')),
+  'a member who never opted in must not be asked for mentoring detail',
+)
+// But it counts as soon as a working member opts in.
+assert.ok(
+  profileCompleteness({ ...pro, willingToMentor: true }, { postCount: 3 }).percent < 100,
+  'opting in to mentoring adds its questions',
+)
+
+// Someone exploring is asked for nothing beyond identity, bio/skills,
+// education and a post — no projects, no links, no employer.
+const exploringMissing = profileCompleteness(exploring, { postCount: 0 }).missing.map((m) => m.label)
+assert.deepEqual(exploringMissing, ['Share your first post'])
 assert.equal(profileRole(mentorUser), 'mentor', 'a verified mentor is scored as a mentor')
 assert.equal(profileRole(exploring), 'exploring')
 assert.equal(profileRole(student), 'student')

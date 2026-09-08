@@ -5,6 +5,7 @@ import {
   GraduationCap,
   MapPin,
   MessageSquare,
+  Clock,
   Flag,
   Handshake,
   UserPlus,
@@ -34,9 +35,10 @@ import { ReportModal } from '../components/ReportModal'
 import { ConnectNoteModal } from '../components/referral/ConnectNoteModal'
 import { ReachOutModal } from '../components/referral/ReachOutModal'
 import { CountUp, HoverLift, Reveal, motion } from '../components/profile/motion'
+import { BannerThemePicker } from '../components/profile/BannerThemePicker'
 import { roleLine } from '../lib/format'
 import { api } from '../lib/api'
-import { type Badge } from '../types'
+import { bannerThemeGradient, type Badge, type MentorApplication } from '../types'
 
 type Tab = 'overview' | 'posts' | 'about'
 
@@ -73,7 +75,21 @@ export function Profile() {
   const openEditor = () => setEditing(true)
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="relative flex flex-col gap-4">
+      {/* Ambient wash behind the whole page — two faint, static blobs (no
+          motion: they sit behind scrolling content, so animating them would
+          be wasted GPU work nobody tracks with their eyes). Keeps the page
+          from reading as flat page-gray behind a stack of white cards. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -top-24 left-1/2 -z-10 h-[560px] w-[900px] -translate-x-1/2 opacity-[0.06]"
+        style={{
+          background:
+            'radial-gradient(50% 50% at 20% 20%, #ff4500 0%, transparent 70%),' +
+            'radial-gradient(40% 40% at 85% 10%, #ff6534 0%, transparent 70%)',
+        }}
+      />
+
       {/* ---- Hero: banner, overlapping avatar, identity, actions -----------
           LinkedIn's arrangement, with a mesh-gradient banner instead of a flat
           bar so the page doesn't open on a solid orange slab. */}
@@ -84,24 +100,37 @@ export function Profile() {
         className="overflow-hidden rounded-xl border border-[#edeff1] bg-white shadow-sm"
       >
         <div className="relative h-32 overflow-hidden bg-[#1c1c1c]">
-          {/* Three offset radial washes read as depth where one linear
-              gradient reads as a printed band. */}
-          <div
-            className="absolute inset-0"
-            style={{
-              background:
-                'radial-gradient(120% 140% at 8% 0%, #ff6534 0%, transparent 55%),' +
-                'radial-gradient(90% 120% at 95% 20%, #ff4500 0%, transparent 60%),' +
-                'radial-gradient(80% 100% at 60% 120%, #7c2d12 0%, transparent 70%)',
-            }}
-          />
-          {/* Slow drift, so the header is alive without demanding attention. */}
-          <motion.div
-            aria-hidden
-            className="absolute -top-16 -right-10 h-52 w-52 rounded-full bg-white/15 blur-2xl"
-            animate={{ x: [0, 18, 0], y: [0, 10, 0] }}
-            transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
-          />
+          {user.bannerImage ? (
+            // A custom cover photo replaces the gradient (and its drifting
+            // glow, which would just muddy a real photo) outright.
+            <img
+              src={user.bannerImage}
+              alt=""
+              aria-hidden
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          ) : (
+            <>
+              {/* Three offset radial washes read as depth where one linear
+                  gradient reads as a printed band. Colours come from the
+                  member's chosen cover theme — 'sunrise' (the default) is
+                  pixel-identical to the original hardcoded look. */}
+              <div
+                className="absolute inset-0"
+                style={{ background: bannerThemeGradient(user.bannerTheme) }}
+              />
+              {/* Slow drift, so the header is alive without demanding attention. */}
+              <motion.div
+                aria-hidden
+                className="absolute -top-16 -right-10 h-52 w-52 rounded-full bg-white/15 blur-2xl"
+                animate={{ x: [0, 18, 0], y: [0, 10, 0] }}
+                transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
+              />
+            </>
+          )}
+          {/* Direct edit control, right on the banner — not routed through
+              Edit Profile or Quick View. Every choice here saves immediately. */}
+          {isMe && <BannerThemePicker current={user.bannerTheme} image={user.bannerImage} />}
         </div>
         <div className="px-5 pb-5">
           <motion.span
@@ -246,9 +275,11 @@ export function Profile() {
       </div>
 
       {tab === 'overview' && (
-        // Each section fades up as it reaches the viewport, staggered so the
-        // column arrives as a cascade. `key` is the section list index.
         <div className="flex flex-col gap-4">
+          {/* Feature row: the completeness meter, About and a verified
+              Mentorship offer all earn full width — they carry the most
+              information and, for Mentorship, the darkest visual weight on
+              the page. Stacked, not gridded, so each reads top to bottom. */}
           {[
             isMe ? (
               <ProfileCompletenessMeter
@@ -262,20 +293,45 @@ export function Profile() {
               user={user}
               onBook={isMe ? undefined : () => navigate('/mentorship')}
             />,
-            <ExperienceSection user={user} isMe={isMe} onAdd={openEditor} />,
-            <EducationSection user={user} isMe={isMe} onAdd={openEditor} />,
-            <ProjectsSection user={user} isMe={isMe} onAdd={openEditor} />,
-            <CertificationsSection user={user} isMe={isMe} onAdd={openEditor} />,
-            <AchievementsSection user={user} isMe={isMe} onAdd={openEditor} />,
-            <OpenToSection user={user} />,
-            <BadgesCard userId={user.id} isMe={isMe} />,
+            // Only the owner ever sees this — someone else's application
+            // status is not this profile's business to advertise.
+            isMe ? <MentorshipStatusCard onEdit={openEditor} /> : null,
           ].map((node, i) =>
             node ? (
-              <Reveal key={i} index={i}>
+              <Reveal key={`feature-${i}`} index={i}>
                 {node}
               </Reveal>
             ) : null,
           )}
+
+          {/*
+            A plain CSS grid, not masonry: items sit in reading order (left to
+            right, top to bottom) grouped by what they're actually about —
+            career (Experience, Education), proof of work (Projects,
+            Certifications), then the smaller extras. `items-start` stops a
+            short card from being stretched to match a tall neighbour; the
+            trailing solo card spans the full row instead of being stranded
+            to one side.
+          */}
+          <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {(
+              [
+                [<ExperienceSection user={user} isMe={isMe} onAdd={openEditor} />, ''],
+                [<EducationSection user={user} isMe={isMe} onAdd={openEditor} />, ''],
+                [<ProjectsSection user={user} isMe={isMe} onAdd={openEditor} />, ''],
+                [<CertificationsSection user={user} isMe={isMe} onAdd={openEditor} />, ''],
+                [<AchievementsSection user={user} isMe={isMe} onAdd={openEditor} />, ''],
+                [<OpenToSection user={user} />, ''],
+                // A lone trailing tile in a 3-column grid would otherwise sit
+                // stranded on the left with two empty slots beside it.
+                [<BadgesCard userId={user.id} isMe={isMe} />, 'md:col-span-2 xl:col-span-3'],
+              ] as const
+            ).map(([node, span], i) => (
+              <Reveal key={`bento-${i}`} index={i + 3} className={span}>
+                {node}
+              </Reveal>
+            ))}
+          </div>
         </div>
       )}
 
@@ -369,6 +425,61 @@ function AboutTab({
         </div>
       )}
     </>
+  )
+}
+
+/**
+ * "Mentorship application pending/declined", shown ONLY to the profile owner
+ * and ONLY while they have a submission that isn't approved yet. Nothing
+ * renders for a verified mentor (MentorshipSection already covers that), for
+ * someone who never applied, or on anyone else's profile — a member's
+ * application status is theirs to see, not the network's.
+ */
+function MentorshipStatusCard({ onEdit }: { onEdit: () => void }) {
+  const [app, setApp] = useState<MentorApplication | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let live = true
+    api
+      .getMyMentorApplication()
+      .then((a) => live && setApp(a))
+      .catch(() => live && setApp(null))
+      .finally(() => live && setLoading(false))
+    return () => {
+      live = false
+    }
+  }, [])
+
+  if (loading || !app || app.status === 'approved') return null
+  const pending = app.status === 'pending'
+
+  return (
+    <div
+      className={cx(
+        'rounded-xl border p-5',
+        pending ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50',
+      )}
+    >
+      <h2 className="flex items-center gap-2 text-base font-bold text-[#1c1c1c]">
+        <Clock size={17} className={pending ? 'text-amber-600' : 'text-red-500'} />
+        {pending ? 'Mentorship application pending' : 'Mentorship application declined'}
+      </h2>
+      <p className="mt-1 text-sm leading-relaxed text-[#1c1c1c]/70">
+        {pending
+          ? 'An admin is reviewing the proof you submitted — this usually takes a couple of days. Your profile will show you as a mentor once approved.'
+          : app.reviewNote ||
+            'Your last submission was not accepted. You can attach clearer proof and try again.'}
+      </p>
+      {!pending && (
+        <button
+          onClick={onEdit}
+          className="mt-3 rounded-full bg-[#ff4500] px-4 py-2 text-xs font-bold text-white hover:bg-[#ff6534]"
+        >
+          Resubmit proof
+        </button>
+      )}
+    </div>
   )
 }
 

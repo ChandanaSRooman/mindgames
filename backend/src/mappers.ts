@@ -19,7 +19,7 @@ export const USER_COLS = `id, name, email, phone, photo, profile_tag, profile_ta
   mentor_assessment_score, mentor_assessment_provider, mentor_verified_at,
   show_email, show_phone,
   home_address, date_of_birth, salary_current, salary_expected,
-  show_address, show_age, show_salary`
+  show_address, show_age, show_salary, banner_theme, banner_image`
 
 export interface UserRow {
   id: string
@@ -92,6 +92,8 @@ export interface UserRow {
   show_address: boolean
   show_age: boolean
   show_salary: boolean
+  banner_theme: string
+  banner_image: string | null
 }
 
 /**
@@ -229,6 +231,12 @@ export function mapUser(r: UserRow) {
     hiringFor: r.hiring_for ?? [],
     startupIntent: opt(r.startup_intent),
     startupLookingFor: r.startup_looking_for ?? [],
+    // Public and cosmetic only — nobody's data depends on either value, so
+    // they carry none of the privacy weight the fields above do. An image
+    // overrides the theme entirely when present; the frontend decides which
+    // to render, this just passes both through.
+    bannerTheme: r.banner_theme,
+    bannerImage: r.banner_image ?? undefined,
     // Public: a mentee deciding whether to book is entitled to know the
     // mentor's credentials were checked by an admin, and to see an assessment
     // score the same way a degree is visible.

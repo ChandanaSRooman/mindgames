@@ -104,31 +104,34 @@ type BucketKey =
 
 /**
  * Per-role bucket weights. Each row sums to 100; a 0 drops the bucket out of
- * the denominator entirely.
+ * the denominator entirely, so every role can still reach a true 100%.
  *
- *  - student   — education and projects are the whole story; there is no job.
- *  - working   — the work history carries it, and employers are asked for.
- *  - seeking   — proof of work plus the availability details a recruiter needs.
- *  - mentor    — credibility (education + history) plus what they can teach.
- *  - exploring — deliberately shallow: someone browsing owes the network
- *                almost nothing, and nagging them for a portfolio is how you
- *                lose them.
+ *  - student   — education and projects are the story, and WHERE they study is
+ *                part of their identity, so the study bucket carries real
+ *                weight rather than none.
+ *  - working   — the work history carries it, with a slice reserved for the
+ *                mentoring offer, which only counts once they opt in.
+ *  - seeking   — proof of work plus availability, and education still matters:
+ *                a job-seeker is often judged on their background first.
+ *  - mentor    — credibility (education, history) plus what they can teach and
+ *                when they are free.
+ *  - exploring — only who they are, their bio and skills, their education and
+ *                a first post. Someone browsing owes the network nothing else,
+ *                and nagging them for a portfolio is how you lose them.
  */
 const ROLE_WEIGHTS: Record<ProfileRole, Record<BucketKey, number>> = {
-  student:   { identity: 15, about: 15, education: 25, proof: 30, activity: 10, links: 5,  role: 0,  mentoring: 0,  availability: 0 },
-  working:   { identity: 15, about: 15, education: 10, proof: 15, activity: 10, links: 5,  role: 30, mentoring: 0,  availability: 0 },
-  seeking:   { identity: 15, about: 15, education: 15, proof: 25, activity: 5,  links: 10, role: 0,  mentoring: 0,  availability: 15 },
-  mentor:    { identity: 10, about: 15, education: 15, proof: 10, activity: 10, links: 5,  role: 15, mentoring: 20, availability: 0 },
-  exploring: { identity: 40, about: 35, education: 15, proof: 0,  activity: 5,  links: 5,  role: 0,  mentoring: 0,  availability: 0 },
+  student:   { identity: 15, about: 15, education: 20, proof: 25, activity: 10, links: 5,  role: 10, mentoring: 0,  availability: 0 },
+  working:   { identity: 15, about: 15, education: 10, proof: 15, activity: 10, links: 5,  role: 20, mentoring: 10, availability: 0 },
+  seeking:   { identity: 15, about: 15, education: 15, proof: 20, activity: 5,  links: 10, role: 5,  mentoring: 0,  availability: 15 },
+  mentor:    { identity: 10, about: 15, education: 15, proof: 10, activity: 5,  links: 5,  role: 10, mentoring: 20, availability: 10 },
+  exploring: { identity: 30, about: 35, education: 25, proof: 0,  activity: 10, links: 0,  role: 0,  mentoring: 0,  availability: 0 },
 }
 
 export function profileCompleteness(user: User, activity: ProfileActivity = {}): Completeness {
   const status = statusOf(user.employmentType)
   const role = profileRole(user)
   const w = ROLE_WEIGHTS[role]
-  // Only these two statuses have a current role to describe at all.
   const asksEmployer = status === 'Working Professional'
-  const asksCollege = status === 'Student'
 
   const specs: BucketSpec[] = [
     {
@@ -198,33 +201,41 @@ export function profileCompleteness(user: User, activity: ProfileActivity = {}):
     },
     {
       key: 'role',
-      label: asksCollege ? 'Where you study' : 'Where you work',
+      label: asksEmployer ? 'Where you work' : 'Where you studied',
       weight: w.role,
-      applies: w.role > 0 && (asksEmployer || asksCollege),
-      checks: asksCollege
-        ? [{ label: 'Add your college or institution', ok: filled(user.college) }]
-        : [
+      applies: w.role > 0,
+      // Follows the member's actual status, not the scoring role: someone
+      // employed is asked about their employer, while a student or a
+      // job-seeker is asked where they studied — for a fresher between roles
+      // that background is the thing an employer looks at first, and asking
+      // them for a work history they don't have would be a dead end.
+      checks: asksEmployer
+        ? [
             {
               label: 'Add your current designation and company',
               ok: filled(user.designation) && filled(user.company),
             },
             { label: 'Add a role to your work history', ok: some(user.experience) },
-          ],
+          ]
+        : [{ label: 'Add your college or institution', ok: filled(user.college) }],
     },
     {
-      // Mentors only: a mentee cannot book against a blank offer.
+      // A mentee cannot book against a blank offer. Weighted for verified
+      // mentors, and for anyone else only once they have opted in — a member
+      // who never offered to mentor is not marked down for it.
       key: 'mentoring',
       label: 'Your mentoring offer',
       weight: w.mentoring,
-      applies: w.mentoring > 0,
+      applies: w.mentoring > 0 && (role === 'mentor' || !!user.willingToMentor),
       checks: [
         { label: 'List the topics you can mentor on', ok: some(user.mentorTopics) },
         { label: 'Say how much time you have for mentoring', ok: filled(user.mentorAvailability) },
+        { label: 'Pick how you prefer to mentor', ok: filled(user.mentorshipMode) },
       ],
     },
     {
-      // Job-seekers only: the details that decide whether a recruiter or an
-      // alum can act on an "Open to Work" profile at all.
+      // The details that decide whether a recruiter or an alum can act on the
+      // profile at all — when you could start, where, and how you want to work.
       key: 'availability',
       label: 'Your availability',
       weight: w.availability,

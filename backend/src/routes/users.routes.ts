@@ -139,6 +139,8 @@ const COLUMN_MAP: Record<string, string> = {
   showAddress: 'show_address',
   showAge: 'show_age',
   showSalary: 'show_salary',
+  bannerTheme: 'banner_theme',
+  bannerImage: 'banner_image',
 }
 
 /** Columns typed JSONB — their values are JSON.stringify'd before the UPDATE. */
@@ -276,6 +278,16 @@ const patchSchema = z
     showAddress: z.boolean().optional(),
     showAge: z.boolean().optional(),
     showSalary: z.boolean().optional(),
+
+    // Cover colour on the member's own profile hero — a fixed palette, not a
+    // free value, so a bad pick can never clash with the surrounding UI.
+    bannerTheme: z.enum(['sunrise', 'midnight', 'forest', 'plum', 'slate']).optional(),
+    // Custom cover photo; same shape as `photo` but a larger cap — a 1200x400
+    // JPEG runs bigger than a 384x384 avatar. null removes it and falls back
+    // to the theme gradient.
+    bannerImage: z
+      .union([z.string().regex(/^data:image\/(jpeg|png|webp);base64,/).max(800_000), z.null()])
+      .optional(),
 
     // Private to the owner.
     noticePeriod: shortText.optional(),

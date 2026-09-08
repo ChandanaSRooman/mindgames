@@ -65,46 +65,50 @@ export function Section({
   if (empty && !(isMe && emptyPrompt)) return null
 
   return (
-    <HoverLift>
-    <Card className="p-5 transition-shadow hover:shadow-md">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 text-base font-bold text-[#1c1c1c]">
-          <motion.span
-            className="text-[#ff4500]"
-            whileHover={{ rotate: -8, scale: 1.1 }}
-            transition={{ type: 'spring', stiffness: 300, damping: 15 }}
-          >
-            {icon}
-          </motion.span>
-          {title}
-          {!!count && count > 1 && (
-            <span className="rounded-full bg-[#f6f7f8] px-2 py-0.5 text-xs font-semibold text-[#878a8c]">
-              {count}
-            </span>
+    <HoverLift className="group relative">
+      {/* A 2px gradient hairline instead of a flat border-top — the one
+          recurring visual signature that ties every tile together without
+          repeating a solid block of colour. */}
+      <div className="absolute inset-x-5 top-0 h-[2px] rounded-full bg-gradient-to-r from-[#ff4500]/0 via-[#ff4500]/40 to-[#ff4500]/0 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+      <Card className="relative overflow-hidden p-5 transition-shadow duration-300 hover:shadow-[0_8px_30px_-12px_rgba(255,69,0,0.25)]">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="flex items-center gap-2.5 text-base font-bold text-[#1c1c1c]">
+            <motion.span
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-orange-50 to-orange-100/60 text-[#ff4500]"
+              whileHover={{ rotate: -8, scale: 1.08 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 15 }}
+            >
+              {icon}
+            </motion.span>
+            {title}
+            {!!count && count > 1 && (
+              <span className="rounded-full bg-[#f6f7f8] px-2 py-0.5 text-xs font-semibold text-[#878a8c]">
+                {count}
+              </span>
+            )}
+          </h2>
+          {isMe && onAdd && !empty && (
+            <button
+              onClick={onAdd}
+              aria-label={`Add to ${title}`}
+              className="rounded-full p-1.5 text-[#878a8c] hover:bg-[#f6f7f8] hover:text-[#1c1c1c]"
+            >
+              <Plus size={16} />
+            </button>
           )}
-        </h2>
-        {isMe && onAdd && !empty && (
+        </div>
+
+        {empty ? (
           <button
             onClick={onAdd}
-            aria-label={`Add to ${title}`}
-            className="rounded-full p-1.5 text-[#878a8c] hover:bg-[#f6f7f8] hover:text-[#1c1c1c]"
+            className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#edeff1] py-3 text-sm font-medium text-[#ff4500] hover:bg-orange-50"
           >
-            <Plus size={16} />
+            <Plus size={14} /> {emptyPrompt}
           </button>
+        ) : (
+          <div className="mt-3">{children}</div>
         )}
-      </div>
-
-      {empty ? (
-        <button
-          onClick={onAdd}
-          className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#edeff1] py-3 text-sm font-medium text-[#ff4500] hover:bg-orange-50"
-        >
-          <Plus size={14} /> {emptyPrompt}
-        </button>
-      ) : (
-        <div className="mt-3">{children}</div>
-      )}
-    </Card>
+      </Card>
     </HoverLift>
   )
 }
@@ -422,38 +426,53 @@ export function MentorshipSection({ user, onBook }: { user: User; onBook?: () =>
   if (!user.isMentor || !user.mentorVerified) return null
   const topics = user.mentorTopics ?? []
   return (
-    <Card className="border-[#ff4500]/20 bg-orange-50/40 p-5">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 text-base font-bold text-[#1c1c1c]">
-          <Users size={17} className="text-[#ff4500]" />
+    // The one card on the page an admin has actually vouched for, so it gets
+    // the feature treatment: a dark gradient surface rather than another white
+    // tile, with a drifting glow to match the hero banner's language.
+    <div className="relative overflow-hidden rounded-xl bg-[#1c1c1c] p-5 text-white shadow-lg">
+      <motion.div
+        aria-hidden
+        className="absolute -top-10 -right-10 h-40 w-40 rounded-full bg-[#ff4500]/30 blur-3xl"
+        animate={{ x: [0, 14, 0], y: [0, 8, 0] }}
+        transition={{ duration: 12, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <div className="relative flex items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2.5 text-base font-bold">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10">
+            <Users size={16} />
+          </span>
           Mentorship
         </h2>
-        <span className="flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-green-700">
+        <span className="flex items-center gap-1 rounded-full bg-green-400/15 px-2.5 py-1 text-xs font-semibold text-green-300 ring-1 ring-green-400/30">
           <BadgeCheck size={12} /> Verified
         </span>
       </div>
       {topics.length > 0 && (
-        <div className="mt-3">
-          <Chips items={topics} />
+        <div className="relative mt-3 flex flex-wrap gap-1.5">
+          {topics.map((t) => (
+            <span key={t} className="rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium">
+              {t}
+            </span>
+          ))}
         </div>
       )}
-      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[#878a8c]">
+      <div className="relative mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-white/60">
         {user.mentorAvailability && <span>🕑 {user.mentorAvailability}</span>}
         {user.mentorshipMode && <span>💬 {user.mentorshipMode}</span>}
         {!!user.sessionsConducted && <span>{user.sessionsConducted} sessions held</span>}
-        <span className="font-semibold text-[#1c1c1c]">
+        <span className="font-semibold text-white">
           {user.mentorRate ? `₹${user.mentorRate}/hr` : 'Rate on request'}
         </span>
       </div>
       {onBook && (
         <button
           onClick={onBook}
-          className="mt-3 rounded-full bg-[#ff4500] px-4 py-2 text-xs font-bold text-white hover:bg-[#ff6534]"
+          className="relative mt-3 rounded-full bg-[#ff4500] px-4 py-2 text-xs font-bold text-white hover:bg-[#ff6534]"
         >
           Book a session
         </button>
       )}
-    </Card>
+    </div>
   )
 }
 

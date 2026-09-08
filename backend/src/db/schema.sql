@@ -700,16 +700,10 @@ CREATE TABLE IF NOT EXISTS mentor_application_docs (
 
 CREATE INDEX IF NOT EXISTS idx_mentor_docs_user ON mentor_application_docs (user_id);
 
--- One-time backfill: members who were already listed as mentors before proof
--- was required keep their status. Without this, every existing mentor would
--- silently drop off the Mentors tab (and out of booking) the moment
--- verification became the gate — including ones with sessions already booked.
--- New mentors go through the evidence flow; this only grandfathers the ones
--- who were approved under the old rules. Idempotent: the WHERE clause makes a
--- second run a no-op.
-UPDATE users
-   SET mentor_verified_at = COALESCE(created_at, now())
- WHERE is_mentor AND mentor_verified_at IS NULL;
+-- The grandfather backfill that used to live here (auto-verifying any
+-- pre-existing mentor) has been removed and reversed: every mentor now goes
+-- through the same evidence-and-approval flow, no exceptions. See
+-- mentorship.routes.ts for that flow.
 
 -- Contact visibility. Phone and email are PRIVATE by default: they are the two
 -- fields members are most often uncomfortable broadcasting, and an alumni
@@ -734,3 +728,20 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS salary_expected  INTEGER;   -- ₹ pe
 ALTER TABLE users ADD COLUMN IF NOT EXISTS show_address     BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS show_age         BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS show_salary      BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Profile banner theme — the "cover photo" colour on a member's own profile
+-- hero. A curated palette (see BANNER_THEMES in frontend/src/types.ts), not a
+-- free colour value, so a bad pick can't clash with the surrounding UI.
+-- Enforced again here, not just in the frontend: the CHECK constraint is what
+-- actually stops an out-of-range value reaching the database.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS banner_theme TEXT NOT NULL DEFAULT 'sunrise';
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_banner_theme_check;
+ALTER TABLE users
+  ADD CONSTRAINT users_banner_theme_check
+  CHECK (banner_theme IN ('sunrise', 'midnight', 'forest', 'plum', 'slate'));
+
+-- A custom cover photo overrides banner_theme entirely when present; NULL
+-- means "use the theme gradient". Stored the same way as `photo` (an inline
+-- data URL), just with a larger cap since a 1200x400 cover photo is bigger
+-- than a 384x384 avatar.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS banner_image TEXT;

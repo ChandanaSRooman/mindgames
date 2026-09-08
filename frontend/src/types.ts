@@ -182,6 +182,51 @@ export const STARTUP_LOOKING_FOR = [
   'Early users',
 ] as const
 
+// ---------------------------------------------------------------------------
+// Profile banner theme — the "cover photo" colour for a member's own profile
+// hero. A curated palette rather than a free colour picker: the base stays
+// near-black for every theme so name/badge contrast never breaks, only the
+// three accent glows change, which keeps every profile on-brand regardless
+// of what a member picks. 'sunrise' reproduces the original hardcoded look
+// pixel-for-pixel, so nobody who never touches this setting sees any change.
+// ---------------------------------------------------------------------------
+
+export interface BannerTheme {
+  id: string
+  label: string
+  /** Three accent colours, outer-to-inner, laid over a fixed near-black base. */
+  colors: readonly [string, string, string]
+}
+
+export const BANNER_THEMES: readonly BannerTheme[] = [
+  { id: 'sunrise', label: 'Sunrise', colors: ['#ff6534', '#ff4500', '#7c2d12'] },
+  { id: 'midnight', label: 'Midnight', colors: ['#3b82f6', '#0ea5e9', '#1e3a8a'] },
+  { id: 'forest', label: 'Forest', colors: ['#22c55e', '#15803d', '#052e16'] },
+  { id: 'plum', label: 'Plum', colors: ['#a855f7', '#7c3aed', '#2e1065'] },
+  { id: 'slate', label: 'Slate', colors: ['#94a3b8', '#64748b', '#1e293b'] },
+] as const
+
+export const DEFAULT_BANNER_THEME = 'sunrise'
+
+function findBannerTheme(id?: string): BannerTheme {
+  return BANNER_THEMES.find((t) => t.id === id) ?? BANNER_THEMES[0]
+}
+
+/** The three-wash radial-gradient CSS for a banner theme, ready for `style.background`. */
+export function bannerThemeGradient(id?: string): string {
+  const [c1, c2, c3] = findBannerTheme(id).colors
+  return (
+    `radial-gradient(120% 140% at 8% 0%, ${c1} 0%, transparent 55%),` +
+    `radial-gradient(90% 120% at 95% 20%, ${c2} 0%, transparent 60%),` +
+    `radial-gradient(80% 100% at 60% 120%, ${c3} 0%, transparent 70%)`
+  )
+}
+
+/** The theme's leading accent, for the drifting glow blob's fill colour. */
+export function bannerThemeGlow(id?: string): string {
+  return findBannerTheme(id).colors[0]
+}
+
 // Broader than `Domain` (which is the Rooman training track). Used by the
 // Companies page filter and by people-matching.
 export const INDUSTRIES = [
@@ -270,6 +315,12 @@ export interface User {
   industry?: string
 
   // --- Preferences ---------------------------------------------------------
+  /** Cover colour on the member's own profile hero. Defaults to 'sunrise'.
+   *  Ignored when bannerImage is set — an uploaded photo takes over the whole
+   *  banner instead of the gradient. */
+  bannerTheme?: string
+  /** Custom cover photo (data URL). Overrides bannerTheme entirely when present. */
+  bannerImage?: string | null
   workMode?: WorkMode
   openToRelocate?: boolean
   interests?: string[]
