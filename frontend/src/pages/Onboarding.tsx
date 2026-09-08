@@ -6,9 +6,20 @@ import { api } from '../lib/api'
 import { fileToPhotoDataUrl } from '../lib/image'
 import { Avatar } from '../components/ui'
 import { ResumeUpload } from '../components/onboarding/ResumeUpload'
+import { ProfileDetailSections } from '../components/profile/detail/ProfileDetailSections'
+import { ProfileCompletenessMeter } from '../components/profile/ProfileCompletenessMeter'
+import { mentorEligibility } from '../lib/profileCompleteness'
+import { missingRequired, stepBlocked, type RequiredCheckInput } from '../lib/profileRequired'
+import {
+  EMPTY_DETAIL,
+  detailToPatch,
+  mergeResumeIntoDetail,
+  type ProfileDetailValue,
+} from '../lib/profileDetail'
 import {
   DOMAINS,
   EMPLOYMENT_TYPES,
+  INDUSTRIES,
   WORKING_EMPLOYMENT_TYPES,
   statusOf,
   type CurrentStatus,
@@ -23,7 +34,7 @@ const STATUS_OPTIONS: CurrentStatus[] = [
   'Just looking around',
 ]
 
-const STEPS = ['Import Resume', 'Basic Info', 'Current Status', 'Profile Setup', 'Interests']
+const STEPS = ['Import Resume', 'Basic Info', 'Current Status', 'Profile Setup', 'Interests', 'More Detail']
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
@@ -72,7 +83,36 @@ export function Onboarding() {
   const set = (k: keyof typeof form, v: string | boolean) =>
     setForm((f) => ({ ...f, [k]: v }))
 
+  // The rich-profile half, edited on the last step by the same component Edit
+  // Profile uses. `gaps` lists what a resume parse could not supply, so the
+  // member is asked for exactly those rather than the whole form again.
+  const [detail, setDetail] = useState<ProfileDetailValue>(EMPTY_DETAIL)
+  // Whether a resume has been parsed — changes the wording of the outstanding
+  // list from "still needed" to "your resume didn't cover these".
+  const [parsed, setParsed] = useState(false)
+
+  // Mentoring needs admin-verified proof, which can only be submitted from the
+  // profile after signup — so the toggle is informational here and PATCH
+  // /api/users/me would refuse it anyway.
+  const mentor = mentorEligibility(currentUser)
+
   const status = statusOf(form.employmentType)
+
+  // Everything the shared required-field rules need. Assembled once so
+  // Onboarding and Edit Profile validate against the identical definition.
+  const required: RequiredCheckInput = {
+    ...form,
+    photo,
+    interests: detail.interests,
+    achievements: detail.achievements,
+    mentorTopics: detail.mentorTopics,
+    mentorAvailability: detail.mentorAvailability,
+    mentorshipMode: detail.mentorshipMode,
+    seekingMentorshipIn: detail.seekingMentorshipIn,
+    startupIntent: detail.startupIntent,
+    startupLookingFor: detail.startupLookingFor,
+  }
+  const stillMissing = missingRequired(required)
 
   // Switching Current Status clears whatever fields no longer apply, so a
   // stale company/designation/college doesn't ride along unfilled on save.
@@ -126,6 +166,10 @@ export function Onboarding() {
         expertise: result.skills.length ? result.skills.join(', ') : f.expertise,
       }))
 
+      const merged = mergeResumeIntoDetail(detail, result, INDUSTRIES)
+      setDetail(merged)
+      setParsed(true)
+
       if (result.source === 'fallback') {
         notify('AI parsing is not configured on the server — sample data filled in for demo.', 'info')
       } else {
@@ -145,41 +189,56 @@ export function Onboarding() {
     }
   }
 
+  // Each step gates on its own required fields (see lib/profileRequired.ts).
+  // The resume step is always skippable, and the final step can only be
+  // finished once nothing is outstanding anywhere.
   const canNext = () => {
-    if (step === 0) return true // resume import is optional
-    if (step === 1) return form.name && form.email && form.batchYear && form.course
-    if (step === 2) return true // current status is optional — fill in what applies, skip the rest
-    if (step === 3) return form.city
-    return true
+    if (step === 0) return true
+    if (step === 1) return !stepBlocked(required, 'basic')
+    if (step === 2) return !stepBlocked(required, 'status')
+    if (step === 3) return !stepBlocked(required, 'setup')
+    if (step === 4) return !stepBlocked(required, 'interests')
+    return stillMissing.length === 0
   }
+
+  // Ticked AND still qualifying.
+  const offersMentorship = form.willingToMentor && mentor.eligible
 
   async function finish() {
     setSaving(true)
     try {
       await updateProfile({
-        name: form.name || 'You',
+        name: form.name.trim(),
         ...(photo ? { photo } : {}),
         phone: form.phone,
-        batchYear: Number(form.batchYear) || new Date().getFullYear(),
+        batchYear: Number(form.batchYear),
         course: form.course,
         company: form.company,
         designation: form.designation,
         college: form.college,
         experienceYears: Number(form.experienceYears) || 0,
-        domain: (form.domain || 'Web Dev') as Domain,
-        // A truly skipped step 2 means "didn't say" — default to the honest
-        // catch-all, not a guessed 'Employed'.
-        employmentType: (form.employmentType || 'Just looking around') as EmploymentType,
+        // No placeholder fallbacks: every one of these is required now, so a
+        // blank would be a bug, and 'Web Dev' / 'Rooman alumnus.' would bury it
+        // in data that looks deliberate. Domain in particular drives 25 of the
+        // 100 people-matching points.
+        domain: form.domain as Domain,
+        employmentType: form.employmentType as EmploymentType,
         linkedin: form.linkedin,
-        bio: form.bio || 'Rooman alumnus.',
+        bio: form.bio.trim(),
         city: form.city,
-        willingToMentor: form.willingToMentor,
+        // Guarded by eligibility — see EditProfileModal for why sending a
+        // mentor flag the member no longer qualifies for would fail the save.
+        willingToMentor: offersMentorship,
         interestedInStartup: form.interestedInStartup,
-        isMentor: form.willingToMentor,
-        ...(form.willingToMentor ? { sessionsConducted: 0 } : {}),
-        expertise: form.expertise
-          ? form.expertise.split(',').map((s) => s.trim()).filter(Boolean)
-          : ['Rooman Alumni'],
+        isMentor: offersMentorship,
+        ...(offersMentorship ? { sessionsConducted: 0 } : {}),
+        expertise: form.expertise.split(',').map((s) => s.trim()).filter(Boolean),
+        ...detailToPatch(detail, {
+          willingToMentor: offersMentorship,
+          interestedInStartup: form.interestedInStartup,
+          mentorVerified: !!currentUser.mentorVerified,
+          openToWork: status === 'Looking for opportunity',
+        }),
       })
       notify('Welcome to the Rooman Alumni Network! 🎉')
       navigate('/home')
@@ -351,8 +410,13 @@ export function Onboarding() {
           <div className="flex flex-col gap-3">
             <Toggle
               label="Willing to mentor juniors?"
-              hint="Get listed as a mentor and conduct paid sessions."
+              hint={
+                mentor.eligible
+                  ? 'Get listed as a mentor and conduct paid sessions.'
+                  : 'Needs verified proof of 2+ years of experience, a postgraduate degree, or a passed assessment — submit it from your profile once you are set up.'
+              }
               value={form.willingToMentor}
+              disabled={!mentor.eligible}
               onChange={(v) => set('willingToMentor', v)}
             />
             <Toggle
@@ -361,8 +425,93 @@ export function Onboarding() {
               value={form.interestedInStartup}
               onChange={(v) => set('interestedInStartup', v)}
             />
+            <p className="text-xs text-[#878a8c]">
+              Say yes and the next step asks a couple of follow-ups — that's what makes mentor
+              booking and startup matching actually work.
+            </p>
           </div>
         )}
+
+        {step === 5 && (
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-[#878a8c]">
+              {parsed
+                ? "Your resume filled in everything it could. Anything still listed below it couldn't find — add it here."
+                : 'A fuller profile is what gets you found for referrals, mentorship and jobs.'}
+            </p>
+            {/* A preview of what the score WILL be once this is saved. Built
+                field by field rather than by spreading `detail`, whose form
+                values are strings where User wants numbers. */}
+            <ProfileCompletenessMeter
+              user={{
+                ...currentUser,
+                name: form.name,
+                photo: photo ?? currentUser.photo,
+                city: form.city,
+                batchYear: Number(form.batchYear) || 0,
+                course: form.course,
+                company: form.company,
+                designation: form.designation,
+                college: form.college,
+                bio: form.bio,
+                linkedin: form.linkedin,
+                employmentType: (form.employmentType || '') as EmploymentType,
+                experienceYears: Number(form.experienceYears) || 0,
+                expertise: form.expertise.split(',').map((x) => x.trim()).filter(Boolean),
+                willingToMentor: form.willingToMentor,
+                interestedInStartup: form.interestedInStartup,
+                // Scored detail fields only.
+                education: detail.education,
+                projects: detail.projects,
+                certifications: detail.certifications,
+                experience: detail.experience,
+                github: detail.github || undefined,
+                portfolio: detail.portfolio || undefined,
+                mentorTopics: detail.mentorTopics,
+                mentorAvailability: detail.mentorAvailability || undefined,
+                noticePeriod: detail.noticePeriod || undefined,
+                preferredLocations: detail.preferredLocations,
+                workMode: detail.workMode || undefined,
+              }}
+              postCount={0}
+              variant="compact"
+            />
+            <ProfileDetailSections
+              value={detail}
+              onChange={(patch) => setDetail((d) => ({ ...d, ...patch }))}
+              willingToMentor={form.willingToMentor}
+              interestedInStartup={form.interestedInStartup}
+            />
+          </div>
+        )}
+
+        {/* A disabled Continue with no explanation is the classic dead end, so
+            the outstanding fields for THIS step are named. The final step lists
+            anything left anywhere. */}
+        {(() => {
+          const stepKey = (['basic', 'status', 'setup', 'interests'] as const)[step - 1]
+          const outstanding =
+            step === STEPS.length - 1
+              ? stillMissing
+              : stepKey
+                ? stillMissing.filter((m) => m.step === stepKey)
+                : []
+          if (outstanding.length === 0) return null
+          return (
+            <div className="mt-5 rounded-xl border border-orange-100 bg-orange-50 p-3">
+              <p className="text-xs font-semibold text-[#1c1c1c]">
+                {parsed ? "Not on your resume — please add" : 'Still needed'}
+              </p>
+              <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                {outstanding.map((m) => (
+                  <li key={m.label} className="text-xs text-[#878a8c]">
+                    • {m.label}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )
+        })()}
 
         {/* Footer */}
         <div className="mt-7 flex items-center justify-between">
@@ -451,18 +600,21 @@ function Toggle({
   hint,
   value,
   onChange,
+  disabled = false,
 }: {
   label: string
   hint: string
   value: boolean
   onChange: (v: boolean) => void
+  disabled?: boolean
 }) {
   return (
     <button
       onClick={() => onChange(!value)}
+      disabled={disabled && !value}
       className={`flex items-center justify-between rounded-xl border p-4 text-left transition-colors ${
         value ? 'border-[#ff4500] bg-orange-50' : 'border-[#edeff1] hover:bg-gray-50'
-      }`}
+      } ${disabled && !value ? 'cursor-not-allowed opacity-60 hover:bg-transparent' : ''}`}
     >
       <div>
         <p className="font-semibold text-[#1c1c1c]">{label}</p>

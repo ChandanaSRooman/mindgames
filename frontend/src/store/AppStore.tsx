@@ -161,7 +161,7 @@ interface AppContextValue {
   unpinAnnouncement: (id: string) => void
   pendingMentorIds: string[]
   approveMentor: (id: string) => void
-  declineMentor: (id: string) => void
+  declineMentor: (id: string, reviewNote?: string) => void
 
   // notifications
   notifications: AppNotification[]
@@ -264,7 +264,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const me = meR.value
     const allUsers = usersR.status === 'fulfilled' ? usersR.value : []
     const graph = graphR.status === 'fulfilled' ? graphR.value : { connectionIds: [], sentRequestIds: [], pendingRequestIds: [], connectionNotes: {} }
-    setUsers(allUsers.some((u) => u.id === me.id) ? allUsers : [me, ...allUsers])
+    // Prefer the /auth/me copy of our own record over the directory copy: the
+    // directory is the public projection and withholds the private fields
+    // (phone, notice period, preferred locations, mentorship wanted).
+    setUsers(
+      allUsers.some((u) => u.id === me.id)
+        ? allUsers.map((u) => (u.id === me.id ? me : u))
+        : [me, ...allUsers],
+    )
     setCurrentUserId(me.id)
     setPosts(feedR.status === 'fulfilled' ? feedR.value : [])
     setEvents(evtsR.status === 'fulfilled' ? evtsR.value : [])
@@ -436,6 +443,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // People-you-may-know: everyone who isn't me, an admin/org account, or
   // already linked.
+  //
+  // Deliberately NOT filtered by profile completeness: hiding real members
+  // from suggestions to punish a thin profile costs the network more than it
+  // gains. Completeness only affects the ORDER (see rankByMatch).
   const suggestionIds = useMemo(
     () =>
       rankByMatch(
@@ -812,7 +823,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (rate: number) => {
       updateProfile({ isMentor: true, willingToMentor: true, mentorRate: rate, sessionsConducted: 0 })
         .then(() => notify('You are now listed as a mentor. 🎉'))
-        .catch(() => notify('Could not update your mentor status.', 'error'))
+        // Mentoring is gated (2+ years' experience, a postgraduate degree, or a
+        // passed assessment). The server's rejection names which requirement is
+        // missing — repeat it rather than hiding it behind a generic failure.
+        .catch((err) =>
+          notify(
+            err instanceof Error && err.message && !err.message.startsWith('Request failed')
+              ? err.message
+              : 'Could not update your mentor status.',
+            'error',
+          ),
+        )
     },
     [notify, updateProfile],
   )
@@ -952,9 +973,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const declineMentor = useCallback(
-    (id: string) => {
+    (id: string, reviewNote?: string) => {
       const u = users.find((x) => x.id === id)
-      api.declineMentor(id).then(
+      api.declineMentor(id, reviewNote).then(
         () => {
           setPendingMentorIds((p) => p.filter((x) => x !== id))
           notify(`${u?.name ?? 'Application'} declined.`, 'info')

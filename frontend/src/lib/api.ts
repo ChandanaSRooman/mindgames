@@ -16,6 +16,8 @@ import type {
   PendingCommunity,
   PendingEvent,
   Post,
+  MentorApplication,
+  MentorClaim,
   ResumeParseResult,
   Startup,
   StartupApplication,
@@ -316,8 +318,30 @@ export const api = {
   getMentorApplications: () => http<string[]>('/api/mentorship/applications'),
   approveMentor: (id: string) =>
     http<{ ok: boolean }>(`/api/mentorship/applications/${id}/approve`, { method: 'POST' }),
-  declineMentor: (id: string) =>
-    http<{ ok: boolean }>(`/api/mentorship/applications/${id}/decline`, { method: 'POST' }),
+  declineMentor: (id: string, reviewNote?: string) =>
+    http<{ ok: boolean }>(`/api/mentorship/applications/${id}/decline`, {
+      method: 'POST',
+      body: JSON.stringify({ reviewNote }),
+    }),
+  /** My own mentor application, or null if I have never submitted one. */
+  getMyMentorApplication: () =>
+    http<MentorApplication | null>('/api/mentorship/applications/me'),
+  /** One application in full, with its proof-document metadata (admin). */
+  getMentorApplication: (id: string) =>
+    http<MentorApplication>(`/api/mentorship/applications/${id}`),
+  /** Submit (or resubmit after a decline) a mentor application with evidence. */
+  applyForMentor: (input: {
+    claim: MentorClaim
+    note?: string
+    documents: { name: string; dataBase64: string; mediaType: string }[]
+  }) =>
+    http<{ status: string; claim: MentorClaim; documentCount: number }>(
+      '/api/mentorship/applications',
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
+  /** Admin-only download URL for one proof document. */
+  mentorProofUrl: (userId: string, docId: string) =>
+    `/api/mentorship/applications/${userId}/documents/${docId}`,
 
   // startups
   getStartups: () => http<Startup[]>('/api/startups'),

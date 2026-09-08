@@ -112,11 +112,117 @@ export const PROFILE_TAGS: ProfileTag[] = [
 
 export type TagVerificationStatus = 'verified' | 'unverified' | 'flagged'
 
+// ---------------------------------------------------------------------------
+// Rich profile detail. These are the structures a resume parse produces and
+// that the profile editors let the member correct afterwards — the uploaded
+// file itself is never kept, only this extracted JSON.
+// ---------------------------------------------------------------------------
+
+export interface ExperienceEntry {
+  role: string
+  company: string
+  period: string // like "2022 — Present"
+  summary: string
+}
+
+export interface EducationEntry {
+  degree: string
+  institution: string
+  year: string
+  score?: string // CGPA / percentage, as written
+}
+
+export interface ProjectEntry {
+  title: string
+  description: string
+  link?: string
+  tech: string[]
+}
+
+export interface CertificationEntry {
+  name: string
+  issuer: string
+  year: string
+}
+
+export interface AchievementEntry {
+  title: string
+  year: string
+}
+
+export interface ProfileLink {
+  label: string
+  url: string
+}
+
+export type WorkMode = 'Remote' | 'Hybrid' | 'Onsite'
+export const WORK_MODES: WorkMode[] = ['Remote', 'Hybrid', 'Onsite']
+
+export type MentorshipMode = 'Call' | 'Chat' | 'In-person'
+export const MENTORSHIP_MODES: MentorshipMode[] = ['Call', 'Chat', 'In-person']
+
+export type StartupIntent =
+  | 'Have an idea'
+  | 'Building something'
+  | 'Want to join a startup'
+  | 'Just curious'
+
+export const STARTUP_INTENTS: StartupIntent[] = [
+  'Have an idea',
+  'Building something',
+  'Want to join a startup',
+  'Just curious',
+]
+
+export const STARTUP_LOOKING_FOR = [
+  'Co-founder',
+  'Funding',
+  'Mentor',
+  'Team members',
+  'Early users',
+] as const
+
+// Broader than `Domain` (which is the Rooman training track). Used by the
+// Companies page filter and by people-matching.
+export const INDUSTRIES = [
+  'IT Services',
+  'Product / SaaS',
+  'Fintech',
+  'E-commerce',
+  'Healthcare',
+  'EdTech',
+  'Consulting',
+  'Manufacturing',
+  'Telecom',
+  'Government / PSU',
+  'Media',
+  'Other',
+] as const
+
 export interface User {
   id: string
   name: string
+  // Contact details are private by default: '' / undefined on another
+  // member's profile unless they opted in. Always populated on your own.
   email: string
   phone?: string
+  /** Opt-ins that publish the two fields above. */
+  showEmail?: boolean
+  showPhone?: boolean
+
+  // --- Sensitive personal details -----------------------------------------
+  // Stored for matching, private by default, each individually lockable.
+  // Absent on another member's profile unless they opened that lock.
+  homeAddress?: string
+  /** YYYY-MM-DD. Owner-only — never published, even when `age` is. */
+  dateOfBirth?: string
+  /** Derived from dateOfBirth. Publishable on its own. */
+  age?: number
+  salaryCurrent?: number
+  salaryExpected?: number
+  showAddress?: boolean
+  showAge?: boolean
+  showSalary?: boolean
   // Small data-URL profile photo; absent → initials avatar.
   photo?: string | null
   // Status tag shown on the profile header (legacy single tag).
@@ -149,6 +255,54 @@ export interface User {
   isMentor: boolean
   mentorRate?: number // ₹ / hr
   sessionsConducted?: number
+  // --- Rich profile detail (resume-parseable) ------------------------------
+  // Full work history. `company`/`designation` above stay the quick-display
+  // snapshot of the current role; this is the timeline shown on the profile.
+  experience?: ExperienceEntry[]
+  education?: EducationEntry[]
+  projects?: ProjectEntry[]
+  certifications?: CertificationEntry[]
+  achievements?: AchievementEntry[]
+  languagesKnown?: string[]
+  github?: string
+  portfolio?: string
+  otherLinks?: ProfileLink[]
+  industry?: string
+
+  // --- Preferences ---------------------------------------------------------
+  workMode?: WorkMode
+  openToRelocate?: boolean
+  interests?: string[]
+  openToSpeakAtEvents?: boolean
+  // Rooman branch/centre the member trained at — free text, drives local meetups.
+  roomanCenter?: string
+
+  // --- Mentorship (collected only when willingToMentor is on) --------------
+  // Mentoring is gated on ADMIN-VERIFIED proof — see MentorApplication below
+  // and mentorEligibility() in lib/profileCompleteness. Nothing the member can
+  // type into their own profile qualifies them.
+  mentorVerified?: boolean
+  mentorAssessmentScore?: number
+  mentorAssessmentProvider?: string
+  mentorTopics?: string[]
+  mentorAvailability?: string
+  mentorshipMode?: MentorshipMode
+
+  // --- Referrals & hiring --------------------------------------------------
+  openToReferrals?: boolean
+  referralNote?: string
+  hiringFor?: string[]
+
+  // --- StartupVarsity (collected only when interestedInStartup is on) ------
+  startupIntent?: StartupIntent
+  startupLookingFor?: string[]
+
+  // --- Private: stored, but only ever rendered on the owner's own profile ---
+  // `phone` above is private in the same way.
+  noticePeriod?: string
+  preferredLocations?: string[]
+  seekingMentorshipIn?: string[]
+
   // Verified employer: confirmed a work email → allowed to post jobs.
   employerVerified?: boolean
   workEmailDomain?: string
@@ -500,8 +654,67 @@ export interface ResumeParseResult {
   college: string
   experience: Experience[]
   skills: string[]
+  // Rich detail. The uploaded file is discarded after parsing; this extracted
+  // JSON is what gets stored on the profile, editable by the member afterwards.
+  education: EducationEntry[]
+  projects: ProjectEntry[]
+  certifications: CertificationEntry[]
+  achievements: AchievementEntry[]
+  languagesKnown: string[]
+  interests: string[]
+  github: string
+  portfolio: string
+  industry: string
   // 'ai' = real Claude extraction; 'fallback' = server demo data (no API key).
   source: 'ai' | 'fallback'
+}
+
+// ---------------------------------------------------------------------------
+// Mentor verification. The member claims ONE requirement, attaches evidence,
+// and an admin approves or declines it.
+// ---------------------------------------------------------------------------
+
+export type MentorClaim = 'experience' | 'postgrad' | 'assessment'
+
+export const MENTOR_CLAIM_LABELS: Record<MentorClaim, string> = {
+  experience: '2+ years of professional experience',
+  postgrad: 'A postgraduate degree (Masters or above)',
+  assessment: 'A passed mentor assessment (60% or above)',
+}
+
+/** What we ask people to attach for each claim. */
+export const MENTOR_CLAIM_PROOF_HINTS: Record<MentorClaim, string> = {
+  experience: 'A work experience certificate, or the front of your office ID card.',
+  postgrad: 'Your degree certificate, provisional certificate, or final marksheet.',
+  assessment: 'Your assessment result or score report.',
+}
+
+/**
+ * Claims a member cannot pick yet. The Hire AI assessment isn't live, so there
+ * is no way for anyone to hold a result for it — the option is shown as
+ * "Coming soon" rather than hidden, so the route to verification is visible.
+ *
+ * The backend deliberately still accepts these: an admin can already record a
+ * score directly (POST /api/mentorship/assessment), and this list is only
+ * about what the member-facing form offers today. Empty it to go live.
+ */
+export const MENTOR_CLAIMS_COMING_SOON: MentorClaim[] = ['assessment']
+
+export interface MentorApplicationDoc {
+  id: string
+  name: string
+  type: string
+}
+
+export interface MentorApplication {
+  userId: string
+  status: 'pending' | 'approved' | 'declined'
+  claim?: MentorClaim
+  note?: string
+  /** Why an admin declined it — shown to the member so they can resubmit. */
+  reviewNote?: string
+  updatedAt: string
+  documents: MentorApplicationDoc[]
 }
 
 // Light-theme styling for status tags (Admin directory pills).

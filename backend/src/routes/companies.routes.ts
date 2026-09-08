@@ -67,7 +67,18 @@ companiesRouter.get(
            FROM connections WHERE status = 'accepted' AND (requester_id = $2 OR addressee_id = $2)
          )
          SELECT u.id, u.name, u.photo,
-                u.designation AS role, u.city AS location, u.bio AS journey,
+                u.designation AS role, u.city AS location,
+                -- Prefer what this member actually wrote about their time at
+                -- THIS company over their generic bio. jsonb_typeof guards a
+                -- hand-edited row that isn't an array.
+                COALESCE(NULLIF((
+                  SELECT e->>'summary'
+                  FROM jsonb_array_elements(u.experience) e
+                  WHERE jsonb_typeof(u.experience) = 'array'
+                    AND LOWER(TRIM(COALESCE(e->>'company', ''))) = LOWER(TRIM($1))
+                    AND COALESCE(e->>'summary', '') <> ''
+                  LIMIT 1
+                ), ''), u.bio) AS journey,
                 (
                   SELECT count(*)::int FROM connections c
                   WHERE c.status = 'accepted' AND (c.requester_id = u.id OR c.addressee_id = u.id)

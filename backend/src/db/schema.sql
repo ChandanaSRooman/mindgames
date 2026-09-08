@@ -602,3 +602,135 @@ ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_type_check;
 ALTER TABLE notifications
   ADD CONSTRAINT notifications_type_check
   CHECK (type IN ('connection','like','comment','job','mentorship','community','announcement','event'));
+
+-- ---------------------------------------------------------------------------
+-- Rich profile detail (additive). Every column is nullable or defaulted, so
+-- existing accounts keep working and simply score lower on profile
+-- completeness until the member fills them in — manually or by uploading a
+-- resume from their profile.
+--
+-- The uploaded resume file is never stored; only this extracted JSON is, and
+-- the member can edit it from the profile afterwards.
+-- ---------------------------------------------------------------------------
+
+-- Resume-parseable structures. JSONB (arrays of objects) mirrors how posts.meta
+-- and events.speakers are already stored.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS experience     JSONB  NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS education      JSONB  NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS projects       JSONB  NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS certifications JSONB  NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS achievements   JSONB  NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS other_links    JSONB  NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS languages_known TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS github         TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS portfolio      TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS industry       TEXT NOT NULL DEFAULT '';
+
+-- Preferences.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS work_mode      TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS open_to_relocate BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS interests      TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS open_to_speak_at_events BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS rooman_center  TEXT NOT NULL DEFAULT '';
+
+-- Mentorship: only collected once willing_to_mentor is on.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mentor_topics       TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mentor_availability TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mentorship_mode     TEXT NOT NULL DEFAULT '';
+
+-- Referrals & hiring.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS open_to_referrals BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_note     TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS hiring_for        TEXT[] NOT NULL DEFAULT '{}';
+
+-- StartupVarsity: only collected once interested_in_startup is on.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS startup_intent       TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS startup_looking_for  TEXT[] NOT NULL DEFAULT '{}';
+
+-- Private: stored, but only ever returned/rendered for the owner themselves
+-- (see mapUser's `viewerIsOwner` argument). phone is treated the same way.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS notice_period        TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_locations  TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS seeking_mentorship_in TEXT[] NOT NULL DEFAULT '{}';
+
+-- Multi-select profile tags. The older single `profile_tag` column stays for
+-- backwards compatibility; this is what the profile's tag editor writes.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_tags TEXT[] NOT NULL DEFAULT '{}';
+
+-- Mentor assessment result. Recorded by an admin (POST /api/mentorship/
+-- assessment) so a member cannot self-certify; one of three ways to qualify as
+-- a mentor, alongside a postgraduate degree and 2+ years of experience.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mentor_assessment_score    INTEGER;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mentor_assessment_provider TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mentor_assessment_at       TIMESTAMPTZ;
+
+-- ---------------------------------------------------------------------------
+-- Mentor application proof documents.
+--
+-- Mentoring can't be self-declared: the member picks which requirement they
+-- meet (2+ years' experience / a postgraduate degree / a passed assessment),
+-- attaches evidence, and an admin verifies it. `users.mentor_verified_at` is
+-- what actually unlocks mentoring — set by the approve route, cleared on
+-- decline — so typing "M.Tech" into your own Education list is no longer
+-- enough on its own.
+-- ---------------------------------------------------------------------------
+ALTER TABLE mentor_applications ADD COLUMN IF NOT EXISTS claim       TEXT NOT NULL DEFAULT '';
+ALTER TABLE mentor_applications ADD COLUMN IF NOT EXISTS note        TEXT NOT NULL DEFAULT '';
+ALTER TABLE mentor_applications ADD COLUMN IF NOT EXISTS reviewed_by TEXT REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE mentor_applications ADD COLUMN IF NOT EXISTS review_note TEXT NOT NULL DEFAULT '';
+ALTER TABLE mentor_applications DROP CONSTRAINT IF EXISTS mentor_applications_claim_check;
+ALTER TABLE mentor_applications
+  ADD CONSTRAINT mentor_applications_claim_check
+  CHECK (claim IN ('', 'experience', 'postgrad', 'assessment'));
+
+-- Set once an admin has verified the evidence. NULL = not a verified mentor.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mentor_verified_at TIMESTAMPTZ;
+
+-- One row per uploaded document. Stored inline as BYTEA with the same ~5MB cap
+-- the route enforces, mirroring job_applications.resume_* and messages
+-- .attachment_*.
+CREATE TABLE IF NOT EXISTS mentor_application_docs (
+  id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  user_id    TEXT NOT NULL REFERENCES mentor_applications(user_id) ON DELETE CASCADE,
+  name       TEXT NOT NULL,
+  type       TEXT NOT NULL,
+  data       BYTEA NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mentor_docs_user ON mentor_application_docs (user_id);
+
+-- One-time backfill: members who were already listed as mentors before proof
+-- was required keep their status. Without this, every existing mentor would
+-- silently drop off the Mentors tab (and out of booking) the moment
+-- verification became the gate — including ones with sessions already booked.
+-- New mentors go through the evidence flow; this only grandfathers the ones
+-- who were approved under the old rules. Idempotent: the WHERE clause makes a
+-- second run a no-op.
+UPDATE users
+   SET mentor_verified_at = COALESCE(created_at, now())
+ WHERE is_mentor AND mentor_verified_at IS NULL;
+
+-- Contact visibility. Phone and email are PRIVATE by default: they are the two
+-- fields members are most often uncomfortable broadcasting, and an alumni
+-- directory has no need to publish them. Each can be opted into public
+-- individually. mapUser withholds whichever is off; mapOwnUser always returns
+-- both to the owner.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS show_email BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS show_phone BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Sensitive personal details. Collected because they are useful for matching
+-- (a recruiter filtering on location, a jobs feed on expected salary), but
+-- PRIVATE BY DEFAULT and individually lockable: each has its own show_* flag,
+-- and mapUser withholds any field whose flag is off. Nothing here is ever
+-- published without the member switching it on.
+--
+-- Date of birth is stored, not age: age computed from a date stays correct,
+-- whereas a stored number silently rots. mapUser derives the age.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS home_address     TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth    DATE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS salary_current   INTEGER;   -- ₹ per year
+ALTER TABLE users ADD COLUMN IF NOT EXISTS salary_expected  INTEGER;   -- ₹ per year
+ALTER TABLE users ADD COLUMN IF NOT EXISTS show_address     BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS show_age         BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS show_salary      BOOLEAN NOT NULL DEFAULT FALSE;

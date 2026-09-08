@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Check, CheckCircle2, ExternalLink, Megaphone, Pin, X, XCircle } from 'lucide-react'
-import type { Alumni, ContactRow, PendingCommunity, PendingEvent, StartupApplication } from '../types'
+import { Check, CheckCircle2, ExternalLink, FileText, Megaphone, Pin, X, XCircle } from 'lucide-react'
+import {
+  MENTOR_CLAIM_LABELS,
+  type Alumni,
+  type ContactRow,
+  type MentorApplication,
+  type PendingCommunity,
+  type PendingEvent,
+  type StartupApplication,
+  type User,
+} from '../types'
 import { api } from '../lib/api'
 import { useApp } from '../store/AppStore'
 import { AdminLayout, type AdminView } from '../components/admin/AdminLayout'
@@ -179,6 +188,113 @@ function AnnouncementsPanel() {
   )
 }
 
+/**
+ * One pending application. An approval decision is only meaningful with the
+ * evidence in front of you, so the row fetches the claim and the proof-document
+ * list and links each file to the admin-only download route.
+ */
+function MentorApplicationRow({
+  user,
+  onApprove,
+  onDecline,
+}: {
+  user: User
+  onApprove: () => void
+  onDecline: (reason?: string) => void
+}) {
+  const [app, setApp] = useState<MentorApplication | null>(null)
+  const [declining, setDeclining] = useState(false)
+  const [reason, setReason] = useState('')
+
+  useEffect(() => {
+    let live = true
+    api.getMentorApplication(user.id).then(
+      (a) => live && setApp(a),
+      () => live && setApp(null),
+    )
+    return () => {
+      live = false
+    }
+  }, [user.id])
+
+  return (
+    <div className="rounded-lg border border-[#edeff1] p-3">
+      <div className="flex items-center gap-3">
+        <Avatar name={user.name} size={44} />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-[#1c1c1c]">{user.name}</p>
+          <p className="truncate text-xs text-[#878a8c]">
+            {[roleLine(user), user.domain].filter(Boolean).join(' · ')}
+          </p>
+        </div>
+        <Button icon={<Check size={15} />} className="!px-3 !py-1.5 text-xs" onClick={onApprove}>
+          Approve
+        </Button>
+        <button
+          onClick={() => setDeclining((d) => !d)}
+          aria-label={`Decline ${user.name}`}
+          className="rounded-full p-2 text-[#878a8c] hover:bg-gray-100"
+        >
+          <X size={18} />
+        </button>
+      </div>
+
+      {app?.claim && (
+        <div className="mt-2 border-t border-[#edeff1] pt-2">
+          <p className="text-xs text-[#878a8c]">
+            Claiming: <span className="font-medium text-[#1c1c1c]">{MENTOR_CLAIM_LABELS[app.claim]}</span>
+          </p>
+          {app.note && <p className="mt-1 text-xs text-[#878a8c]">Note: {app.note}</p>}
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {app.documents.map((d) => (
+              <a
+                key={d.id}
+                href={api.mentorProofUrl(user.id, d.id)}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1 rounded-full border border-[#edeff1] px-2.5 py-1 text-xs font-medium text-[#1c1c1c] hover:border-[#ff4500] hover:text-[#ff4500]"
+              >
+                <FileText size={11} /> {d.name}
+              </a>
+            ))}
+            {app.documents.length === 0 && (
+              <span className="text-xs text-red-500">No documents attached.</span>
+            )}
+          </div>
+        </div>
+      )}
+      {app && !app.claim && (
+        <p className="mt-2 border-t border-[#edeff1] pt-2 text-xs text-[#878a8c]">
+          Submitted before proof was required — no documents on file.
+        </p>
+      )}
+
+      {declining && (
+        <div className="mt-2 border-t border-[#edeff1] pt-2">
+          <input
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Why? Shown to the member so they can resubmit."
+            maxLength={500}
+            className="w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
+          />
+          <div className="mt-2 flex justify-end gap-2">
+            <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => setDeclining(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="!bg-red-500 !px-3 !py-1.5 text-xs hover:!bg-red-600"
+              onClick={() => onDecline(reason.trim() || undefined)}
+            >
+              Confirm decline
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Approve / decline alumni who applied to become mentors.
 function MentorApprovalsPanel() {
   const { pendingMentorIds, userById, approveMentor, declineMentor, users, currentUser } = useApp()
@@ -191,19 +307,12 @@ function MentorApprovalsPanel() {
         <h2 className="text-base font-bold text-[#1c1c1c]">Pending Mentor Applications ({pending.length})</h2>
         <div className="mt-3 flex flex-col gap-3">
           {pending.map((u) => (
-            <div key={u.id} className="flex items-center gap-3 rounded-lg border border-[#edeff1] p-3">
-              <Avatar name={u.name} size={44} />
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold text-[#1c1c1c]">{u.name}</p>
-                <p className="truncate text-xs text-[#878a8c]">{[roleLine(u), u.domain].filter(Boolean).join(' · ')}</p>
-              </div>
-              <Button icon={<Check size={15} />} className="!px-3 !py-1.5 text-xs" onClick={() => approveMentor(u.id)}>
-                Approve
-              </Button>
-              <button onClick={() => declineMentor(u.id)} className="rounded-full p-2 text-[#878a8c] hover:bg-gray-100">
-                <X size={18} />
-              </button>
-            </div>
+            <MentorApplicationRow
+              key={u.id}
+              user={u}
+              onApprove={() => approveMentor(u.id)}
+              onDecline={(reason) => declineMentor(u.id, reason)}
+            />
           ))}
           {pending.length === 0 && <p className="text-sm text-[#878a8c]">No pending applications. 🎉</p>}
         </div>

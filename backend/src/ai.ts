@@ -147,6 +147,22 @@ const EMPLOYMENT_TYPES = [
   'Just looking around',
   '',
 ]
+// Must stay in sync with INDUSTRIES in frontend/src/types.ts.
+const INDUSTRIES = [
+  'IT Services',
+  'Product / SaaS',
+  'Fintech',
+  'E-commerce',
+  'Healthcare',
+  'EdTech',
+  'Consulting',
+  'Manufacturing',
+  'Telecom',
+  'Government / PSU',
+  'Media',
+  'Other',
+  '',
+]
 
 // JSON Schema the model must fill — mirrors ResumeParseResult minus `source`.
 const SCHEMA = {
@@ -166,6 +182,9 @@ const SCHEMA = {
     domain: { type: 'string', enum: DOMAINS, description: 'Closest expertise domain, "" only if none fits' },
     employmentType: { type: 'string', enum: EMPLOYMENT_TYPES, description: 'Current employment status, "" if unclear. Use "Student" if currently enrolled in further education with no job, "Looking for opportunity" if job-hunting with no current role.' },
     college: { type: 'string', description: 'Name of the college/institution currently being attended, only if employmentType is "Student" — "" otherwise' },
+    github: { type: 'string', description: 'Full GitHub profile URL, "" if absent' },
+    portfolio: { type: 'string', description: 'Full personal website/portfolio URL, "" if absent' },
+    industry: { type: 'string', enum: INDUSTRIES, description: 'Industry of the most recent employer, "" only if none fits' },
     experience: {
       type: 'array',
       items: {
@@ -180,12 +199,81 @@ const SCHEMA = {
         required: ['role', 'company', 'period', 'summary'],
       },
     },
+    education: {
+      type: 'array',
+      description: 'Every degree/diploma listed, newest first',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          degree: { type: 'string', description: 'Like "B.E. Computer Science"' },
+          institution: { type: 'string' },
+          year: { type: 'string', description: 'Year of completion, "" if unclear' },
+          score: { type: 'string', description: 'CGPA or percentage exactly as written, "" if absent' },
+        },
+        required: ['degree', 'institution', 'year', 'score'],
+      },
+    },
+    projects: {
+      type: 'array',
+      description: 'Personal, academic or side projects — not employment',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          title: { type: 'string' },
+          description: { type: 'string', description: 'One or two sentences on what it does' },
+          link: { type: 'string', description: 'Repo or demo URL, "" if absent' },
+          tech: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['title', 'description', 'link', 'tech'],
+      },
+    },
+    certifications: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          name: { type: 'string' },
+          issuer: { type: 'string', description: 'Issuing body, "" if not stated' },
+          year: { type: 'string', description: 'Year earned, "" if not stated' },
+        },
+        required: ['name', 'issuer', 'year'],
+      },
+    },
+    achievements: {
+      type: 'array',
+      description: 'Awards, honours, competition wins, publications',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          title: { type: 'string' },
+          year: { type: 'string', description: 'Year, "" if not stated' },
+        },
+        required: ['title', 'year'],
+      },
+    },
+    languagesKnown: {
+      type: 'array',
+      description: 'Spoken/written human languages only — never programming languages',
+      items: { type: 'string' },
+    },
+    interests: {
+      type: 'array',
+      description:
+        'Personal interests or hobbies from any "Interests"/"Hobbies"/"Extracurricular" section — not skills or technologies',
+      items: { type: 'string' },
+    },
     skills: { type: 'array', items: { type: 'string' } },
   },
   required: [
     'name', 'email', 'phone', 'linkedin', 'city', 'headline', 'bio',
     'batchYear', 'course', 'experienceYears', 'domain', 'employmentType', 'college',
-    'experience', 'skills',
+    'github', 'portfolio', 'industry',
+    'experience', 'education', 'projects', 'certifications', 'achievements',
+    'languagesKnown', 'interests', 'skills',
   ],
 }
 
@@ -194,8 +282,10 @@ const PROMPT =
   'Work experience is listed newest-first. ' +
   'Use only information present in the document — never invent employers, contact details, or dates. ' +
   'Use "" (or []) for anything the document does not state. ' +
-  'For domain and employmentType, pick the closest allowed value based on the overall profile. ' +
-  'If currently a student, also fill college with the institution name.'
+  'For domain, employmentType and industry, pick the closest allowed value based on the overall profile. ' +
+  'If currently a student, also fill college with the institution name. ' +
+  'Keep employment under `experience` and personal/academic work under `projects` — never the same item in both. ' +
+  'languagesKnown means spoken languages (English, Hindi, Kannada…), never programming languages: those belong in skills.'
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
@@ -540,9 +630,13 @@ async function parseResumeOpenRouter(dataBase64: string, mediaType?: string): Pr
     // reasoning disabled: with it on, this model spent ~1,000-1,900 of its token
     // budget on internal reasoning and got truncated mid-JSON (finish_reason
     // "length"), which is what produced the malformed/garbled output. Off, it
-    // completes in ~650 tokens, runs ~3x faster, and extracts more accurately.
-    // 4096 is generous headroom over that real ~650-token need.
-    parsed = await callOpenRouterJson(OPENROUTER_RESUME_MODEL, messages, 4096, SCHEMA, false)
+    // completes far faster and extracts more accurately.
+    // 8192: the schema now covers experience, education, projects,
+    // certifications and achievements, so a dense multi-page resume can
+    // legitimately need ~2,500 tokens where the old 15-field schema needed
+    // ~650. Truncation here is the exact failure mode that produced garbled
+    // output before, so the ceiling stays several times the realistic need.
+    parsed = await callOpenRouterJson(OPENROUTER_RESUME_MODEL, messages, 8192, SCHEMA, false)
   } catch (err) {
     console.error('Resume parse (OpenRouter) failed:', err instanceof Error ? err.message : err)
     // Usage limits are actionable, so pass the reason through verbatim.
@@ -553,12 +647,36 @@ async function parseResumeOpenRouter(dataBase64: string, mediaType?: string): Pr
   return validateParsedResume(parsed)
 }
 
-const isExperienceEntry = (v: unknown): v is ResumeParseResult['experience'][number] =>
-  typeof v === 'object' &&
-  v !== null &&
-  (['role', 'company', 'period', 'summary'] as const).every(
-    (k) => typeof (v as Record<string, unknown>)[k] === 'string',
-  )
+/**
+ * An entry survives only if every field the frontend reads is really a string.
+ * Built as a factory because the profile now stores five of these arrays and
+ * each one is indexed directly by the editors and the profile page.
+ */
+function entryFilter<T>(keys: readonly string[], listKeys: readonly string[] = []) {
+  return (v: unknown): v is T => {
+    if (typeof v !== 'object' || v === null) return false
+    const o = v as Record<string, unknown>
+    return (
+      keys.every((k) => typeof o[k] === 'string') &&
+      listKeys.every((k) => Array.isArray(o[k]) && o[k].every((s: unknown) => typeof s === 'string'))
+    )
+  }
+}
+
+const isExperienceEntry = entryFilter<ResumeParseResult['experience'][number]>([
+  'role', 'company', 'period', 'summary',
+])
+const isEducationEntry = entryFilter<ResumeParseResult['education'][number]>([
+  'degree', 'institution', 'year', 'score',
+])
+const isProjectEntry = entryFilter<ResumeParseResult['projects'][number]>(
+  ['title', 'description', 'link'],
+  ['tech'],
+)
+const isCertificationEntry = entryFilter<ResumeParseResult['certifications'][number]>([
+  'name', 'issuer', 'year',
+])
+const isAchievementEntry = entryFilter<ResumeParseResult['achievements'][number]>(['title', 'year'])
 
 /**
  * Never trust the free model's JSON blindly, and never hand a partial object to
@@ -584,6 +702,13 @@ function validateParsedResume(parsed: unknown): ResumeParseResult {
   if (typeof raw.name !== 'string' || !Array.isArray(raw.experience) || !Array.isArray(raw.skills)) reject()
 
   const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+  // A missing optional array is fine (treated as empty); a malformed one is
+  // never passed through, because the editors index into these directly.
+  const list = <T>(v: unknown, keep: (x: unknown) => x is T): T[] =>
+    Array.isArray(v) ? v.filter(keep) : []
+  const strings = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : []
+
   return {
     name: str(raw.name),
     email: str(raw.email),
@@ -598,8 +723,17 @@ function validateParsedResume(parsed: unknown): ResumeParseResult {
     domain: str(raw.domain),
     employmentType: str(raw.employmentType),
     college: str(raw.college),
-    experience: (raw.experience as unknown[]).filter(isExperienceEntry),
-    skills: (raw.skills as unknown[]).filter((s): s is string => typeof s === 'string'),
+    github: str(raw.github),
+    portfolio: str(raw.portfolio),
+    industry: str(raw.industry),
+    experience: list(raw.experience, isExperienceEntry),
+    education: list(raw.education, isEducationEntry),
+    projects: list(raw.projects, isProjectEntry),
+    certifications: list(raw.certifications, isCertificationEntry),
+    achievements: list(raw.achievements, isAchievementEntry),
+    languagesKnown: strings(raw.languagesKnown),
+    interests: strings(raw.interests),
+    skills: strings(raw.skills),
     source: 'ai',
   }
 }

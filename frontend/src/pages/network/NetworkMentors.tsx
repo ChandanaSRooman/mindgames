@@ -5,6 +5,7 @@ import { useApp } from '../../store/AppStore'
 import { useLayout } from '../../components/layout/LayoutContext'
 import { Avatar, Button, Card, SectionTitle } from '../../components/ui'
 import { roleLine } from '../../lib/format'
+import { isBookableMentor } from '../../lib/profileCompleteness'
 import type { NetworkOutletContext } from './NetworkLayout'
 
 // Mentors across your connections and suggestions — for finding/connecting
@@ -17,7 +18,12 @@ export function NetworkMentors() {
   const [noteModal, setNoteModal] = useState<{ userId: string; name: string } | null>(null)
   const [note, setNote] = useState('')
 
-  const mentors = users.filter((u) => u.isMentor && u.id !== currentUser.id && u.id !== 'rooman')
+  // Listed only if they qualify to mentor AND have said what they cover or
+  // when they're free — see isBookableMentor. Members who ticked the box but
+  // haven't filled either are told so by the meter on their own profile.
+  const mentors = users.filter(
+    (u) => u.id !== currentUser.id && u.id !== 'rooman' && isBookableMentor(u),
+  )
 
   return (
     <section>
