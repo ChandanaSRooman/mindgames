@@ -4,53 +4,19 @@ import { Link } from 'react-router-dom'
 import { useApp } from '../../store/AppStore'
 import { Avatar } from '../ui'
 import { timeAgo } from '../../lib/format'
-import { api } from '../../lib/api'
+import { useLeaderboard } from '../../hooks/useLeaderboard'
+import { useUpcomingEvents } from '../../hooks/useUpcomingEvents'
+import { DEFAULT_SORT, SORT_MODES, sortPostsBySortMode, type SortMode } from '../../lib/postSort'
 import type { Post, User } from '../../types'
 
-type SortMode = 'Best' | 'Hot' | 'New' | 'Top' | 'Rising'
-
-function sortPostsBySortMode(posts: Post[], mode: SortMode): Post[] {
-  const now = Date.now()
-
-  switch (mode) {
-    case 'New':
-      return [...posts].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
-    case 'Top':
-      return [...posts].sort((a, b) => b.likes - a.likes)
-    case 'Best':
-      return [...posts].sort((a, b) => {
-        const scoreA = a.likes * 2 + a.comments.length * 3
-        const scoreB = b.likes * 2 + b.comments.length * 3
-        return scoreB - scoreA || +new Date(b.createdAt) - +new Date(a.createdAt)
-      })
-    case 'Hot': {
-      return [...posts].sort((a, b) => {
-        const ageHoursA = (now - +new Date(a.createdAt)) / (1000 * 60 * 60)
-        const ageHoursB = (now - +new Date(b.createdAt)) / (1000 * 60 * 60)
-        const scoreA = a.likes / Math.pow(ageHoursA + 2, 1.5)
-        const scoreB = b.likes / Math.pow(ageHoursB + 2, 1.5)
-        return scoreB - scoreA || +new Date(b.createdAt) - +new Date(a.createdAt)
-      })
-    }
-    case 'Rising': {
-      const recent = posts.filter((p) => +new Date(p.createdAt) > now - 24 * 60 * 60 * 1000)
-      if (recent.length === 0) return [...posts].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
-      return recent.sort((a, b) => {
-        const ageHoursA = (now - +new Date(a.createdAt)) / (1000 * 60 * 60) + 0.01
-        const ageHoursB = (now - +new Date(b.createdAt)) / (1000 * 60 * 60) + 0.01
-        const scoreA = a.likes / ageHoursA
-        const scoreB = b.likes / ageHoursB
-        return scoreB - scoreA || +new Date(b.createdAt) - +new Date(a.createdAt)
-      })
-    }
-    default:
-      return posts
-  }
-}
-
-function PostCard({ p, author }: { p: Post; author: User | undefined; index?: number }) {
+function PostCard({ p, author }: { p: Post; author: User | undefined }) {
   return (
-    <div className="flex items-start gap-2.5 bg-white border border-[#e0e0e0] p-2.5 hover:border-[#ff4500] transition-all duration-300 group">
+    // Deep-links to the post in the feed below; Home.tsx handles the #post-<id>
+    // hash by scrolling to it and briefly highlighting it.
+    <Link
+      to={`/home#post-${p.id}`}
+      className="flex items-start gap-2.5 bg-white border border-[#e0e0e0] p-2.5 hover:border-[#ff4500] transition-all duration-300 group"
+    >
       <Avatar name={author?.name ?? '?'} src={author?.photo} size={28} />
       <div className="min-w-0 flex-1">
         <p className="text-xs font-semibold text-black">{author?.name}</p>
@@ -61,20 +27,19 @@ function PostCard({ p, author }: { p: Post; author: User | undefined; index?: nu
           <span>{timeAgo(p.createdAt)}</span>
         </div>
       </div>
-    </div>
+    </Link>
   )
 }
 
 export function HomeRightSidebar() {
-  const { posts, currentUser, connectionIds, events, userById } = useApp()
-  const [sort, setSort] = useState<SortMode>('Hot')
+  const { posts, currentUser, connectionIds, userById } = useApp()
+  // Scoped to this sidebar's own widgets — the main feed has its own ordering
+  // (network posts from the last 48h) and deliberately does not follow this.
+  const [sort, setSort] = useState<SortMode>(DEFAULT_SORT)
   const [showDropdown, setShowDropdown] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  const [leaders, setLeaders] = useState<Awaited<ReturnType<typeof api.getLeaderboard>>>([])
-  useEffect(() => {
-    api.getLeaderboard().then(setLeaders, () => {})
-  }, [])
+  const leaders = useLeaderboard()
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -124,13 +89,7 @@ export function HomeRightSidebar() {
       .map((x) => x.post)
   }, [posts, currentUser.id, currentUser.domain, currentUser.city, connectionIds])
 
-  const nextEvents = useMemo(
-    () => events
-      .filter((e) => e.status === 'approved' && +new Date(e.startsAt) >= Date.now())
-      .sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt))
-      .slice(0, 2),
-    [events]
-  )
+  const nextEvents = useUpcomingEvents(2)
 
   return (
     <aside className="fixed bottom-0 right-[var(--shell-gutter)] top-14 hidden w-[300px] overflow-y-auto px-4 py-4 xl:block bg-[#f5f5f5]">
@@ -145,8 +104,8 @@ export function HomeRightSidebar() {
             <ChevronDown size={14} className={`transition-transform duration-300 ${showDropdown ? 'rotate-180' : ''}`} />
           </button>
           {showDropdown && (
-            <div className="absolute top-10 left-0 right-0 z-10 border border-[#e0e0e0] bg-white shadow-lg animate-in fade-in">
-              {(['Best', 'Hot', 'New', 'Top', 'Rising'] as SortMode[]).map((mode) => (
+            <div className="absolute top-10 left-0 right-0 z-10 border border-[#e0e0e0] bg-white shadow-lg">
+              {SORT_MODES.map((mode) => (
                 <button
                   key={mode}
                   onClick={() => {
@@ -171,8 +130,8 @@ export function HomeRightSidebar() {
           <div>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">{sort}</h3>
             <div className="flex flex-col gap-2">
-              {topPosts.map((p, i) => (
-                <PostCard key={p.id} p={p} author={userById(p.authorId)} index={i} />
+              {topPosts.map((p) => (
+                <PostCard key={p.id} p={p} author={userById(p.authorId)} />
               ))}
             </div>
           </div>
@@ -183,8 +142,8 @@ export function HomeRightSidebar() {
           <div>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">🔥 Trending Now</h3>
             <div className="flex flex-col gap-2">
-              {trendingPostsData.map((p, i) => (
-                <PostCard key={p.id} p={p} author={userById(p.authorId)} index={i} />
+              {trendingPostsData.map((p) => (
+                <PostCard key={p.id} p={p} author={userById(p.authorId)} />
               ))}
             </div>
           </div>
@@ -212,8 +171,8 @@ export function HomeRightSidebar() {
           <div>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">For You</h3>
             <div className="flex flex-col gap-2">
-              {postsForYou.map((p, i) => (
-                <PostCard key={p.id} p={p} author={userById(p.authorId)} index={i} />
+              {postsForYou.map((p) => (
+                <PostCard key={p.id} p={p} author={userById(p.authorId)} />
               ))}
             </div>
           </div>
@@ -228,7 +187,6 @@ export function HomeRightSidebar() {
                 <Link
                   key={l.id}
                   to={`/profile/${l.id}`}
-                  style={{ animationDelay: `${i * 50}ms` }}
                   className="group flex items-center gap-2.5 bg-white border border-[#e0e0e0] px-2.5 py-2 hover:border-[#ff4500] transition-all duration-300"
                 >
                   <div
@@ -255,11 +213,10 @@ export function HomeRightSidebar() {
           <div>
             <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-black">Events</h3>
             <div className="flex flex-col gap-1.5">
-              {nextEvents.map((e, i) => (
+              {nextEvents.map((e) => (
                 <Link
                   key={e.id}
                   to="/events"
-                  style={{ animationDelay: `${i * 50}ms` }}
                   className="group bg-white border border-[#e0e0e0] p-2.5 text-xs hover:border-[#ff4500] transition-all duration-300"
                 >
                   <p className="font-semibold text-black">{e.title}</p>
