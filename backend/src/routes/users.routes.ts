@@ -5,7 +5,7 @@ import { query } from '../db/pool.js'
 import { requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { mapOwnUser, mapUser, USER_COLS, type UserRow } from '../mappers.js'
-import { sendEmail } from '../email.js'
+import { sendEmail, sendEmailChangeRequestEmail } from '../email.js'
 
 export const usersRouter = Router()
 
@@ -354,6 +354,37 @@ usersRouter.patch(
   }),
 )
 
+const emailChangeRequestSchema = z.object({
+  newEmail: z.string().trim().email('a valid email is required'),
+  reason: z.string().trim().max(500).optional(),
+})
+
+// POST /api/users/me/request-email-change — the account email is not
+// self-serve editable (it's the sign-in identity, see PATCH /me above, where
+// it's simply absent from patchSchema). This notifies the admin instead of
+// changing anything, since there is no self-serve email change in this app.
+usersRouter.post(
+  '/me/request-email-change',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = emailChangeRequestSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
+
+    const me = await query<{ name: string; email: string }>(`SELECT name, email FROM users WHERE id = $1`, [
+      req.user!.sub,
+    ])
+    if (!me.rowCount) throw new ApiError(404, 'User not found')
+
+    await sendEmailChangeRequestEmail(
+      req.user!.sub,
+      me.rows[0].name,
+      me.rows[0].email,
+      parsed.data.newEmail,
+      parsed.data.reason ?? '',
+    )
+    res.json({ ok: true })
+  }),
+)
 
 // --- Employer (work-email) verification ------------------------------------
 // A user proves they work at a company by verifying a work email with a

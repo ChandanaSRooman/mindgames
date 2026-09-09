@@ -11,13 +11,20 @@ import { requireAdmin, requireAuth } from '../auth/middleware.js'
 export const inviteesRouter = Router()
 inviteesRouter.use(requireAuth, requireAdmin)
 
-const INVITEE_COLS = `id, name, phone, email, role, batch_year, status_tags`
+const INVITEE_COLS = `id, name, phone, email, role, batch_year, status_tags,
+  invited_at, invite_status, invite_error, invite_count`
 
 inviteesRouter.get(
   '/',
   asyncHandler(async (_req, res) => {
     const result = await query<InviteeRow>(
-      `SELECT ${INVITEE_COLS} FROM invitees ORDER BY created_at`,
+      `SELECT i.id, i.name, i.phone, i.email, i.role, i.batch_year, i.status_tags,
+              i.invited_at, i.invite_status, i.invite_error, i.invite_count,
+              (u.id IS NOT NULL)                         AS has_account,
+              (u.id IS NOT NULL AND NOT u.must_change_password) AS password_changed
+         FROM invitees i
+         LEFT JOIN users u ON lower(u.email) = lower(i.email)
+        ORDER BY i.created_at`,
     )
     res.json(result.rows.map(mapInvitee))
   }),

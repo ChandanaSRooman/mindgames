@@ -1,28 +1,29 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { GraduationCap } from 'lucide-react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { GraduationCap, Lock } from 'lucide-react'
 import { useApp } from '../store/AppStore'
-import { needsOnboarding, type User } from '../types'
 import { isValidEmail } from '../lib/csv'
+import { landingRoute } from '../lib/landingRoute'
 import { Button, Card } from '../components/ui'
 
 // Sign-in for existing members. Authenticates against the backend (JWT) via the
 // store, then lands in the app. Demo account: you@rooman.alumni / roomandemo.
+//
+// ?email=… — invite emails link here with the address pre-filled (see
+// backend/src/email.ts). It's locked in that case: the account was created by
+// an admin under exactly that address, so letting them retype it only invites
+// a typo that reads back as "wrong password".
 export function Login() {
   const navigate = useNavigate()
   const { login } = useApp()
-  const [email, setEmail] = useState('')
+  const [params] = useSearchParams()
+  const invitedEmail = params.get('email')?.trim() ?? ''
+  const fromInvite = isValidEmail(invitedEmail)
+
+  const [email, setEmail] = useState(fromInvite ? invitedEmail : '')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-
-  // Admins land on the console; members with unfinished setup resume the
-  // onboarding wizard; everyone else lands on their feed.
-  function landingRoute(user: User): string {
-    if (user.isAdmin) return '/admin'
-    if (needsOnboarding(user)) return '/onboarding'
-    return '/home'
-  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -32,6 +33,14 @@ export function Login() {
     setLoading(true)
     try {
       const user = await login(email, password)
+      // Invite-created accounts are still on the password we generated and
+      // mailed them — offer to replace it before anything else. The password
+      // they just typed rides along so that screen doesn't have to ask for it
+      // a second time; it never touches the URL or storage.
+      if (user.mustChangePassword) {
+        navigate('/set-password', { replace: true, state: { currentPassword: password } })
+        return
+      }
       navigate(landingRoute(user))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign-in failed. Try again.')
@@ -52,12 +61,44 @@ export function Login() {
           <span className="text-sm font-semibold text-[#878a8c]">Rooman Alumni Network</span>
         </Link>
 
-        <h1 className="text-xl font-semibold text-[#1c1c1c]">Welcome back</h1>
-        <p className="mt-1 text-sm text-[#878a8c]">Sign in to your alumni account.</p>
+        <h1 className="text-xl font-semibold text-[#1c1c1c]">
+          {fromInvite ? 'Welcome to the network' : 'Welcome back'}
+        </h1>
+        <p className="mt-1 text-sm text-[#878a8c]">
+          {fromInvite
+            ? 'Enter the password from your invitation email to sign in.'
+            : 'Sign in to your alumni account.'}
+        </p>
 
         <form onSubmit={submit} className="mt-6 space-y-3" noValidate>
-          <input className={field} type="email" placeholder="Email address" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <input className={field} type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          {fromInvite ? (
+            <div>
+              <div className="flex items-center gap-2 rounded-lg border border-[#edeff1] bg-[#f6f7f8] px-3 py-2.5">
+                <Lock size={14} className="shrink-0 text-[#878a8c]" />
+                <span className="truncate text-sm font-medium text-[#1c1c1c]">{email}</span>
+              </div>
+              <p className="mt-1.5 text-xs text-[#878a8c]">
+                This is the address your invitation was sent to and can't be changed.
+              </p>
+            </div>
+          ) : (
+            <input
+              className={field}
+              type="email"
+              placeholder="Email address"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          )}
+          <input
+            className={field}
+            type="password"
+            placeholder="Password"
+            autoFocus={fromInvite}
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
           {error && (
             <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
               {error}
@@ -72,13 +113,6 @@ export function Login() {
             Sign in
           </Button>
         </form>
-
-        <p className="mt-4 text-center text-sm text-[#878a8c]">
-          New here?{' '}
-          <Link to="/accept-invite" className="font-semibold text-[#ff4500] hover:underline">
-            Accept your invite
-          </Link>
-        </p>
       </Card>
     </div>
   )

@@ -8,6 +8,8 @@ import type {
   Company,
   CompanyDetail,
   ContactRow,
+  InviteEmailTemplate,
+  InviteStatus,
   EventAttendee,
   EventFeedbackEntry,
   JobApplicant,
@@ -150,6 +152,12 @@ export const api = {
     http<{ ok: boolean }>('/api/auth/change-password', {
       method: 'POST',
       body: JSON.stringify({ currentPassword: currentPassword || undefined, newPassword }),
+    }),
+
+  requestEmailChange: (newEmail: string, reason?: string) =>
+    http<{ ok: boolean }>('/api/users/me/request-email-change', {
+      method: 'POST',
+      body: JSON.stringify({ newEmail, reason }),
     }),
 
   // users
@@ -408,10 +416,30 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ rows }) },
     ),
   sendInvites: (invites: Array<{ id: string; email: boolean; whatsapp: boolean }>) =>
-    http<{ emailCount: number; whatsappCount: number; total: number; message: string }>(
-      '/api/invites/batch',
-      { method: 'POST', body: JSON.stringify({ invites }) },
+    http<{
+      emailCount: number
+      whatsappCount: number
+      total: number
+      // Emailing an invitee creates their account, so a batch reports how many
+      // were newly created vs. already had one.
+      accountsCreated: number
+      alreadyJoined: number
+      failedCount: number
+      results: Array<{ email: string; status: InviteStatus; error?: string }>
+      message: string
+    }>('/api/invites/batch', { method: 'POST', body: JSON.stringify({ invites }) }),
+
+  // admin: editable invite email copy
+  getInviteEmailTemplate: () => http<InviteEmailTemplate>('/api/admin/email-template/invite'),
+  saveInviteEmailTemplate: (subject: string, body: string) =>
+    http<{ ok: boolean; preview: { subject: string; body: string } }>(
+      '/api/admin/email-template/invite',
+      { method: 'PUT', body: JSON.stringify({ subject, body }) },
     ),
+  resetInviteEmailTemplate: () =>
+    http<{ ok: boolean; subject: string; body: string }>('/api/admin/email-template/invite', {
+      method: 'DELETE',
+    }),
 
   // events
   getEvents: () => http<AppEvent[]>('/api/events'),

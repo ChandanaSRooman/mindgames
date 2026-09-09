@@ -88,6 +88,19 @@ authRouter.post(
     const exists = await query('SELECT 1 FROM users WHERE lower(email) = lower($1)', [email])
     if (exists.rowCount) throw new ApiError(409, 'An account with this email already exists')
 
+    // Invite-only: an admin's invite (see invites.routes.ts) creates the
+    // account and mails its credentials directly, so a legitimate invitee
+    // already has an account (caught above) by the time they'd reach this
+    // far. Anyone not on the invitee list — invited or not yet emailed —
+    // cannot self-register a new one this way.
+    const invited = await query('SELECT 1 FROM invitees WHERE lower(email) = lower($1)', [email])
+    if (!invited.rowCount) {
+      throw new ApiError(
+        403,
+        'Sign-ups are invite-only. Please check your email for an invitation, or contact your administrator.',
+      )
+    }
+
     // Rate-limit: one code per minute per address.
     const existing = await query<{ sent_at: Date }>(`SELECT sent_at FROM signup_otps WHERE email = $1`, [email])
     if (existing.rowCount && Date.now() - new Date(existing.rows[0].sent_at).getTime() < 60_000) {
@@ -242,7 +255,11 @@ authRouter.post(
     if (!userId) throw new ApiError(400, 'This reset link is invalid or has expired. Request a new one.')
 
     const passwordHash = await hashPassword(parsed.data.password)
-    await query(`UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2`, [passwordHash, userId])
+    await query(
+      `UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = now()
+       WHERE id = $2`,
+      [passwordHash, userId],
+    )
     res.json({ ok: true })
   }),
 )
@@ -356,23 +373,21 @@ authRouter.post(
     const email = profile.email
     if (!email) throw new ApiError(401, 'Google account has no email')
     if (profile.email_verified === false) throw new ApiError(401, 'Google email is not verified')
-    const name = profile.name || email.split('@')[0]
 
-    // 3. Upsert by email: existing users just sign in; new ones get an account
-    //    with no password (they sign in via Google).
+    // 3. Existing users sign in. Invite-only: this must never create a new
+    //    account — that would let anyone with a Google account join without
+    //    ever being invited, bypassing the same rule /signup/start enforces.
     const existing = await query<UserRow & { is_admin: boolean }>(
       `SELECT ${USER_COLS} FROM users WHERE lower(email) = lower($1)`,
       [email],
     )
-    if (existing.rowCount) return res.json(issue(existing.rows[0]))
-
-    const created = await query<UserRow & { is_admin: boolean }>(
-      `INSERT INTO users (name, email, avatar, batch_year)
-       VALUES ($1, $2, $1, date_part('year', now()))
-       RETURNING ${USER_COLS}`,
-      [name, email],
-    )
-    res.status(201).json(issue(created.rows[0]))
+    if (!existing.rowCount) {
+      throw new ApiError(
+        403,
+        'Sign-ups are invite-only. Please check your email for an invitation, or contact your administrator.',
+      )
+    }
+    res.json(issue(existing.rows[0]))
   }),
 )
 
@@ -426,10 +441,13 @@ authRouter.post(
         throw new ApiError(401, 'Current password is incorrect')
       }
     }
-    await query(`UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2`, [
-      await hashPassword(newPassword),
-      req.user!.sub,
-    ])
+    // Clearing must_change_password here is what retires the post-invite
+    // prompt — the generated password they were mailed is now replaced.
+    await query(
+      `UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = now()
+       WHERE id = $2`,
+      [await hashPassword(newPassword), req.user!.sub],
+    )
     res.json({ ok: true })
   }),
 )

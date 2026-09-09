@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Check, CheckCircle2, ExternalLink, FileText, Megaphone, Pin, X, XCircle } from 'lucide-react'
+import { Check, CheckCircle2, ExternalLink, FilePenLine, FileText, Megaphone, Pin, X, XCircle } from 'lucide-react'
 import {
   MENTOR_CLAIM_LABELS,
   type Alumni,
@@ -18,6 +18,8 @@ import { StatBar } from '../components/admin/StatBar'
 import { CsvUpload } from '../components/admin/CsvUpload'
 import { AddUserForm } from '../components/admin/AddUserForm'
 import { AlumniTable } from '../components/admin/AlumniTable'
+import { InviteEmailTemplateModal } from '../components/admin/InviteEmailTemplateModal'
+import { SentInvitesPanel } from '../components/admin/SentInvitesPanel'
 import { Avatar, Button, Card } from '../components/ui'
 import { roleLine, timeAgo } from '../lib/format'
 
@@ -31,12 +33,16 @@ export function AdminDashboard() {
   const [preview, setPreview] = useState<ContactRow[]>([])
   const [invitesSent, setInvitesSent] = useState(0)
 
-  useEffect(() => {
+  const loadAlumni = useCallback(() => {
     api
       .getAlumni()
       .then(setAlumni)
       .catch(() => notify('Could not reach the API. Is the backend running on :4000?', 'error'))
   }, [notify])
+
+  useEffect(() => {
+    loadAlumni()
+  }, [loadAlumni])
 
   const mentors = useMemo(() => alumni.filter((a) => a.statusTags.includes('Can mentor')).length, [alumni])
 
@@ -87,12 +93,26 @@ export function AdminDashboard() {
 
           {preview.length > 0 && <PreviewTable rows={preview} onImport={commitPreview} onDiscard={() => setPreview([])} />}
 
-          <AlumniTable alumni={alumni} onInvitesSent={(n) => setInvitesSent((s) => s + n)} />
+          <AlumniTable
+            alumni={alumni}
+            onInvitesSent={(n) => {
+              setInvitesSent((s) => s + n)
+              loadAlumni()
+            }}
+          />
         </div>
       )}
 
+      {view === 'sent-invites' && <SentInvitesPanel alumni={alumni} onChanged={loadAlumni} />}
+
       {view === 'directory' && (
-        <AlumniTable alumni={alumni} onInvitesSent={(n) => setInvitesSent((s) => s + n)} />
+        <AlumniTable
+          alumni={alumni}
+          onInvitesSent={(n) => {
+            setInvitesSent((s) => s + n)
+            loadAlumni()
+          }}
+        />
       )}
 
       {view === 'announcements' && <AnnouncementsPanel />}
@@ -686,6 +706,7 @@ function PreviewTable({
 
 function SettingsPanel() {
   const [integrations, setIntegrations] = useState<{ google: boolean; smtp: boolean; ai: boolean } | null>(null)
+  const [editingTemplate, setEditingTemplate] = useState(false)
 
   useEffect(() => {
     api.getAdminStats().then((s) => setIntegrations(s.integrations), () => {})
@@ -727,12 +748,30 @@ function SettingsPanel() {
         <DigestButton />
       </Card>
       <Card className="p-6">
+        <h2 className="mb-1 text-base font-bold text-[#1c1c1c]">Invite Email</h2>
+        <p className="mb-4 text-sm text-[#878a8c]">
+          The credentials email a new member receives. Sending an invite creates their account and
+          mails them a generated password, so this is the only place those details appear.
+        </p>
+        <Button
+          variant="outline"
+          icon={<FilePenLine size={15} />}
+          onClick={() => setEditingTemplate(true)}
+        >
+          Edit email template
+        </Button>
+      </Card>
+      <Card className="p-6">
         <h2 className="mb-2 text-base font-bold text-[#1c1c1c]">Invitation Landing Page</h2>
-        <p className="mb-4 text-sm text-[#878a8c]">Preview what an invited alumnus sees after clicking their link.</p>
+        <p className="mb-4 text-sm text-[#878a8c]">
+          Where an invite link used to land. Sign-ups are invite-only now, so this page just points
+          people at sign-in — invited members go straight to the locked sign-in screen instead.
+        </p>
         <Link to="/accept-invite" className="inline-flex items-center gap-2 text-sm font-medium text-[#ff4500] hover:underline">
           Open invitation page <ExternalLink size={15} />
         </Link>
       </Card>
+      {editingTemplate && <InviteEmailTemplateModal onClose={() => setEditingTemplate(false)} />}
     </div>
   )
 }

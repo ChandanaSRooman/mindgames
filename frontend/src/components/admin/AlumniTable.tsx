@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
-import { Mail, MessageCircle, Send } from 'lucide-react'
+import { FilePenLine, Mail, MessageCircle, Send } from 'lucide-react'
 import type { Alumni } from '../../types'
 import { api } from '../../lib/api'
 import { useApp } from '../../store/AppStore'
 import { Button, Card, Checkbox, StatusBadge, cx } from '../ui'
+import { InviteEmailTemplateModal } from './InviteEmailTemplateModal'
 
 type Channel = { email: boolean; whatsapp: boolean }
 
@@ -17,6 +18,7 @@ export function AlumniTable({
   const { notify } = useApp()
   const [selection, setSelection] = useState<Record<string, Channel>>({})
   const [sending, setSending] = useState(false)
+  const [editingTemplate, setEditingTemplate] = useState(false)
 
   const get = (id: string): Channel => selection[id] ?? { email: false, whatsapp: false }
 
@@ -72,13 +74,31 @@ export function AlumniTable({
             {someOn ? `${counts.email} email · ${counts.whatsapp} WhatsApp selected` : 'Select recipients and channels'}
           </p>
         </div>
-        <Button onClick={send} loading={sending} disabled={!someOn} icon={<Send size={16} />}>
-          Send Batch Invitations
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            icon={<FilePenLine size={15} />}
+            onClick={() => setEditingTemplate(true)}
+          >
+            Edit email
+          </Button>
+          <Button onClick={send} loading={sending} disabled={!someOn} icon={<Send size={16} />}>
+            Send Batch Invitations
+          </Button>
+        </div>
       </div>
 
+      {/* Emailing an invitee creates their account, so say so before the click
+          rather than leaving it to be discovered from the result toast. */}
+      <p className="border-b border-[#edeff1] bg-orange-50/60 px-4 py-2.5 text-xs text-[#1c1c1c]">
+        <span className="font-semibold">Sending an email invitation creates the account.</span>{' '}
+        Each recipient gets a generated password and a sign-in link, and can change that password
+        once inside. Anyone who already has an account is skipped. WhatsApp is simulated and
+        creates nothing.
+      </p>
+
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px] text-left text-sm">
+        <table className="w-full min-w-[760px] text-left text-sm">
           <thead>
             <tr className="border-b border-[#edeff1] text-xs uppercase tracking-wide text-[#878a8c]">
               <th className="w-10 px-4 py-3">
@@ -93,6 +113,7 @@ export function AlumniTable({
               <th className="px-4 py-3 font-medium">Phone</th>
               <th className="px-4 py-3 font-medium">Email</th>
               <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">Invite</th>
               <th className="px-4 py-3 text-center font-medium">
                 <span className="inline-flex items-center gap-1"><Mail size={14} /> Email</span>
               </th>
@@ -104,7 +125,7 @@ export function AlumniTable({
           <tbody>
             {alumni.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-[#878a8c]">
+                <td colSpan={8} className="px-4 py-10 text-center text-[#878a8c]">
                   No alumni yet. Upload a CSV or add one manually to get started.
                 </td>
               </tr>
@@ -139,6 +160,22 @@ export function AlumniTable({
                         )}
                       </div>
                     </td>
+                    <td className="px-4 py-3">
+                      {a.inviteStatus === 'failed' ? (
+                        <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
+                          Failed
+                        </span>
+                      ) : a.inviteStatus ? (
+                        <span
+                          className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700"
+                          title={a.invitedAt ? new Date(a.invitedAt).toLocaleString() : undefined}
+                        >
+                          {a.inviteStatus === 'simulated' ? 'Simulated' : 'Sent'}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-[#878a8c]">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-center">
                       <Checkbox aria-label={`Email ${a.name}`} checked={c.email} onChange={(on) => toggleCell(a.id, 'email', on)} />
                     </td>
@@ -152,6 +189,8 @@ export function AlumniTable({
           </tbody>
         </table>
       </div>
+
+      {editingTemplate && <InviteEmailTemplateModal onClose={() => setEditingTemplate(false)} />}
     </Card>
   )
 }

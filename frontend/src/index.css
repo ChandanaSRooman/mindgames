@@ -174,6 +174,72 @@ body {
   }
 }
 
+/* ---------------------------------------------------------------------------
+   Post-invite password screen (dark starfield + eclipse)
+--------------------------------------------------------------------------- */
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: var(--star-dim, 0.25);
+  }
+  50% {
+    opacity: var(--star-lit, 0.9);
+  }
+}
+
+/* Slow orbit for the ambient glows behind the eclipse. */
+@keyframes drift-slow {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(3%, -4%, 0) scale(1.08);
+  }
+  66% {
+    transform: translate3d(-3%, 3%, 0) scale(0.96);
+  }
+}
+
+/* The corona breathes so the eclipse never looks like a static PNG. */
+@keyframes corona-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.04);
+  }
+}
+
+.star {
+  position: absolute;
+  border-radius: 9999px;
+  background: #fff;
+  animation: twinkle var(--star-dur, 4s) ease-in-out infinite;
+  animation-delay: var(--star-delay, 0s);
+}
+
+.drift-slow {
+  animation: drift-slow 22s ease-in-out infinite;
+}
+.corona-pulse {
+  animation: corona-pulse 7s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .star,
+  .drift-slow,
+  .corona-pulse {
+    animation: none;
+  }
+  .star {
+    opacity: var(--star-lit, 0.9);
+  }
+}
+
 .animate-floaty {
   animation: floaty 9s ease-in-out infinite;
 }

@@ -1,3 +1,4 @@
+import { inviteLinkFor } from './email.js'
 // Convert snake_case DB rows into the camelCase JSON shapes the frontend
 // consumes (see frontend/src/types.ts). Kept in one place so response shapes
 // stay consistent across routes.
@@ -19,7 +20,7 @@ export const USER_COLS = `id, name, email, phone, photo, profile_tag, profile_ta
   mentor_assessment_score, mentor_assessment_provider, mentor_verified_at,
   show_email, show_phone,
   home_address, date_of_birth, salary_current, salary_expected,
-  show_address, show_age, show_salary, banner_theme, banner_image`
+  show_address, show_age, show_salary, banner_theme, banner_image, must_change_password`
 
 export interface UserRow {
   id: string
@@ -94,6 +95,7 @@ export interface UserRow {
   show_salary: boolean
   banner_theme: string
   banner_image: string | null
+  must_change_password?: boolean
 }
 
 /**
@@ -153,6 +155,9 @@ export function mapOwnUser(r: UserRow) {
     noticePeriod: opt(r.notice_period),
     preferredLocations: r.preferred_locations ?? [],
     seekingMentorshipIn: r.seeking_mentorship_in ?? [],
+    // Owner-only: drives the "set your own password" prompt after an
+    // invite-created account's first sign-in.
+    mustChangePassword: r.must_change_password ?? false,
   }
 }
 
@@ -386,6 +391,15 @@ export interface InviteeRow {
   role: string
   batch_year: number
   status_tags: string[]
+  // Invite delivery tracking (see invites.routes.ts). Null/absent on an
+  // invitee who has never been sent one.
+  invited_at?: Date | null
+  invite_status?: string | null
+  invite_error?: string | null
+  invite_count?: number | null
+  // Joined from users at query time — an invited member's account state.
+  has_account?: boolean | null
+  password_changed?: boolean | null
 }
 
 // Short human time for a chat message ("9:02 AM", "Mon", "24 Jun"), IST-based.
@@ -411,5 +425,22 @@ export function mapInvitee(r: InviteeRow) {
     role: r.role,
     batchYear: r.batch_year,
     statusTags: r.status_tags ?? [],
+    invitedAt: r.invited_at ? new Date(r.invited_at).toISOString() : null,
+    // invited_at with no recorded status means the send predates per-recipient
+    // tracking. It WAS emailed (nothing else writes invited_at), so report it
+    // as sent rather than as never-invited — the outcome just wasn't captured.
+    inviteStatus: (r.invite_status ?? (r.invited_at ? 'sent' : null)) as
+      | 'sent'
+      | 'failed'
+      | 'simulated'
+      | null,
+    inviteError: r.invite_error ?? null,
+    inviteCount: r.invite_count ?? 0,
+    // The exact link that was mailed — derived from the address rather than
+    // stored, so it can't drift out of sync with what the sender builds.
+    inviteLink: inviteLinkFor(r.email),
+    hasAccount: !!r.has_account,
+    // False while they're still on the password we generated for them.
+    passwordChanged: !!r.password_changed,
   }
 }
