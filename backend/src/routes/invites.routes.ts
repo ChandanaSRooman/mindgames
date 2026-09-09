@@ -26,6 +26,8 @@ invitesRouter.post(
 
     let recipients: Array<{ name: string; email: string; password: string }> = []
     let alreadyJoined = 0
+    let created = 0
+    let reissued = 0
     // email → invitee id, so each send result can be written back to its row.
     const idByEmail = new Map<string, string>()
     if (emailIds.length) {
@@ -35,13 +37,41 @@ invitesRouter.post(
       )
 
       for (const invitee of rows.rows) {
-        const existing = await query('SELECT 1 FROM users WHERE lower(email) = lower($1)', [invitee.email])
-        if (existing.rowCount) {
-          // Already has an account (e.g. re-invited, or a seeded/demo user)
-          // — never overwrite a password someone may already be using.
-          alreadyJoined++
+        const existing = await query<{
+          id: string
+          last_login_at: Date | null
+          must_change_password: boolean
+        }>(
+          `SELECT id, last_login_at, must_change_password FROM users
+            WHERE lower(email) = lower($1)`,
+          [invitee.email],
+        )
+        const account = existing.rows[0]
+
+        if (account) {
+          // Re-inviting someone who has USED their account would replace a
+          // password they rely on — refuse that. But an account that has never
+          // been signed into and is still on the password we generated has
+          // nothing to lose, and re-issuing is the only way to help someone
+          // who never received (or lost) their invite: we can't resend the
+          // original, because it was never stored in readable form.
+          const untouched = !account.last_login_at && account.must_change_password
+          if (!untouched) {
+            alreadyJoined++
+            continue
+          }
+          const password = generatePassword()
+          await query(
+            `UPDATE users SET password_hash = $2, must_change_password = TRUE, updated_at = now()
+              WHERE id = $1`,
+            [account.id, await hashPassword(password)],
+          )
+          idByEmail.set(invitee.email.toLowerCase(), invitee.id)
+          recipients.push({ name: invitee.name, email: invitee.email, password })
+          reissued++
           continue
         }
+
         idByEmail.set(invitee.email.toLowerCase(), invitee.id)
         const password = generatePassword()
         const passwordHash = await hashPassword(password)
@@ -53,6 +83,7 @@ invitesRouter.post(
           [invitee.name, invitee.email, passwordHash],
         )
         recipients.push({ name: invitee.name, email: invitee.email, password })
+        created++
       }
     }
 
@@ -73,28 +104,39 @@ invitesRouter.post(
             SET invited_at = now(),
                 invite_status = $2,
                 invite_error = $3,
-                invite_count = invite_count + 1
+                invite_count = invite_count + 1,
+                invite_sent_subject = $4,
+                invite_sent_body = $5
           WHERE id = $1`,
-        [id, r.status, r.error ?? null],
+        [id, r.status, r.error ?? null, r.sentSubject, r.sentBody],
       )
     }
 
     const failed = results.filter((r) => r.status === 'failed')
     const emailCount = results.filter((r) => r.status !== 'failed').length
     const via = emailEnabled ? 'email' : 'email (simulated)'
-    const skippedNote = alreadyJoined ? ` ${alreadyJoined} already had an account and were skipped.` : ''
+    const skippedNote = alreadyJoined
+      ? ` ${alreadyJoined} skipped — they've already signed in or set their own password.`
+      : ''
     const failedNote = failed.length ? ` ${failed.length} email(s) could not be delivered.` : ''
+    const parts = [
+      created ? `Created ${created} account(s)` : '',
+      reissued ? `re-issued ${reissued} password(s)` : '',
+      `sent ${emailCount} ${via} invitation(s)`,
+      whatsappCount ? `${whatsappCount} WhatsApp (simulated)` : '',
+    ].filter(Boolean)
     res.json({
       emailCount,
       whatsappCount,
       total: emailCount + whatsappCount,
+      // Kept for compatibility: total emails prepared, new or re-issued.
       accountsCreated: recipients.length,
+      created,
+      reissued,
       alreadyJoined,
       failedCount: failed.length,
       results,
-      message:
-        `Created ${recipients.length} account(s) and sent ${emailCount} ${via} invitation(s), ` +
-        `plus ${whatsappCount} WhatsApp (simulated).${skippedNote}${failedNote}`,
+      message: `${parts.join(', ')}.${skippedNote}${failedNote}`,
     })
   }),
 )

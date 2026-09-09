@@ -62,9 +62,25 @@ adminRouter.get(
     ])
 
     // Latest sign-ups so the admin can see who joined.
-    const recent = await query<{ id: string; name: string; email: string; city: string; created_at: Date }>(
-      `SELECT id, name, email, city, created_at FROM users
-       WHERE NOT is_admin ORDER BY created_at DESC LIMIT 8`,
+    // created_at is when the ACCOUNT was made, which an admin invite does on
+    // the member's behalf — so it says nothing about whether they've actually
+    // turned up. last_login_at is the fact that answers that.
+    const recent = await query<{
+      id: string
+      name: string
+      email: string
+      city: string
+      created_at: Date
+      last_login_at: Date | null
+      must_change_password: boolean
+      ever_active: boolean
+    }>(
+      `SELECT id, name, email, city, created_at, last_login_at, must_change_password,
+              -- Proof the account has actually been used, for members who
+              -- signed in before last_login_at existed: you cannot finish
+              -- onboarding (course) or edit a profile without signing in.
+              (course <> '' OR updated_at > created_at) AS ever_active
+         FROM users WHERE NOT is_admin ORDER BY created_at DESC LIMIT 8`,
     )
 
     res.json({
@@ -90,7 +106,12 @@ adminRouter.get(
         name: r.name,
         email: r.email,
         city: r.city,
+        // Kept as `joinedAt` for compatibility, but it means "account created".
         joinedAt: new Date(r.created_at).toISOString(),
+        lastLoginAt: r.last_login_at ? new Date(r.last_login_at).toISOString() : null,
+        passwordChanged: !r.must_change_password,
+        // True = has used the account, even if we don't know when.
+        everActive: r.ever_active,
       })),
     })
   }),

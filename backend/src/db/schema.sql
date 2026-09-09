@@ -68,6 +68,12 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS work_verified_at TIMESTAMPTZ;
 -- invites.routes.ts). Cleared the first time they set their own password.
 -- Only prompts; it never blocks access, so a stuck flag can't lock anyone out.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- last_login_at: stamped on every successful sign-in. Without it the console
+-- could only INFER whether an invited member ever arrived (by whether they'd
+-- replaced their generated password), which cannot tell "never signed in"
+-- apart from "signed in and skipped the password prompt". NULL = never.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_profile_tag_check;
 ALTER TABLE users
   ADD CONSTRAINT users_profile_tag_check
@@ -213,6 +219,20 @@ CREATE TABLE IF NOT EXISTS invitees (
 ALTER TABLE invitees ADD COLUMN IF NOT EXISTS invite_status TEXT;
 ALTER TABLE invitees ADD COLUMN IF NOT EXISTS invite_error TEXT;
 ALTER TABLE invitees ADD COLUMN IF NOT EXISTS invite_count INTEGER NOT NULL DEFAULT 0;
+
+-- A copy of the invite that actually went out, so the console can show what a
+-- recipient received rather than re-deriving it from a template that may have
+-- been edited since. The password is REDACTED in this copy — it is bcrypt'd at
+-- account creation and must never exist in readable form anywhere.
+ALTER TABLE invitees ADD COLUMN IF NOT EXISTS invite_sent_subject TEXT;
+ALTER TABLE invitees ADD COLUMN IF NOT EXISTS invite_sent_body TEXT;
+
+-- Which import an invitee arrived in. Admins load alumni in batches (one CSV
+-- per centre/course/year), and need to work through them a batch at a time —
+-- without this every upload dissolves into one undifferentiated list.
+-- NULL = added before batches were tracked.
+ALTER TABLE invitees ADD COLUMN IF NOT EXISTS batch_label TEXT;
+CREATE INDEX IF NOT EXISTS invitees_batch_label_idx ON invitees (batch_label);
 
 -- ---------------------------------------------------------------------------
 -- Direct messages (1:1). A conversation is a unique unordered pair of users,

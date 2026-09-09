@@ -699,6 +699,28 @@ export const STATUS_TAGS: StatusTag[] = ['Ready to work', 'Working', 'Can mentor
 
 export type InviteStatus = 'sent' | 'failed' | 'simulated'
 
+/**
+ * The invite email one recipient was sent. `exact` false means it was
+ * reconstructed from the current template because this send predates keeping
+ * a copy — the wording may differ from what actually went out.
+ *
+ * The password is always redacted: it's hashed at account creation and never
+ * stored readable, so it can't be shown back.
+ */
+export interface SentInviteEmail {
+  name: string
+  email: string
+  subject: string
+  body: string
+  exact: boolean
+  invitedAt: string | null
+  inviteStatus: InviteStatus | null
+  inviteError: string | null
+  inviteCount: number
+  inviteLink: string
+  passwordRedacted: string
+}
+
 export interface Alumni {
   id: string
   name: string
@@ -715,12 +737,21 @@ export interface Alumni {
   inviteError: string | null
   /** How many times an invite has been sent to this address. */
   inviteCount: number
+  /** Which import this person arrived in. '' = predates batch tracking. */
+  batch: string
   /** The sign-in link that was emailed (address pre-filled). */
   inviteLink: string
   /** Whether an account exists for this address yet. */
   hasAccount: boolean
   /** False while they're still using the password we generated for them. */
   passwordChanged: boolean
+  /** When they last signed in. null = no login was recorded (which is not the
+   *  same as never — see everActive). */
+  lastLoginAt: string | null
+  /** Has demonstrably used the account, even with no login timestamp: you
+   *  can't onboard or edit a profile without signing in. Distinguishes
+   *  "signed in before we tracked it" from "genuinely never turned up". */
+  everActive: boolean
 }
 
 /**

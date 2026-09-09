@@ -12,6 +12,16 @@ const transport = emailEnabled
       port: Number(SMTP_PORT) || 587,
       secure: Number(SMTP_PORT) === 465, // implicit TLS only on 465
       auth: { user: SMTP_USER!, pass: SMTP_PASS! },
+      // Reuse connections across a batch. Without pooling, a bulk invite run
+      // opened a fresh TCP+TLS handshake per recipient, which is both slow and
+      // the shape of traffic Gmail throttles first. maxMessages caps how many
+      // go down one connection before it's recycled; rateLimit paces the batch
+      // so a large CSV import doesn't trip Gmail's flood protection.
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 50,
+      rateDelta: 1_000,
+      rateLimit: 5,
       // Fail fast if the mail server is slow/unreachable rather than hanging the
       // caller (callers still shouldn't await sends on the request path).
       connectionTimeout: 10_000,
@@ -82,12 +92,18 @@ export interface EmailTemplate {
   body: string
 }
 
+/** Stands in for the generated password in any stored/displayed copy. */
+export const PASSWORD_REDACTED = '[password hidden]'
+
 /** What happened to one recipient's invite — recorded per invitee so the
  *  admin console can show who actually got their credentials. */
 export interface InviteSendResult {
   email: string
   status: 'sent' | 'failed' | 'simulated'
   error?: string
+  /** The copy that went out, with the password redacted — safe to store. */
+  sentSubject: string
+  sentBody: string
 }
 
 /**
@@ -105,17 +121,22 @@ export async function sendInviteEmails(
   const subject = template?.subject || INVITE_DEFAULT_SUBJECT
   const body = template?.body || INVITE_DEFAULT_BODY
 
-  const render = (r: { name: string; email: string; password: string }) => ({
+  // Rendered twice per recipient: once for real, once with the password
+  // masked. Substituting a mask up front (rather than string-replacing the
+  // password out of the finished text afterwards) means the stored copy can
+  // never accidentally retain it — e.g. if the password happened to also
+  // appear as a substring somewhere the replace didn't reach.
+  const render = (r: { name: string; email: string; password: string }, password: string) => ({
     subject: renderTemplate(subject, {
       name: r.name,
       email: r.email,
-      password: r.password,
+      password,
       link: inviteLinkFor(r.email),
     }),
     text: renderTemplate(body, {
       name: r.name,
       email: r.email,
-      password: r.password,
+      password,
       link: inviteLinkFor(r.email),
     }),
   })
@@ -124,22 +145,45 @@ export async function sendInviteEmails(
     // Simulated: log the whole thing, so a dev without SMTP can still read the
     // generated password and click through the flow.
     return recipients.map((r) => {
-      const { subject: s, text } = render(r)
-      console.log(`[email simulated] to=${r.email} subject="${s}"\n${text}`)
-      return { email: r.email, status: 'simulated' as const }
+      const real = render(r, r.password)
+      const safe = render(r, PASSWORD_REDACTED)
+      console.log(`[email simulated] to=${r.email} subject="${real.subject}"\n${real.text}`)
+      return {
+        email: r.email,
+        status: 'simulated' as const,
+        sentSubject: safe.subject,
+        sentBody: safe.text,
+      }
     })
   }
 
   const results: InviteSendResult[] = []
   for (const r of recipients) {
+    const safe = render(r, PASSWORD_REDACTED)
     try {
-      const { subject: s, text } = render(r)
-      await transport.sendMail({ from: SMTP_FROM || SMTP_USER, to: r.email, subject: s, text })
-      results.push({ email: r.email, status: 'sent' })
+      const real = render(r, r.password)
+      await transport.sendMail({
+        from: SMTP_FROM || SMTP_USER,
+        to: r.email,
+        subject: real.subject,
+        text: real.text,
+      })
+      results.push({
+        email: r.email,
+        status: 'sent',
+        sentSubject: safe.subject,
+        sentBody: safe.text,
+      })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       console.error(`Email to ${r.email} failed:`, message)
-      results.push({ email: r.email, status: 'failed', error: message.slice(0, 500) })
+      results.push({
+        email: r.email,
+        status: 'failed',
+        error: message.slice(0, 500),
+        sentSubject: safe.subject,
+        sentBody: safe.text,
+      })
     }
   }
   return results

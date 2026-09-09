@@ -201,19 +201,6 @@ body {
   }
 }
 
-/* The corona breathes so the eclipse never looks like a static PNG. */
-@keyframes corona-pulse {
-  0%,
-  100% {
-    opacity: 0.55;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.85;
-    transform: scale(1.04);
-  }
-}
-
 .star {
   position: absolute;
   border-radius: 9999px;
@@ -225,14 +212,10 @@ body {
 .drift-slow {
   animation: drift-slow 22s ease-in-out infinite;
 }
-.corona-pulse {
-  animation: corona-pulse 7s ease-in-out infinite;
-}
 
 @media (prefers-reduced-motion: reduce) {
   .star,
-  .drift-slow,
-  .corona-pulse {
+  .drift-slow {
     animation: none;
   }
   .star {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Eye, Mail, RotateCcw, X } from 'lucide-react'
+import { Eye, Mail, RotateCcw, Send, X } from 'lucide-react'
 import { api } from '../../lib/api'
 import { useApp } from '../../store/AppStore'
 import type { InviteEmailTemplate } from '../../types'
@@ -21,7 +21,18 @@ function render(template: string, vars: Record<string, string>): string {
   )
 }
 
-export function InviteEmailTemplateModal({ onClose }: { onClose: () => void }) {
+export function InviteEmailTemplateModal({
+  onClose,
+  // "Review before sending" mode: the send is held until the admin has seen
+  // the copy and confirmed. onConfirmSend does the actual sending; the modal
+  // saves any edits first so what's reviewed is what goes out.
+  sendCount,
+  onConfirmSend,
+}: {
+  onClose: () => void
+  sendCount?: number
+  onConfirmSend?: () => Promise<void>
+}) {
   const { notify } = useApp()
   const [tpl, setTpl] = useState<InviteEmailTemplate | null>(null)
   const [subject, setSubject] = useState('')
@@ -30,6 +41,8 @@ export function InviteEmailTemplateModal({ onClose }: { onClose: () => void }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showPreview, setShowPreview] = useState(false)
+  const [sending, setSending] = useState(false)
+  const reviewMode = typeof sendCount === 'number' && !!onConfirmSend
   const bodyRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -39,10 +52,16 @@ export function InviteEmailTemplateModal({ onClose }: { onClose: () => void }) {
         setTpl(t)
         setSubject(t.subject)
         setBody(t.body)
+        // Reviewing before a send should open on the rendered result, not raw
+        // placeholders — that's the thing being verified.
+        if (reviewMode) setShowPreview(true)
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not load the template.'))
       .finally(() => setLoading(false))
-  }, [])
+    // reviewMode is fixed for the life of this modal (it's derived from props
+    // set at open time), so it needs no re-fetch — listed to satisfy the
+    // exhaustive-deps rule without changing behaviour.
+  }, [reviewMode])
 
   const dirty = !!tpl && (subject !== tpl.subject || body !== tpl.body)
 
@@ -87,6 +106,21 @@ export function InviteEmailTemplateModal({ onClose }: { onClose: () => void }) {
     }
   }
 
+  /** Save any edits, then hand off to the caller to actually send. */
+  async function confirmAndSend() {
+    if (!onConfirmSend) return
+    setError(null)
+    setSending(true)
+    try {
+      if (dirty) await api.saveInviteEmailTemplate(subject, body)
+      await onConfirmSend()
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not send the invitations.')
+      setSending(false)
+    }
+  }
+
   async function reset() {
     setError(null)
     setSaving(true)
@@ -113,11 +147,15 @@ export function InviteEmailTemplateModal({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between border-b border-[#edeff1] px-5 py-4">
           <div>
             <h2 className="flex items-center gap-2 text-base font-bold text-[#1c1c1c]">
-              <Mail size={18} className="text-[#ff4500]" /> Invite Email Template
+              <Mail size={18} className="text-[#ff4500]" />
+              {reviewMode ? 'Review before sending' : 'Invite Email Template'}
             </h2>
             <p className="mt-0.5 text-xs text-[#878a8c]">
-              {tpl?.isCustom ? 'Customised' : 'Using the built-in default'}
-              {tpl?.updatedAt ? ` · edited ${new Date(tpl.updatedAt).toLocaleDateString()}` : ''}
+              {reviewMode
+                ? `This is what ${sendCount} recipient${sendCount === 1 ? '' : 's'} will receive. Edit it here if you need to.`
+                : `${tpl?.isCustom ? 'Customised' : 'Using the built-in default'}${
+                    tpl?.updatedAt ? ` · edited ${new Date(tpl.updatedAt).toLocaleDateString()}` : ''
+                  }`}
             </p>
           </div>
           <button
@@ -223,12 +261,23 @@ export function InviteEmailTemplateModal({ onClose }: { onClose: () => void }) {
             Reset to default
           </Button>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={onClose}>
+            <Button variant="outline" onClick={onClose} disabled={sending}>
               Cancel
             </Button>
-            <Button onClick={save} loading={saving} disabled={loading || !dirty || missing.length > 0}>
-              Save template
-            </Button>
+            {reviewMode ? (
+              <Button
+                onClick={confirmAndSend}
+                loading={sending}
+                disabled={loading || missing.length > 0}
+                icon={<Send size={15} />}
+              >
+                {dirty ? 'Save & send' : 'Send'} {sendCount} invitation{sendCount === 1 ? '' : 's'}
+              </Button>
+            ) : (
+              <Button onClick={save} loading={saving} disabled={loading || !dirty || missing.length > 0}>
+                Save template
+              </Button>
+            )}
           </div>
         </div>
       </div>

@@ -4,6 +4,7 @@ import type { Alumni } from '../../types'
 import { api } from '../../lib/api'
 import { useApp } from '../../store/AppStore'
 import { Button, Card, cx } from '../ui'
+import { SentInviteDetailModal } from './SentInviteDetailModal'
 
 // Who has actually been sent their credentials, and what happened to each
 // send. The invite email is the only place a member's generated password
@@ -45,22 +46,47 @@ function InviteStatusBadge({ a }: { a: Alumni }) {
   )
 }
 
-/** Whether they've signed in and taken ownership of the account yet. */
+/**
+ * Account state, reported from recorded facts only.
+ *
+ * `lastLoginAt` is stamped on every sign-in, so "never signed in" is a fact
+ * rather than a guess. It deliberately does NOT infer sign-in from whether the
+ * generated password was replaced: someone who signs in and hits "Skip for
+ * now" leaves that untouched, so the two cases are indistinguishable that way.
+ * A null login is NOT reported as "never" on its own: accounts that signed in
+ * before stamping existed have no timestamp, so `everActive` (onboarded or
+ * profile-edited — neither possible without signing in) separates those from
+ * accounts nobody has ever opened.
+ */
 function AccountStateBadge({ a }: { a: Alumni }) {
   if (!a.hasAccount) {
     return <span className="text-xs text-[#878a8c]">No account</span>
   }
-  if (a.passwordChanged) {
-    return (
-      <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">
-        Signed in · own password
-      </span>
-    )
-  }
   return (
-    <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-semibold text-[#ff4500]">
-      Not signed in yet
-    </span>
+    <div className="space-y-1">
+      {a.lastLoginAt ? (
+        <span
+          className="inline-block rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700"
+          title={new Date(a.lastLoginAt).toLocaleString()}
+        >
+          Signed in {new Date(a.lastLoginAt).toLocaleDateString()}
+        </span>
+      ) : a.everActive ? (
+        <span
+          className="inline-block rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700"
+          title="Their profile has been filled in, which is only possible while signed in — but this predates login tracking, so the date is unknown"
+        >
+          Signed in earlier
+        </span>
+      ) : (
+        <span className="inline-block rounded-full bg-orange-100 px-2 py-0.5 text-xs font-semibold text-[#ff4500]">
+          Never signed in
+        </span>
+      )}
+      <p className="text-xs text-[#878a8c]">
+        {a.passwordChanged ? 'own password' : 'still on emailed password'}
+      </p>
+    </div>
   )
 }
 
@@ -97,13 +123,14 @@ export function SentInvitesPanel({
   const [filter, setFilter] = useState<Filter>('all')
   const [q, setQ] = useState('')
   const [resending, setResending] = useState<string | null>(null)
+  const [viewing, setViewing] = useState<string | null>(null)
 
   const stats = useMemo(
     () => ({
       sent: alumni.filter((a) => a.inviteStatus === 'sent' || a.inviteStatus === 'simulated').length,
       failed: alumni.filter((a) => a.inviteStatus === 'failed').length,
       notSent: alumni.filter((a) => !a.inviteStatus).length,
-      signedIn: alumni.filter((a) => a.passwordChanged).length,
+      signedIn: alumni.filter((a) => !!a.lastLoginAt || a.everActive).length,
     }),
     [alumni],
   )
@@ -217,7 +244,15 @@ export function SentInvitesPanel({
                 rows.map((a) => (
                   <tr key={a.id} className="border-b border-[#edeff1] align-top hover:bg-gray-50">
                     <td className="px-4 py-3">
-                      <p className="font-medium text-[#1c1c1c]">{a.name}</p>
+                      {/* Clicking a recipient shows the invite they were sent. */}
+                      <button
+                        type="button"
+                        onClick={() => setViewing(a.id)}
+                        className="text-left font-medium text-[#1c1c1c] hover:text-[#ff4500] hover:underline"
+                        title="View the invite email sent to this person"
+                      >
+                        {a.name}
+                      </button>
                       <p className="text-xs text-[#878a8c]">{a.email}</p>
                     </td>
                     <td className="px-4 py-3">
@@ -269,12 +304,17 @@ export function SentInvitesPanel({
         </div>
       </Card>
 
+      {viewing && <SentInviteDetailModal inviteeId={viewing} onClose={() => setViewing(null)} />}
+
       <p className="px-1 text-xs text-[#878a8c]">
         &ldquo;Sent&rdquo; means your mail server accepted the message — a recipient can still not
         receive it (full mailbox, spam filter). &ldquo;Simulated&rdquo; means SMTP isn&rsquo;t
         configured, so the email was written to the server log instead of delivered. Passwords are
         hashed on creation and never stored in readable form, so they can&rsquo;t be shown here —
-        use Resend to issue a fresh one.
+        use Resend to issue a fresh one. Sign-in is recorded per login;
+        &ldquo;Signed in earlier&rdquo; means the account has clearly been used (their
+        profile is filled in, which needs a sign-in) but predates login tracking, so
+        the date isn&rsquo;t known.
       </p>
     </div>
   )

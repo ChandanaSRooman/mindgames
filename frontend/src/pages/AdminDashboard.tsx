@@ -31,6 +31,8 @@ export function AdminDashboard() {
   const [view, setView] = useState<AdminView>('dashboard')
   const [alumni, setAlumni] = useState<Alumni[]>([])
   const [preview, setPreview] = useState<ContactRow[]>([])
+  // Filename of the CSV being previewed — becomes the import's batch label.
+  const [previewBatch, setPreviewBatch] = useState('')
   const [invitesSent, setInvitesSent] = useState(0)
 
   const loadAlumni = useCallback(() => {
@@ -50,10 +52,14 @@ export function AdminDashboard() {
     const valid = preview.filter((r) => r.valid)
     if (valid.length === 0) return notify('No valid rows to import.', 'error')
     try {
-      const { added, skipped } = await api.bulkAddAlumni(valid)
+      const { added, skipped, batch } = await api.bulkAddAlumni(valid, previewBatch)
       setAlumni((prev) => [...added, ...prev])
       setPreview([])
-      notify(`Imported ${added.length} alumni${skipped.length ? `, skipped ${skipped.length}` : ''}.`, 'success')
+      setPreviewBatch('')
+      notify(
+        `Imported ${added.length} alumni into "${batch}"${skipped.length ? `, skipped ${skipped.length}` : ''}.`,
+        'success',
+      )
     } catch (e) {
       notify(e instanceof Error ? e.message : 'Import failed', 'error')
     }
@@ -82,7 +88,12 @@ export function AdminDashboard() {
             <Card className="p-5 lg:col-span-2">
               <h2 className="mb-1 text-base font-bold text-[#1c1c1c]">Bulk Upload (CSV)</h2>
               <p className="mb-4 text-sm text-[#878a8c]">Import a contact list — we keep only Name, Phone and Email.</p>
-              <CsvUpload onParsed={setPreview} />
+              <CsvUpload
+                onParsed={(rows, fileName) => {
+                  setPreview(rows)
+                  setPreviewBatch(fileName)
+                }}
+              />
             </Card>
             <Card className="p-5">
               <h2 className="mb-1 text-base font-bold text-[#1c1c1c]">Add Individually</h2>
@@ -409,7 +420,13 @@ function OverviewPanel() {
       </div>
 
       <Card className="p-5">
-        <h2 className="mb-3 text-base font-bold text-[#1c1c1c]">Recently Joined</h2>
+        <h2 className="text-base font-bold text-[#1c1c1c]">Newest Accounts</h2>
+        {/* Was "Recently Joined", which read as "these people showed up" — but
+            an admin invite creates the account, so this list is really
+            "accounts created". Whether they've arrived is last_login_at. */}
+        <p className="mb-3 mt-0.5 text-xs text-[#878a8c]">
+          Created by invite or sign-up — not necessarily signed in yet.
+        </p>
         <div className="flex flex-col gap-2">
           {stats.recentMembers.map((m) => (
             <div key={m.id} className="flex items-center gap-3 rounded-lg border border-[#edeff1] p-2.5">
@@ -421,8 +438,20 @@ function OverviewPanel() {
                 <p className="truncate text-xs text-[#878a8c]">
                   {m.email}{m.city ? ` · ${m.city}` : ''}
                 </p>
+                {m.lastLoginAt ? (
+                  <p className="text-xs text-green-700">
+                    signed in {timeAgo(m.lastLoginAt)}
+                    {!m.passwordChanged && ' · still on emailed password'}
+                  </p>
+                ) : m.everActive ? (
+                  // Onboarded/edited, so they signed in — just before we
+                  // started recording when. Claiming "never" here is wrong.
+                  <p className="text-xs text-green-700">signed in (before login tracking)</p>
+                ) : (
+                  <p className="text-xs text-[#ff4500]">never signed in</p>
+                )}
               </div>
-              <span className="text-xs text-[#878a8c]">joined {timeAgo(m.joinedAt)}</span>
+              <span className="shrink-0 text-xs text-[#878a8c]">added {timeAgo(m.joinedAt)}</span>
             </div>
           ))}
           {stats.recentMembers.length === 0 && (

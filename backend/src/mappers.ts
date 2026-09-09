@@ -397,9 +397,12 @@ export interface InviteeRow {
   invite_status?: string | null
   invite_error?: string | null
   invite_count?: number | null
+  batch_label?: string | null
   // Joined from users at query time — an invited member's account state.
   has_account?: boolean | null
   password_changed?: boolean | null
+  last_login_at?: Date | null
+  ever_active?: boolean | null
 }
 
 // Short human time for a chat message ("9:02 AM", "Mon", "24 Jun"), IST-based.
@@ -436,11 +439,19 @@ export function mapInvitee(r: InviteeRow) {
       | null,
     inviteError: r.invite_error ?? null,
     inviteCount: r.invite_count ?? 0,
+    // Which import this person arrived in. '' = predates batch tracking.
+    batch: r.batch_label ?? '',
     // The exact link that was mailed — derived from the address rather than
     // stored, so it can't drift out of sync with what the sender builds.
     inviteLink: inviteLinkFor(r.email),
     hasAccount: !!r.has_account,
     // False while they're still on the password we generated for them.
     passwordChanged: !!r.password_changed,
+    // Recorded fact, not an inference — null means they have genuinely never
+    // signed in (or did so before login stamping existed).
+    lastLoginAt: r.last_login_at ? new Date(r.last_login_at).toISOString() : null,
+    // Has demonstrably used the account (onboarded / edited their profile),
+    // even when no login timestamp was captured.
+    everActive: !!r.ever_active,
   }
 }

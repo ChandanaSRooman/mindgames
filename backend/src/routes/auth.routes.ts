@@ -67,6 +67,16 @@ async function sendVerification(userId: string, name: string, email: string): Pr
   return link
 }
 
+/** Record that this account just signed in. Best-effort: a failure here must
+ *  never cost someone their session, so it's logged rather than thrown. */
+async function stampLogin(userId: string): Promise<void> {
+  try {
+    await query(`UPDATE users SET last_login_at = now() WHERE id = $1`, [userId])
+  } catch (err) {
+    console.error('could not stamp last_login_at:', err instanceof Error ? err.message : err)
+  }
+}
+
 // Issue a token + return the created/authenticated user.
 function issue(userRow: UserRow & { is_admin: boolean }) {
   const token = signToken({ sub: userRow.id, email: userRow.email, isAdmin: userRow.is_admin })
@@ -317,6 +327,7 @@ authRouter.post(
     if (!row || !row.password_hash || !(await verifyPassword(password, row.password_hash))) {
       throw new ApiError(401, 'Invalid email or password')
     }
+    await stampLogin(row.id)
     res.json(issue(row))
   }),
 )
@@ -387,6 +398,7 @@ authRouter.post(
         'Sign-ups are invite-only. Please check your email for an invitation, or contact your administrator.',
       )
     }
+    await stampLogin(existing.rows[0].id)
     res.json(issue(existing.rows[0]))
   }),
 )

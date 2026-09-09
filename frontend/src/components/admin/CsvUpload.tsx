@@ -4,7 +4,14 @@ import type { ContactRow } from '../../types'
 import { parseContactsCsv } from '../../lib/csv'
 import { cx } from '../ui'
 
-export function CsvUpload({ onParsed }: { onParsed: (rows: ContactRow[]) => void }) {
+export function CsvUpload({
+  onParsed,
+}: {
+  // The filename rides along so each import can be labelled as its own batch
+  // (see invitees.routes.ts) — admins load one CSV per centre/course/year and
+  // need to tell them apart afterwards.
+  onParsed: (rows: ContactRow[], fileName: string) => void
+}) {
   const [dragging, setDragging] = useState(false)
   const [fileName, setFileName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -23,7 +30,7 @@ export function CsvUpload({ onParsed }: { onParsed: (rows: ContactRow[]) => void
       return
     }
     setFileName(file.name)
-    onParsed(rows)
+    onParsed(rows, file.name)
   }
 
   return (
@@ -94,6 +101,7 @@ export function CsvUpload({ onParsed }: { onParsed: (rows: ContactRow[]) => void
               parseContactsCsv(
                 'Name,Phone,Email\n"Lee, Sam",+91 90000 12345,sam.lee@example.com\nPooja Rao,+91 90000 67890,pooja.rao@example.com\nIncomplete Row,+91 90000 00000,',
               ),
+              'Sample rows',
             )
           }
         >

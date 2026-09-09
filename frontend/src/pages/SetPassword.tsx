@@ -89,8 +89,6 @@ export function SetPassword() {
   const farY = useTransform(sy, (v) => v * -14)
   const midX = useTransform(sx, (v) => v * -30)
   const midY = useTransform(sy, (v) => v * -30)
-  const eclipseX = useTransform(sx, (v) => v * 46)
-  const eclipseY = useTransform(sy, (v) => v * 34)
   const glowX = useTransform(sx, (v) => v * -60)
   const glowY = useTransform(sy, (v) => v * -46)
 
@@ -168,20 +166,6 @@ export function SetPassword() {
               }}
             />
           ))}
-        </motion.div>
-
-        {/* the eclipse: dark disc, orange corona, chasing the cursor */}
-        <motion.div
-          style={{ x: eclipseX, y: eclipseY }}
-          className="absolute right-[6%] top-[12%] hidden lg:block"
-        >
-          <div className="relative h-72 w-72">
-            <div className="corona-pulse absolute -inset-12 rounded-full bg-[#ff4500]/25 blur-3xl" />
-            <div className="absolute inset-0 rounded-full bg-gradient-to-br from-[#ff6a2b] via-[#ff4500] to-[#7a1f00] opacity-90 blur-[2px]" />
-            {/* the occluding body, offset to leave a crescent of corona */}
-            <div className="absolute inset-0 translate-x-[6%] translate-y-[-5%] rounded-full bg-[#08080a] shadow-[inset_0_0_60px_rgba(0,0,0,0.9)]" />
-            <div className="absolute inset-0 translate-x-[6%] translate-y-[-5%] rounded-full ring-1 ring-white/5" />
-          </div>
         </motion.div>
 
         {/* vignette so the card always has contrast under it */}
