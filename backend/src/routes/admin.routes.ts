@@ -181,11 +181,20 @@ adminRouter.put(
     // the recipient — refuse rather than silently mail out a dead end.
     // Probing through renderTemplate (rather than a parallel regex) means this
     // check can't disagree with what the sender will actually substitute.
-    const probe = renderTemplate(
-      body,
-      Object.fromEntries(INVITE_PLACEHOLDERS.map((name) => [name, `<<${name}>>`])),
-    )
+    const probeVars = Object.fromEntries(INVITE_PLACEHOLDERS.map((name) => [name, `<<${name}>>`]))
+    const probe = renderTemplate(body, probeVars)
     const missing = INVITE_REQUIRED_PLACEHOLDERS.filter((name) => !probe.includes(`<<${name}>>`))
+
+    // The subject is substituted too, so {{password}} there would put the
+    // credential in a place that leaks: mail-server logs, push/notification
+    // previews and inbox list views all show subjects. Keep it in the body.
+    if (renderTemplate(subject, probeVars).includes('<<password>>')) {
+      throw new ApiError(
+        400,
+        'Remove {{password}} from the subject — subject lines are logged by mail servers and ' +
+          'shown in notification previews. Keep the password in the body.',
+      )
+    }
     if (missing.length) {
       throw new ApiError(
         400,

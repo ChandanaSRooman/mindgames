@@ -210,6 +210,19 @@ export function AlumniTable({
   const pendingInvites = () =>
     alumni.map((a) => ({ id: a.id, ...get(a.id) })).filter((i) => i.email || i.whatsapp)
 
+  /** Only an email send has copy to review. A WhatsApp-only selection (which
+   *  is simulated and sends nothing) would otherwise open an email review for
+   *  zero recipients. */
+  function startSend() {
+    if (counts.email === 0) {
+      void doSend().catch((e) =>
+        notify(e instanceof Error ? e.message : 'Failed to send invitations', 'error'),
+      )
+      return
+    }
+    setReviewing(true)
+  }
+
   /** The actual send. Called from the review step, once the admin has seen the
    *  copy and confirmed — nothing goes out before that. */
   async function doSend() {
@@ -270,7 +283,7 @@ export function AlumniTable({
           <Button variant="outline" icon={<FilePenLine size={15} />} onClick={() => setEditingTemplate(true)}>
             Edit email
           </Button>
-          <Button onClick={() => setReviewing(true)} disabled={!someOn} icon={<Send size={16} />}>
+          <Button onClick={startSend} disabled={!someOn} icon={<Send size={16} />}>
             Send{someOn ? ` (${counts.email})` : ''}
           </Button>
         </div>

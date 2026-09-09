@@ -13,9 +13,21 @@ import { SentInviteDetailModal } from './SentInviteDetailModal'
 //
 // The password itself is deliberately NOT shown here: it's hashed the moment
 // the account is created and never stored in the clear. If a member never got
-// their email, the fix is Resend (which mints a fresh password), not recovery.
+// their email, the fix is Resend (which mints a fresh password), not recovery
+// — safe precisely because nobody has used the old one yet.
 
 type Filter = 'all' | 'sent' | 'failed' | 'not-sent'
+
+/**
+ * Whether the backend would refuse to re-invite this person — mirrors the
+ * `untouched` check in invites.routes.ts. An account that has been signed into
+ * or whose owner chose their own password must not have a fresh one issued:
+ * that would lock them out of an account they're actively using. Everyone
+ * else can safely be re-sent, because the password we generated was never
+ * used (and can't be recovered — it's hashed, never stored readable).
+ */
+const wouldBeSkipped = (a: Alumni) =>
+  a.hasAccount && (!!a.lastLoginAt || a.everActive || a.passwordChanged)
 
 function InviteStatusBadge({ a }: { a: Alumni }) {
   if (a.inviteStatus === 'failed') {
@@ -149,9 +161,9 @@ export function SentInvitesPanel({
       .sort((x, y) => (y.invitedAt ?? '').localeCompare(x.invitedAt ?? ''))
   }, [alumni, filter, q])
 
-  /** Re-send to one invitee. Only meaningful for someone without an account
-   *  yet — the backend skips anyone who already has one, since re-issuing
-   *  would silently replace a password they may already be using. */
+  /** Re-send to one invitee: creates the account if there isn't one, or issues
+   *  a fresh password if there is one nobody has signed into. See
+   *  wouldBeSkipped for the case the backend refuses. */
   async function resend(a: Alumni) {
     setResending(a.id)
     try {
@@ -284,11 +296,13 @@ export function SentInvitesPanel({
                       <Button
                         variant="outline"
                         loading={resending === a.id}
-                        disabled={!!resending || a.hasAccount}
+                        disabled={!!resending || wouldBeSkipped(a)}
                         title={
-                          a.hasAccount
-                            ? 'They already have an account — resending would replace a password they may be using'
-                            : 'Create the account and email their credentials'
+                          wouldBeSkipped(a)
+                            ? "They've signed in or set their own password — re-issuing would lock them out of an account they're using"
+                            : a.hasAccount
+                              ? 'Issue a fresh password and email it again'
+                              : 'Create the account and email their credentials'
                         }
                         icon={a.inviteStatus ? <RefreshCw size={14} /> : <Send size={14} />}
                         onClick={() => resend(a)}
