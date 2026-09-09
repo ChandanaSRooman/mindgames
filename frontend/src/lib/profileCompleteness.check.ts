@@ -337,6 +337,9 @@ assert.ok(
 // Nor is someone verified who is no longer flagged as a mentor.
 assert.ok(!isBookableMentor({ ...base, mentorVerified: true }), 'isMentor is still required')
 
+// `noProof` is itself the function that returns a percentage — passing it to
+// profileCompleteness() where a User belongs printed a meaningless number, and
+// the *.check.ts tsconfig exclusion meant tsc never flagged it.
 console.log(
-  `ok — blank 0%, pro/student/fresher all reach 100%, no-proof ${profileCompleteness(noProof, { postCount: 3 }).percent}%, extras contribute 0`,
+  `ok — blank 0%, pro/student/fresher all reach 100%, working member without education/projects/certs ${noProof(pro)}%, extras contribute 0`,
 )

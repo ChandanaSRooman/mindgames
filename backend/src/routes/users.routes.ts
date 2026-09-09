@@ -31,8 +31,15 @@ const maskEmail = (email: string) => {
 }
 
 // GET /api/users — the whole directory (drives People You May Know, mentions…).
+//
+// Members only. `mapUser` withholds anything still locked, but the per-field
+// locks mean "visible to other MEMBERS", not "visible to the internet" — so
+// the resume detail, address, age and salary a member chose to share with the
+// network must not be readable by an anonymous caller. The frontend only ever
+// calls this with a token (bootstrap and refreshNetwork both bail without one).
 usersRouter.get(
   '/',
+  requireAuth,
   asyncHandler(async (_req, res) => {
     const result = await query<UserRow>(`SELECT ${USER_COLS} FROM users ORDER BY name`)
     res.json(result.rows.map(mapUser))
@@ -64,9 +71,10 @@ usersRouter.get(
   }),
 )
 
-// GET /api/users/:id — a single profile.
+// GET /api/users/:id — a single profile. Members only, for the same reason.
 usersRouter.get(
   '/:id',
+  requireAuth,
   asyncHandler(async (req, res) => {
     const result = await query<UserRow>(`SELECT ${USER_COLS} FROM users WHERE id = $1`, [
       req.params.id,

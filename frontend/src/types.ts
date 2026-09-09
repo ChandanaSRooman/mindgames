@@ -364,6 +364,29 @@ export interface User {
   isAdmin?: boolean
 }
 
+/**
+ * The body of a PATCH /api/users/me.
+ *
+ * Wider than `Partial<User>` in exactly the five places the API accepts an
+ * explicit "clear this" value that a loaded `User` never holds: '' for the
+ * three enum-backed TEXT columns (which are NOT NULL DEFAULT ''), and null for
+ * the two nullable salary columns.
+ *
+ * The route drops every `undefined` field before building its UPDATE, so a
+ * cleared field has to travel as '' / null — sending `undefined` leaves the
+ * old value in the database.
+ */
+export type ProfilePatch = Omit<
+  Partial<User>,
+  'workMode' | 'mentorshipMode' | 'startupIntent' | 'salaryCurrent' | 'salaryExpected'
+> & {
+  workMode?: WorkMode | ''
+  mentorshipMode?: MentorshipMode | ''
+  startupIntent?: StartupIntent | ''
+  salaryCurrent?: number | null
+  salaryExpected?: number | null
+}
+
 // True until the member finishes the onboarding wizard. The wizard can't be
 // completed without a course, so an empty course means setup never finished.
 export function needsOnboarding(user: Pick<User, 'course' | 'isAdmin'>): boolean {

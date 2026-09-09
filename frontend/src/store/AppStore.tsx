@@ -18,6 +18,7 @@ import type {
   Post,
   PostMeta,
   PostType,
+  ProfilePatch,
   Startup,
   User,
   Visibility,
@@ -88,7 +89,7 @@ interface AppContextValue {
   login: (email: string, password: string) => Promise<User>
   signup: (ticket: string, name: string, password: string) => Promise<User>
   social: (provider: 'google' | 'linkedin') => Promise<User>
-  updateProfile: (patch: Partial<User>) => Promise<void>
+  updateProfile: (patch: ProfilePatch) => Promise<void>
   // Employer (work-email) verification — one-time, required before posting a job.
   startWorkEmailVerification: (email: string) => Promise<{ email: string; simulated: boolean }>
   verifyWorkEmail: (code: string) => Promise<void>
@@ -364,7 +365,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const updateProfile = useCallback(
-    async (patch: Partial<User>) => {
+    async (patch: ProfilePatch) => {
       const updated = await api.updateProfile(patch)
       setUsers((list) => list.map((u) => (u.id === updated.id ? updated : u)))
     },
@@ -962,7 +963,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const u = users.find((x) => x.id === id)
       api.approveMentor(id).then(
         () => {
-          setUsers((list) => list.map((x) => (x.id === id ? { ...x, isMentor: true, willingToMentor: true, mentorRate: x.mentorRate ?? 1000, sessionsConducted: x.sessionsConducted ?? 0 } : x)))
+          // Mirrors exactly what the approve route writes. mentorVerified is
+          // the half isBookableMentor() checks on top of isMentor, so leaving
+          // it out kept a just-approved mentor off the Mentors tab until the
+          // admin reloaded.
+          setUsers((list) =>
+            list.map((x) =>
+              x.id === id
+                ? {
+                    ...x,
+                    isMentor: true,
+                    willingToMentor: true,
+                    mentorVerified: true,
+                    mentorRate: x.mentorRate ?? 1000,
+                    sessionsConducted: x.sessionsConducted ?? 0,
+                  }
+                : x,
+            ),
+          )
           setPendingMentorIds((p) => p.filter((x) => x !== id))
           notify(`${u?.name ?? 'Alumnus'} approved as a mentor.`)
         },
@@ -977,6 +995,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const u = users.find((x) => x.id === id)
       api.declineMentor(id, reviewNote).then(
         () => {
+          // The decline route also withdraws the listing (is_mentor,
+          // willing_to_mentor, mentor_verified_at). Without mirroring that, a
+          // previously approved member whose resubmission was declined stayed
+          // listed and bookable in this session.
+          setUsers((list) =>
+            list.map((x) =>
+              x.id === id
+                ? { ...x, isMentor: false, willingToMentor: false, mentorVerified: false }
+                : x,
+            ),
+          )
           setPendingMentorIds((p) => p.filter((x) => x !== id))
           notify(`${u?.name ?? 'Application'} declined.`, 'info')
         },

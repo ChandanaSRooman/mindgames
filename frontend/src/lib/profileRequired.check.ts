@@ -140,4 +140,56 @@ assert.deepEqual(
 // Heavily scored, but never blocking: a fresher must be able to join.
 assert.deepEqual(labels(complete), [], 'education/projects/certifications are not required')
 
+// --- every requirement is reachable from the step it is reported on -------
+//
+// The wizard gates each step on the requirements keyed to it, so a requirement
+// whose input lives on a LATER step makes the earlier step unfinishable. That
+// is exactly what happened to `interests`: it was keyed to the 'interests'
+// step (the two opt-in toggles) while its input is in <ProfileDetailSections>
+// on the final step, so anyone who skipped the resume import was stuck.
+//
+// Nothing may be keyed to 'interests' — that step collects no required field.
+const blankNewMember: RequiredCheckInput = {
+  ...complete,
+  name: '',
+  phone: '',
+  batchYear: '',
+  course: '',
+  employmentType: '',
+  domain: '',
+  company: '',
+  designation: '',
+  experienceYears: '',
+  city: '',
+  photo: undefined,
+  linkedin: '',
+  bio: '',
+  expertise: '',
+  interests: [],
+  achievements: [],
+}
+assert.deepEqual(
+  missingRequired(blankNewMember).filter((m) => m.step === 'interests'),
+  [],
+  'the toggles step collects no required field, so nothing may gate on it',
+)
+
+// Interests are still mandatory overall — just asked for on the step that has
+// the input.
+assert.deepEqual(
+  missingRequired({ ...complete, interests: [] }).map((m) => ({ step: m.step, label: m.label })),
+  [{ step: 'detail', label: 'A few interests outside work' }],
+  'interests stay required, reported on the step that collects them',
+)
+
+// And a member who fills every step in order is never blocked by a field they
+// have not been shown yet.
+const STEP_ORDER = ['basic', 'status', 'setup', 'interests', 'detail'] as const
+for (const [i, step] of STEP_ORDER.entries()) {
+  const stillAhead = missingRequired(complete).filter(
+    (m) => STEP_ORDER.indexOf(m.step) > i,
+  )
+  assert.deepEqual(stillAhead, [], `nothing outstanding beyond step ${step} for a complete profile`)
+}
+
 console.log('ok — required-field rules hold across all four statuses and both opt-in blocks')

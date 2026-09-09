@@ -526,6 +526,31 @@ export function OpenToSection({ user }: { user: User }) {
   )
 }
 
+/**
+ * Whether <DetailsSection> has anything to render. Exported because the About
+ * tab needs the SAME answer for its "No details shared." fallback: listing the
+ * fields by hand there drifted, and a profile sharing only its age showed the
+ * details card and the empty-state message at once.
+ */
+export function hasSharedDetails(user: User): boolean {
+  return (
+    !!user.linkedin ||
+    !!user.github ||
+    !!user.portfolio ||
+    (user.otherLinks ?? []).length > 0 ||
+    (user.languagesKnown ?? []).length > 0 ||
+    (user.interests ?? []).length > 0 ||
+    !!user.industry ||
+    !!user.roomanCenter ||
+    // Same locks the contact rows below are gated on.
+    !!(user.showEmail && user.email) ||
+    !!(user.showPhone && user.phone) ||
+    !!(user.showAddress && user.homeAddress) ||
+    !!(user.showAge && user.age !== undefined) ||
+    !!(user.showSalary && (user.salaryCurrent || user.salaryExpected))
+  )
+}
+
 /** Contact + links + languages + interests + industry — the About tab. */
 export function DetailsSection({ user }: { user: User }) {
   const links = [
@@ -541,14 +566,20 @@ export function DetailsSection({ user }: { user: User }) {
 
   const langs = user.languagesKnown ?? []
   const interests = user.interests ?? []
-  // These arrive empty unless the member opened that field's lock, so simply
-  // rendering whatever is present is already correct.
+  // Every row is gated on its own lock. On ANOTHER member's record the value is
+  // already withheld server-side, so the check is free — but the owner's own
+  // record (mapOwnUser) carries all five whatever the locks say, and this card
+  // is the one everyone else reads. Without the gate a member's own profile
+  // displayed their locked phone, address, age and salary here as though they
+  // were published, directly above the "Only you can see this" block that
+  // already lists exactly those fields.
   const contact = [
-    user.email && { icon: <Mail size={13} />, value: user.email },
-    user.phone && { icon: <Phone size={13} />, value: user.phone },
-    user.homeAddress && { icon: <Home size={13} />, value: user.homeAddress },
-    user.age !== undefined && { icon: <Cake size={13} />, value: `${user.age} years old` },
-    (user.salaryCurrent || user.salaryExpected) && {
+    user.showEmail && user.email && { icon: <Mail size={13} />, value: user.email },
+    user.showPhone && user.phone && { icon: <Phone size={13} />, value: user.phone },
+    user.showAddress && user.homeAddress && { icon: <Home size={13} />, value: user.homeAddress },
+    user.showAge &&
+      user.age !== undefined && { icon: <Cake size={13} />, value: `${user.age} years old` },
+    user.showSalary && (user.salaryCurrent || user.salaryExpected) && {
       icon: <Wallet size={13} />,
       value: [
         user.salaryCurrent && `Currently ₹${user.salaryCurrent.toLocaleString('en-IN')}/yr`,
@@ -559,16 +590,7 @@ export function DetailsSection({ user }: { user: User }) {
     },
   ].filter(Boolean) as { icon: ReactNode; value: string }[]
 
-  if (
-    links.length === 0 &&
-    langs.length === 0 &&
-    interests.length === 0 &&
-    contact.length === 0 &&
-    !user.industry &&
-    !user.roomanCenter
-  ) {
-    return null
-  }
+  if (!hasSharedDetails(user)) return null
 
   return (
     <Section icon={<LinkIcon size={17} />} title="Details">

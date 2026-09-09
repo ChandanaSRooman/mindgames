@@ -25,6 +25,13 @@ import { companiesRouter } from './routes/companies.routes.js'
 
 const app = express()
 app.use(cors())
+// Mentor proof documents: up to 5 files x 5MB, base64-encoded into a single
+// JSON body — ~34MB worst case, well over the app-wide ceiling below. Three
+// 4MB scans were already enough to be rejected by the parser before the route
+// ever ran. Mounted BEFORE the global parser because body-parser skips a
+// request whose body an earlier parser already read, so the first one to match
+// is the one whose limit applies.
+app.use('/api/mentorship/applications', express.json({ limit: '40mb' }))
 app.use(express.json({ limit: '15mb' })) // base64 PDFs for resume parsing
 
 // --- Health (also checks DB connectivity) -----------------------------------

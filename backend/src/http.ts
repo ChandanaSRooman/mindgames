@@ -16,7 +16,14 @@ export function asyncHandler(
   }
 }
 
-/** Terminal error middleware — maps ApiError to its status, else 500. */
+/**
+ * Terminal error middleware — maps ApiError to its status, else 500.
+ *
+ * body-parser rejects an oversized or malformed JSON body before any route
+ * runs, and its error is not an ApiError — so every upload that breached the
+ * limit surfaced to the user as "Internal server error" with no hint that the
+ * file was simply too big.
+ */
 export function errorHandler(
   err: unknown,
   _req: Request,
@@ -25,6 +32,17 @@ export function errorHandler(
 ): void {
   if (err instanceof ApiError) {
     res.status(err.status).json({ error: err.message })
+    return
+  }
+  const type = (err as { type?: unknown } | null)?.type
+  if (type === 'entity.too.large') {
+    res.status(413).json({
+      error: 'That upload is too large. Please attach smaller files and try again.',
+    })
+    return
+  }
+  if (type === 'entity.parse.failed') {
+    res.status(400).json({ error: 'Malformed request body.' })
     return
   }
   console.error('Unhandled error:', err)

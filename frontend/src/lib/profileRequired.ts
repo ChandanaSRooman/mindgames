@@ -99,7 +99,12 @@ export function missingRequired(v: RequiredCheckInput): RequiredField[] {
   )
 
   // --- Interests + achievements --------------------------------------------
-  need('interests', v.interests.length === 0, 'A few interests outside work')
+  // Both inputs live in the shared <ProfileDetailSections>, which the wizard
+  // renders on its LAST step — so they belong to 'detail'. Keying interests to
+  // the 'interests' step made that step ungateable: it holds the two opt-in
+  // toggles, and a member who skipped the resume import had no way to satisfy
+  // a requirement whose input was still a step away.
+  need('detail', v.interests.length === 0, 'A few interests outside work')
   need(
     'detail',
     v.achievements.filter((a) => !blank(a.title)).length === 0,

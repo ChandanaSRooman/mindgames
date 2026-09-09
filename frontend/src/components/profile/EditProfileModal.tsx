@@ -165,8 +165,14 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
         interestedInStartup: form.interestedInStartup,
         isMentor: offersMentorship,
         ...(offersMentorship && form.mentorRate ? { mentorRate: Number(form.mentorRate) } : {}),
+        // `form.willingToMentor`, NOT `offersMentorship`: the drop to false
+        // above is forced by missing verification, and detailToPatch clears
+        // mentorTopics/mentorAvailability/mentorshipMode when this is false.
+        // A legacy mentor editing their city would otherwise have lost all
+        // three. The Mentor label still needs mentorVerified, so an
+        // unverified member gains nothing from keeping the answer.
         ...detailToPatch(detail, {
-          willingToMentor: offersMentorship,
+          willingToMentor: form.willingToMentor,
           interestedInStartup: form.interestedInStartup,
           mentorVerified: !!currentUser.mentorVerified,
           openToWork: status === 'Looking for opportunity',
@@ -355,7 +361,12 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
           {/* Mentoring is gated: a mentee books real time on the strength of
               it. Ineligible members see why, and the same rule is enforced by
               PATCH /api/users/me — the disabled checkbox is a courtesy, not
-              the rule. */}
+              the rule.
+
+              Disabled whenever mentoring isn't verified, INCLUDING for a
+              legacy mentor whose box is still ticked. It used to stay enabled
+              in that case, so the control read as editable while the save
+              forced it to false regardless. */}
           <label
             className={`flex items-center gap-2 text-sm ${mentor.eligible ? 'text-[#1c1c1c]' : 'text-[#878a8c]'}`}
           >
@@ -363,7 +374,7 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
               type="checkbox"
               className="h-4 w-4 accent-[#ff4500] disabled:cursor-not-allowed"
               checked={form.willingToMentor}
-              disabled={!mentor.eligible && !form.willingToMentor}
+              disabled={!mentor.eligible}
               onChange={(e) => set('willingToMentor', e.target.checked)}
             />
             Willing to mentor juniors

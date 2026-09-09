@@ -69,13 +69,26 @@ companiesRouter.get(
          SELECT u.id, u.name, u.photo,
                 u.designation AS role, u.city AS location,
                 -- Prefer what this member actually wrote about their time at
-                -- THIS company over their generic bio. jsonb_typeof guards a
-                -- hand-edited row that isn't an array.
+                -- THIS company over their generic bio.
+                --
+                -- The jsonb_typeof guard sits INSIDE the function call
+                -- rather than in WHERE. Both forms work today: with the guard
+                -- in WHERE, Postgres promotes it to a One-Time Filter above
+                -- the function scan (confirmed by EXPLAIN), so a hand-edited
+                -- object/scalar row falls through to the bio instead of
+                -- raising "cannot extract elements from ...". But that
+                -- depends on the planner recognising a qual that references
+                -- no column of the function scan; expressed as a CASE it is
+                -- correct by construction. NULL takes the ELSE branch too,
+                -- since jsonb_typeof(NULL) is NULL.
                 COALESCE(NULLIF((
                   SELECT e->>'summary'
-                  FROM jsonb_array_elements(u.experience) e
-                  WHERE jsonb_typeof(u.experience) = 'array'
-                    AND LOWER(TRIM(COALESCE(e->>'company', ''))) = LOWER(TRIM($1))
+                  FROM jsonb_array_elements(
+                         CASE WHEN jsonb_typeof(u.experience) = 'array'
+                              THEN u.experience
+                              ELSE '[]'::jsonb END
+                       ) e
+                  WHERE LOWER(TRIM(COALESCE(e->>'company', ''))) = LOWER(TRIM($1))
                     AND COALESCE(e->>'summary', '') <> ''
                   LIMIT 1
                 ), ''), u.bio) AS journey,

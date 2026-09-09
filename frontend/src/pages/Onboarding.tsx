@@ -197,7 +197,9 @@ export function Onboarding() {
     if (step === 1) return !stepBlocked(required, 'basic')
     if (step === 2) return !stepBlocked(required, 'status')
     if (step === 3) return !stepBlocked(required, 'setup')
-    if (step === 4) return !stepBlocked(required, 'interests')
+    // Step 4 is the two opt-in toggles: nothing on it is mandatory, and the
+    // questions they unlock are asked on the final step.
+    if (step === 4) return true
     return stillMissing.length === 0
   }
 

@@ -347,6 +347,13 @@ mentorshipRouter.get(
 
 // --- Mentor assessment (admin-recorded) -------------------------------------
 
+/**
+ * The score that qualifies someone to mentor this way. Keep in sync with
+ * MENTOR_ASSESSMENT_PASS_MARK in frontend/src/lib/profileCompleteness.ts,
+ * which decides what the member's own profile tells them they need.
+ */
+export const MENTOR_ASSESSMENT_PASS_MARK = 60
+
 const assessmentSchema = z.object({
   userId: z.string().min(1, 'userId is required'),
   score: z.number().int().min(0).max(100),
@@ -357,9 +364,14 @@ const assessmentSchema = z.object({
 //
 // Admin-only, and deliberately NOT part of PATCH /api/users/me: a score the
 // member could set themselves would be worthless as a qualification. Passing
-// this (see MENTOR_ASSESSMENT_PASS_MARK in users.routes.ts) is one of three
-// ways to qualify to mentor, alongside 2+ years of experience and a
-// postgraduate degree.
+// this (MENTOR_ASSESSMENT_PASS_MARK, above) is one of three ways to qualify to
+// mentor, alongside 2+ years of experience and a postgraduate degree.
+//
+// A pass stamps mentor_verified_at, because an admin recording the score IS
+// the verification step for this route — without it the member was told they
+// could offer mentorship and then got a 403 from PATCH /api/users/me. It only
+// ever GRANTS: a fail never clears a stamp earned through experience or a
+// postgraduate degree, which are separate claims.
 //
 // ponytail: the score is entered by an admin from whatever assessment tool is
 // used. Wiring an external provider's webhook straight into this endpoint is
@@ -376,24 +388,29 @@ mentorshipRouter.post(
     if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
     const { userId, score, provider } = parsed.data
 
+    const passed = score >= MENTOR_ASSESSMENT_PASS_MARK
+
     const result = await query<{ id: string; score: number; provider: string }>(
       `UPDATE users
           SET mentor_assessment_score = $2,
               mentor_assessment_provider = $3,
               mentor_assessment_at = now(),
+              -- COALESCE, not a plain assignment: a member already verified on
+              -- another claim keeps their original stamp.
+              mentor_verified_at = CASE WHEN $4 THEN COALESCE(mentor_verified_at, now()) ELSE mentor_verified_at END,
               updated_at = now()
         WHERE id = $1
         RETURNING id, mentor_assessment_score AS score, mentor_assessment_provider AS provider`,
-      [userId, score, provider ?? ''],
+      [userId, score, provider ?? '', passed],
     )
     if (!result.rowCount) throw new ApiError(404, 'User not found')
 
     void pushNotification(
       userId,
       'mentorship',
-      score >= 60
+      passed
         ? `You passed the mentor assessment with ${score}% — you can now offer mentorship from your profile.`
-        : `Your mentor assessment score was ${score}%. You need 60% to qualify this way.`,
+        : `Your mentor assessment score was ${score}%. You need ${MENTOR_ASSESSMENT_PASS_MARK}% to qualify this way.`,
     )
     res.json(result.rows[0])
   }),

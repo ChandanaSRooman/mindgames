@@ -14,6 +14,7 @@ import type {
   ExperienceEntry,
   MentorshipMode,
   ProfileLink,
+  ProfilePatch,
   ProjectEntry,
   ResumeParseResult,
   StartupIntent,
@@ -165,7 +166,7 @@ export function detailToPatch(
     /** Derived from Current Status, which the surrounding form owns. */
     openToWork: boolean
   },
-): Partial<User> {
+): ProfilePatch {
   return {
     experience: d.experience,
     education: d.education,
@@ -177,30 +178,30 @@ export function detailToPatch(
     github: d.github.trim(),
     portfolio: d.portfolio.trim(),
     industry: d.industry,
-    workMode: (d.workMode || undefined) as WorkMode | undefined,
+    // '' and null are the CLEAR values here, not "leave alone": PATCH
+    // /api/users/me filters `undefined` out of its UPDATE, so emitting
+    // undefined for an emptied field silently kept the previous one — and the
+    // "clear the block when its toggle is off" rule below never took effect.
+    workMode: d.workMode,
     openToRelocate: d.openToRelocate,
     interests: d.interests,
     openToSpeakAtEvents: d.openToSpeakAtEvents,
     roomanCenter: d.roomanCenter.trim(),
     mentorTopics: opts.willingToMentor ? d.mentorTopics : [],
     mentorAvailability: opts.willingToMentor ? d.mentorAvailability.trim() : '',
-    mentorshipMode: (opts.willingToMentor ? d.mentorshipMode || undefined : undefined) as
-      | MentorshipMode
-      | undefined,
+    mentorshipMode: opts.willingToMentor ? d.mentorshipMode : '',
     openToReferrals: d.openToReferrals,
     referralNote: d.openToReferrals ? d.referralNote.trim() : '',
     hiringFor: d.hiringFor,
-    startupIntent: (opts.interestedInStartup ? d.startupIntent || undefined : undefined) as
-      | StartupIntent
-      | undefined,
+    startupIntent: opts.interestedInStartup ? d.startupIntent : '',
     startupLookingFor: opts.interestedInStartup ? d.startupLookingFor : [],
     showEmail: d.showEmail,
     showPhone: d.showPhone,
     homeAddress: d.homeAddress.trim(),
     // '' clears the date; the route turns it into NULL.
     dateOfBirth: d.dateOfBirth,
-    salaryCurrent: d.salaryCurrent ? Number(d.salaryCurrent) : undefined,
-    salaryExpected: d.salaryExpected ? Number(d.salaryExpected) : undefined,
+    salaryCurrent: d.salaryCurrent ? Number(d.salaryCurrent) : null,
+    salaryExpected: d.salaryExpected ? Number(d.salaryExpected) : null,
     showAddress: d.showAddress,
     showAge: d.showAge,
     showSalary: d.showSalary,

@@ -202,6 +202,7 @@ function MentorApplicationRow({
   onApprove: () => void
   onDecline: (reason?: string) => void
 }) {
+  const { notify } = useApp()
   const [app, setApp] = useState<MentorApplication | null>(null)
   const [declining, setDeclining] = useState(false)
   const [reason, setReason] = useState('')
@@ -216,6 +217,23 @@ function MentorApplicationRow({
       live = false
     }
   }, [user.id])
+
+  // The route needs the Bearer header, so the bytes are fetched and handed to
+  // the browser as an object URL — the same shape as the resume download in
+  // Jobs and the attachment download in ChatPanel.
+  async function downloadProof(docId: string, name: string) {
+    try {
+      const blob = await api.downloadMentorProof(user.id, docId)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = name
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Could not download that document.', 'error')
+    }
+  }
 
   return (
     <div className="rounded-lg border border-[#edeff1] p-3">
@@ -247,15 +265,14 @@ function MentorApplicationRow({
           {app.note && <p className="mt-1 text-xs text-[#878a8c]">Note: {app.note}</p>}
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {app.documents.map((d) => (
-              <a
+              <button
                 key={d.id}
-                href={api.mentorProofUrl(user.id, d.id)}
-                target="_blank"
-                rel="noreferrer"
+                type="button"
+                onClick={() => downloadProof(d.id, d.name)}
                 className="flex items-center gap-1 rounded-full border border-[#edeff1] px-2.5 py-1 text-xs font-medium text-[#1c1c1c] hover:border-[#ff4500] hover:text-[#ff4500]"
               >
                 <FileText size={11} /> {d.name}
-              </a>
+              </button>
             ))}
             {app.documents.length === 0 && (
               <span className="text-xs text-red-500">No documents attached.</span>

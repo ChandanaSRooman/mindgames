@@ -26,6 +26,7 @@ import {
   DetailsSection,
   EducationSection,
   ExperienceSection,
+  hasSharedDetails,
   MentorshipSection,
   OpenToSection,
   PrivateSection,
@@ -395,16 +396,11 @@ function AboutTab({
   isMe: boolean
   onEdit: () => void
 }) {
-  const hasDetails =
-    !!user.linkedin ||
-    !!user.github ||
-    !!user.portfolio ||
-    !!user.industry ||
-    !!user.roomanCenter ||
-    !!user.email ||
-    !!user.phone ||
-    (user.languagesKnown ?? []).length > 0 ||
-    (user.interests ?? []).length > 0
+  // Asks <DetailsSection> itself rather than re-listing its fields: the old
+  // hand-written list left out other links, address, age and salary, so a
+  // profile sharing only one of those rendered the card AND "No details
+  // shared." at the same time.
+  const hasDetails = hasSharedDetails(user)
 
   return (
     <>
