@@ -9,7 +9,7 @@ import { hashPassword, verifyPassword } from '../auth/password.js'
 import { signToken } from '../auth/jwt.js'
 import { requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
-import { mapUser, USER_COLS, type UserRow } from '../mappers.js'
+import { mapOwnUser, USER_COLS, type UserRow } from '../mappers.js'
 
 export const authRouter = Router()
 
@@ -70,7 +70,7 @@ async function sendVerification(userId: string, name: string, email: string): Pr
 // Issue a token + return the created/authenticated user.
 function issue(userRow: UserRow & { is_admin: boolean }) {
   const token = signToken({ sub: userRow.id, email: userRow.email, isAdmin: userRow.is_admin })
-  return { token, user: mapUser(userRow) }
+  return { token, user: mapOwnUser(userRow) }
 }
 
 const signupStartSchema = z.object({ email: z.string().trim().email('a valid email is required') })
@@ -443,6 +443,6 @@ authRouter.get(
       req.user!.sub,
     ])
     if (!result.rowCount) throw new ApiError(404, 'User not found')
-    res.json({ user: mapUser(result.rows[0]) })
+    res.json({ user: mapOwnUser(result.rows[0]) })
   }),
 )

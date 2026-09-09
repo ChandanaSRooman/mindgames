@@ -9,6 +9,31 @@ export interface Experience {
   summary: string
 }
 
+export interface Education {
+  degree: string
+  institution: string
+  year: string
+  score: string
+}
+
+export interface Project {
+  title: string
+  description: string
+  link: string
+  tech: string[]
+}
+
+export interface Certification {
+  name: string
+  issuer: string
+  year: string
+}
+
+export interface Achievement {
+  title: string
+  year: string
+}
+
 export interface ResumeParseResult {
   name: string
   email: string
@@ -28,6 +53,17 @@ export interface ResumeParseResult {
   college: string
   experience: Experience[]
   skills: string[]
+  // Rich detail. The uploaded file is discarded after parsing; this extracted
+  // JSON is what gets persisted on the profile, and the member can edit it.
+  education: Education[]
+  projects: Project[]
+  certifications: Certification[]
+  achievements: Achievement[]
+  languagesKnown: string[]
+  interests: string[]
+  github: string
+  portfolio: string
+  industry: string
   // 'ai' = real Claude extraction; 'fallback' = demo data (no ANT_KEY).
   source: 'ai' | 'fallback'
 }
@@ -53,5 +89,20 @@ export const resumeParseResult: ResumeParseResult = {
     { role: 'Junior Developer', company: 'Rooman Incubation Cohort', period: '2018 — 2019', summary: 'Graduated top of cohort. Shipped 4 client projects across the MERN stack during the StartupVarsity program.' },
   ],
   skills: ['React', 'TypeScript', 'Node.js', 'Express', 'PostgreSQL', 'AWS', 'Docker', 'Tailwind CSS', 'REST APIs', 'CI/CD', 'System Design', 'Team Leadership'],
+  education: [
+    { degree: 'B.E. Computer Science', institution: 'Visvesvaraya Technological University', year: '2018', score: '8.4 CGPA' },
+  ],
+  projects: [
+    { title: 'Ledger', description: 'Open-source double-entry bookkeeping API used by three small businesses.', link: 'https://github.com/example/ledger', tech: ['Node.js', 'PostgreSQL'] },
+  ],
+  certifications: [
+    { name: 'AWS Certified Solutions Architect - Associate', issuer: 'Amazon Web Services', year: '2021' },
+  ],
+  achievements: [{ title: 'Top of Rooman Full-Stack cohort', year: '2018' }],
+  languagesKnown: ['English', 'Hindi', 'Kannada'],
+  interests: ['Cycling', 'Open source'],
+  github: 'https://github.com/alexmorgan',
+  portfolio: 'https://alexmorgan.dev',
+  industry: 'Product / SaaS',
   source: 'fallback',
 }

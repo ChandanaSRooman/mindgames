@@ -4,7 +4,7 @@ import { createHash, randomInt } from 'node:crypto'
 import { query } from '../db/pool.js'
 import { requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
-import { mapUser, USER_COLS, type UserRow } from '../mappers.js'
+import { mapOwnUser, mapUser, USER_COLS, type UserRow } from '../mappers.js'
 import { sendEmail } from '../email.js'
 
 export const usersRouter = Router()
@@ -31,8 +31,15 @@ const maskEmail = (email: string) => {
 }
 
 // GET /api/users — the whole directory (drives People You May Know, mentions…).
+//
+// Members only. `mapUser` withholds anything still locked, but the per-field
+// locks mean "visible to other MEMBERS", not "visible to the internet" — so
+// the resume detail, address, age and salary a member chose to share with the
+// network must not be readable by an anonymous caller. The frontend only ever
+// calls this with a token (bootstrap and refreshNetwork both bail without one).
 usersRouter.get(
   '/',
+  requireAuth,
   asyncHandler(async (_req, res) => {
     const result = await query<UserRow>(`SELECT ${USER_COLS} FROM users ORDER BY name`)
     res.json(result.rows.map(mapUser))
@@ -64,9 +71,10 @@ usersRouter.get(
   }),
 )
 
-// GET /api/users/:id — a single profile.
+// GET /api/users/:id — a single profile. Members only, for the same reason.
 usersRouter.get(
   '/:id',
+  requireAuth,
   asyncHandler(async (req, res) => {
     const result = await query<UserRow>(`SELECT ${USER_COLS} FROM users WHERE id = $1`, [
       req.params.id,
@@ -101,7 +109,104 @@ const COLUMN_MAP: Record<string, string> = {
   isMentor: 'is_mentor',
   mentorRate: 'mentor_rate',
   sessionsConducted: 'sessions_conducted',
+
+  // Rich profile detail.
+  profileTags: 'profile_tags',
+  experience: 'experience',
+  education: 'education',
+  projects: 'projects',
+  certifications: 'certifications',
+  achievements: 'achievements',
+  otherLinks: 'other_links',
+  languagesKnown: 'languages_known',
+  github: 'github',
+  portfolio: 'portfolio',
+  industry: 'industry',
+  workMode: 'work_mode',
+  openToRelocate: 'open_to_relocate',
+  interests: 'interests',
+  openToSpeakAtEvents: 'open_to_speak_at_events',
+  roomanCenter: 'rooman_center',
+  mentorTopics: 'mentor_topics',
+  mentorAvailability: 'mentor_availability',
+  mentorshipMode: 'mentorship_mode',
+  openToReferrals: 'open_to_referrals',
+  referralNote: 'referral_note',
+  hiringFor: 'hiring_for',
+  startupIntent: 'startup_intent',
+  startupLookingFor: 'startup_looking_for',
+  noticePeriod: 'notice_period',
+  preferredLocations: 'preferred_locations',
+  seekingMentorshipIn: 'seeking_mentorship_in',
+  showEmail: 'show_email',
+  showPhone: 'show_phone',
+  homeAddress: 'home_address',
+  dateOfBirth: 'date_of_birth',
+  salaryCurrent: 'salary_current',
+  salaryExpected: 'salary_expected',
+  showAddress: 'show_address',
+  showAge: 'show_age',
+  showSalary: 'show_salary',
+  bannerTheme: 'banner_theme',
+  bannerImage: 'banner_image',
 }
+
+/** Columns typed JSONB — their values are JSON.stringify'd before the UPDATE. */
+const JSONB_FIELDS = new Set([
+  'experience',
+  'education',
+  'projects',
+  'certifications',
+  'achievements',
+  'otherLinks',
+])
+
+// Rich-profile entry shapes. Every string is length-capped and every list
+// count-capped: these arrive from a resume parse the member can then edit, so
+// they are the one part of the profile a client can grow without limit.
+// Mirrors PROFILE_TAGS in frontend/src/types.ts. The older single-value
+// `profileTag` column keeps its narrower 3-value CHECK constraint.
+const PROFILE_TAGS = [
+  'Mentor',
+  'Hiring',
+  'Open to Work',
+  'Willing to give referral',
+  'Need mentorship',
+] as const
+
+// --- Mentoring is verification-gated ---------------------------------------
+// A member claims one requirement (2+ years' experience / a postgraduate
+// degree / a passed assessment), attaches evidence, and an admin verifies it
+// (see mentorship.routes.ts). `users.mentor_verified_at` is the only thing
+// that unlocks mentoring, so nothing a member can put in their own profile —
+// typing "M.Tech" into their Education list included — qualifies them.
+// Switching mentoring OFF is never gated.
+
+const shortText = z.string().trim().max(200)
+const longText = z.string().trim().max(2000)
+const tagList = (max = 30) => z.array(z.string().trim().min(1).max(80)).max(max)
+
+const experienceEntry = z.object({
+  role: shortText,
+  company: shortText,
+  period: shortText,
+  summary: longText,
+})
+const educationEntry = z.object({
+  degree: shortText,
+  institution: shortText,
+  year: shortText,
+  score: shortText.optional(),
+})
+const projectEntry = z.object({
+  title: shortText,
+  description: longText,
+  link: shortText.optional(),
+  tech: tagList(20),
+})
+const certificationEntry = z.object({ name: shortText, issuer: shortText, year: shortText })
+const achievementEntry = z.object({ title: shortText, year: shortText })
+const profileLink = z.object({ label: shortText, url: shortText })
 
 const patchSchema = z
   .object({
@@ -131,6 +236,71 @@ const patchSchema = z
     isMentor: z.boolean().optional(),
     mentorRate: z.number().int().optional(),
     sessionsConducted: z.number().int().optional(),
+
+    // --- Rich profile detail ---------------------------------------------
+    profileTags: z.array(z.enum(PROFILE_TAGS)).max(PROFILE_TAGS.length).optional(),
+    experience: z.array(experienceEntry).max(25).optional(),
+    education: z.array(educationEntry).max(15).optional(),
+    projects: z.array(projectEntry).max(25).optional(),
+    certifications: z.array(certificationEntry).max(30).optional(),
+    achievements: z.array(achievementEntry).max(30).optional(),
+    otherLinks: z.array(profileLink).max(10).optional(),
+    languagesKnown: tagList(15).optional(),
+    github: shortText.optional(),
+    portfolio: shortText.optional(),
+    industry: shortText.optional(),
+
+    workMode: z.enum(['Remote', 'Hybrid', 'Onsite', '']).optional(),
+    openToRelocate: z.boolean().optional(),
+    interests: tagList(20).optional(),
+    openToSpeakAtEvents: z.boolean().optional(),
+    roomanCenter: shortText.optional(),
+
+    mentorTopics: tagList(20).optional(),
+    mentorAvailability: shortText.optional(),
+    mentorshipMode: z.enum(['Call', 'Chat', 'In-person', '']).optional(),
+
+    openToReferrals: z.boolean().optional(),
+    referralNote: longText.optional(),
+    hiringFor: tagList(20).optional(),
+
+    startupIntent: z
+      .enum(['Have an idea', 'Building something', 'Want to join a startup', 'Just curious', ''])
+      .optional(),
+    startupLookingFor: tagList(10).optional(),
+
+    // Contact visibility — private by default, opt in per field.
+    showEmail: z.boolean().optional(),
+    showPhone: z.boolean().optional(),
+
+    // Sensitive personal details. Stored, private by default, each with its
+    // own lock. '' / null clears a field.
+    homeAddress: z.string().trim().max(500).optional(),
+    dateOfBirth: z
+      .union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a YYYY-MM-DD date'), z.literal(''), z.null()])
+      .optional(),
+    // Annual figures in rupees. Capped well above any real salary so a typo
+    // can't store nonsense, and floored at 0.
+    salaryCurrent: z.union([z.number().int().min(0).max(1_000_000_000), z.null()]).optional(),
+    salaryExpected: z.union([z.number().int().min(0).max(1_000_000_000), z.null()]).optional(),
+    showAddress: z.boolean().optional(),
+    showAge: z.boolean().optional(),
+    showSalary: z.boolean().optional(),
+
+    // Cover colour on the member's own profile hero — a fixed palette, not a
+    // free value, so a bad pick can never clash with the surrounding UI.
+    bannerTheme: z.enum(['sunrise', 'midnight', 'forest', 'plum', 'slate']).optional(),
+    // Custom cover photo; same shape as `photo` but a larger cap — a 1200x400
+    // JPEG runs bigger than a 384x384 avatar. null removes it and falls back
+    // to the theme gradient.
+    bannerImage: z
+      .union([z.string().regex(/^data:image\/(jpeg|png|webp);base64,/).max(800_000), z.null()])
+      .optional(),
+
+    // Private to the owner.
+    noticePeriod: shortText.optional(),
+    preferredLocations: tagList(10).optional(),
+    seekingMentorshipIn: tagList(20).optional(),
   })
   .strip()
 
@@ -145,11 +315,31 @@ usersRouter.patch(
     const entries = Object.entries(parsed.data).filter(([, v]) => v !== undefined)
     if (entries.length === 0) throw new ApiError(400, 'No fields to update')
 
+    // Turning mentoring ON requires an admin-verified application.
+    if (parsed.data.willingToMentor === true || parsed.data.isMentor === true) {
+      const current = await query<{ mentor_verified_at: Date | null }>(
+        `SELECT mentor_verified_at FROM users WHERE id = $1`,
+        [req.user!.sub],
+      )
+      if (!current.rowCount) throw new ApiError(404, 'User not found')
+      if (!current.rows[0].mentor_verified_at) {
+        throw new ApiError(
+          403,
+          'Mentoring needs to be verified first. Submit proof of 2+ years of experience, a postgraduate degree, or a passed mentor assessment from your profile, and an admin will review it.',
+        )
+      }
+    }
+
     const sets: string[] = []
     const values: unknown[] = []
     entries.forEach(([key, value], i) => {
       sets.push(`${COLUMN_MAP[key]} = $${i + 1}`)
-      values.push(value)
+      // JSONB columns must be sent as JSON text: pg serialises a JS array into
+      // Postgres array-literal syntax ('{...}') by default, which a jsonb
+      // column rejects. TEXT[] columns take the JS array as-is.
+      // A cleared date arrives as '' from the form; a DATE column needs NULL.
+      const normalised = key === 'dateOfBirth' && value === '' ? null : value
+      values.push(JSONB_FIELDS.has(key) ? JSON.stringify(normalised) : normalised)
     })
     values.push(req.user!.sub)
 
@@ -159,7 +349,8 @@ usersRouter.patch(
        RETURNING ${USER_COLS}`,
       values,
     )
-    res.json(mapUser(result.rows[0]))
+    // Own profile → includes the private fields.
+    res.json(mapOwnUser(result.rows[0]))
   }),
 )
 
@@ -254,7 +445,7 @@ usersRouter.post(
       [me, row.email, domain],
     )
     await query(`DELETE FROM work_email_otps WHERE user_id = $1`, [me])
-    res.json(mapUser(updated.rows[0]))
+    res.json(mapOwnUser(updated.rows[0]))
   }),
 )
 

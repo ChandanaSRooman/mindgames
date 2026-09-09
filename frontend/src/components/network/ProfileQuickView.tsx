@@ -1,19 +1,34 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { GraduationCap, Link as LinkIcon, MapPin, MessageSquare, UserPlus, X } from 'lucide-react'
+import {
+  GraduationCap,
+  Link as LinkIcon,
+  MapPin,
+  MessageSquare,
+  UserPlus,
+  X,
+} from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { useLayout } from '../layout/LayoutContext'
 import { Avatar, Button, VerifiedBadge } from '../ui'
 import { api } from '../../lib/api'
-import type { Badge } from '../../types'
+import { motion, useReducedMotion } from '../profile/motion'
+import { bannerThemeGradient, type Badge } from '../../types'
 
 // Slide-out quick view of a person — bio, expertise, proof-of-work links and
 // badges, and Connect/Message CTAs — without leaving the current page.
+//
+// Visual language matches the redesigned profile page: a dark mesh-gradient
+// header behind the avatar instead of a flat white top, and the same
+// spring/stagger motion vocabulary (see components/profile/motion.tsx),
+// so opening someone's quick view and then their full profile feels like
+// one continuous surface rather than two different eras of the app.
 export function ProfileQuickView({ userId, onClose }: { userId: string; onClose: () => void }) {
   const { userById, currentUser, connectionState, sendConnect } = useApp()
   const { openChatWith } = useLayout()
   const user = userById(userId)
   const [badges, setBadges] = useState<Badge[] | null>(null)
+  const reduced = useReducedMotion()
 
   useEffect(() => {
     setBadges(null)
@@ -28,22 +43,81 @@ export function ProfileQuickView({ userId, onClose }: { userId: string; onClose:
   const conn = connectionState(user.id)
   const hasProofOfWork = !!user.linkedin || (badges?.length ?? 0) > 0
 
+  // A tiny stagger on the body sections, mirroring the profile page's Reveal
+  // cascade at a scale that suits a drawer rather than a full scrolling page.
+  const listVariants = {
+    hidden: {},
+    show: { transition: { staggerChildren: 0.06, delayChildren: 0.15 } },
+  }
+  const itemVariants = reduced
+    ? { hidden: {}, show: {} }
+    : { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }
+
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/30" onClick={onClose}>
-      <div
-        className="animate-slidein flex h-full w-[35vw] min-w-[320px] max-w-md flex-col overflow-y-auto bg-white shadow-2xl"
+    <motion.div
+      className="fixed inset-0 z-50 flex justify-end bg-black/40"
+      onClick={onClose}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      <motion.div
+        className="flex h-full w-[35vw] min-w-[320px] max-w-md flex-col overflow-y-auto bg-white shadow-2xl"
         onClick={(e) => e.stopPropagation()}
+        initial={reduced ? undefined : { x: '100%' }}
+        animate={{ x: 0 }}
+        transition={{ type: 'spring', stiffness: 300, damping: 32 }}
       >
-        <div className="flex items-center justify-between border-b border-[#edeff1] px-5 py-4">
-          <h2 className="font-bold text-[#1c1c1c]">Quick view</h2>
-          <button onClick={onClose} className="rounded-full p-1.5 text-[#878a8c] hover:bg-gray-100">
+        {/* Header: the same near-black mesh-gradient banner as the full
+            profile hero, so the two surfaces read as one design. */}
+        <div className="relative h-24 shrink-0 overflow-hidden bg-[#1c1c1c]">
+          {user.bannerImage ? (
+            <img
+              src={user.bannerImage}
+              alt=""
+              aria-hidden
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          ) : (
+            <>
+              <div
+                className="absolute inset-0"
+                style={{ background: bannerThemeGradient(user.bannerTheme) }}
+              />
+              {!reduced && (
+                <motion.div
+                  aria-hidden
+                  className="absolute -top-10 -right-8 h-36 w-36 rounded-full bg-white/15 blur-2xl"
+                  animate={{ x: [0, 12, 0], y: [0, 8, 0] }}
+                  transition={{ duration: 11, repeat: Infinity, ease: 'easeInOut' }}
+                />
+              )}
+            </>
+          )}
+          <button
+            onClick={onClose}
+            aria-label="Close quick view"
+            className="absolute top-3 right-3 rounded-full bg-black/20 p-1.5 text-white/80 backdrop-blur-sm hover:bg-black/30 hover:text-white"
+          >
             <X size={18} />
           </button>
         </div>
 
-        <div className="flex flex-1 flex-col gap-4 px-5 py-5">
+        <motion.div
+          className="flex flex-1 flex-col gap-4 px-5 pb-5"
+          variants={listVariants}
+          initial="hidden"
+          animate="show"
+        >
           <div className="flex flex-col items-center text-center">
-            <Avatar name={user.name} src={user.photo} size={80} />
+            <motion.span
+              initial={reduced ? undefined : { scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ delay: 0.1, type: 'spring', stiffness: 240, damping: 18 }}
+              className="-mt-10 rounded-full ring-4 ring-white"
+            >
+              <Avatar name={user.name} src={user.photo} size={80} />
+            </motion.span>
             <Link
               to={`/profile/${user.id}`}
               onClick={onClose}
@@ -70,7 +144,7 @@ export function ProfileQuickView({ userId, onClose }: { userId: string; onClose:
           </div>
 
           {!isMe && (
-            <div className="flex gap-2">
+            <motion.div variants={itemVariants} className="flex gap-2">
               <Button
                 className="flex-1"
                 variant={conn === 'none' ? 'primary' : 'subtle'}
@@ -90,22 +164,30 @@ export function ProfileQuickView({ userId, onClose }: { userId: string; onClose:
               >
                 <MessageSquare size={15} /> Message
               </Button>
-            </div>
+            </motion.div>
           )}
 
-          {user.bio && <p className="text-sm leading-relaxed text-[#1c1c1c]">{user.bio}</p>}
+          {user.bio && (
+            <motion.p variants={itemVariants} className="text-sm leading-relaxed text-[#1c1c1c]">
+              {user.bio}
+            </motion.p>
+          )}
 
-          <ExpertiseTags expertise={user.expertise} />
+          <motion.div variants={itemVariants}>
+            <ExpertiseTags expertise={user.expertise} />
+          </motion.div>
 
           {hasProofOfWork && (
-            <div className="border-t border-[#edeff1] pt-4">
-              <p className="mb-2 text-xs font-semibold tracking-wide text-[#878a8c] uppercase">Proof of work</p>
+            <motion.div variants={itemVariants} className="border-t border-[#edeff1] pt-4">
+              <p className="mb-2 text-xs font-semibold tracking-wide text-[#878a8c] uppercase">
+                Proof of work
+              </p>
               {user.linkedin && (
                 <a
                   href={user.linkedin}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-[#ff4500] hover:underline"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-orange-50 px-3 py-1.5 text-sm font-medium text-[#ff4500] hover:bg-orange-100"
                 >
                   <LinkIcon size={14} /> LinkedIn
                 </a>
@@ -123,19 +205,22 @@ export function ProfileQuickView({ userId, onClose }: { userId: string; onClose:
                   ))}
                 </div>
               )}
-            </div>
+            </motion.div>
           )}
 
           <Link
             to={`/profile/${user.id}`}
             onClick={onClose}
-            className="mt-auto pt-2 text-center text-sm font-semibold text-[#ff4500] hover:underline"
+            className="group mt-auto flex items-center justify-center gap-1 pt-2 text-center text-sm font-semibold text-[#ff4500] hover:underline"
           >
-            View full profile →
+            View full profile
+            <motion.span aria-hidden whileHover={{ x: 3 }} className="inline-block">
+              →
+            </motion.span>
           </Link>
-        </div>
-      </div>
-    </div>
+        </motion.div>
+      </motion.div>
+    </motion.div>
   )
 }
 

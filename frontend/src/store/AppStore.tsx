@@ -18,6 +18,7 @@ import type {
   Post,
   PostMeta,
   PostType,
+  ProfilePatch,
   Startup,
   User,
   Visibility,
@@ -88,7 +89,7 @@ interface AppContextValue {
   login: (email: string, password: string) => Promise<User>
   signup: (ticket: string, name: string, password: string) => Promise<User>
   social: (provider: 'google' | 'linkedin') => Promise<User>
-  updateProfile: (patch: Partial<User>) => Promise<void>
+  updateProfile: (patch: ProfilePatch) => Promise<void>
   // Employer (work-email) verification — one-time, required before posting a job.
   startWorkEmailVerification: (email: string) => Promise<{ email: string; simulated: boolean }>
   verifyWorkEmail: (code: string) => Promise<void>
@@ -161,7 +162,7 @@ interface AppContextValue {
   unpinAnnouncement: (id: string) => void
   pendingMentorIds: string[]
   approveMentor: (id: string) => void
-  declineMentor: (id: string) => void
+  declineMentor: (id: string, reviewNote?: string) => void
 
   // notifications
   notifications: AppNotification[]
@@ -264,7 +265,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const me = meR.value
     const allUsers = usersR.status === 'fulfilled' ? usersR.value : []
     const graph = graphR.status === 'fulfilled' ? graphR.value : { connectionIds: [], sentRequestIds: [], pendingRequestIds: [], connectionNotes: {} }
-    setUsers(allUsers.some((u) => u.id === me.id) ? allUsers : [me, ...allUsers])
+    // Prefer the /auth/me copy of our own record over the directory copy: the
+    // directory is the public projection and withholds the private fields
+    // (phone, notice period, preferred locations, mentorship wanted).
+    setUsers(
+      allUsers.some((u) => u.id === me.id)
+        ? allUsers.map((u) => (u.id === me.id ? me : u))
+        : [me, ...allUsers],
+    )
     setCurrentUserId(me.id)
     setPosts(feedR.status === 'fulfilled' ? feedR.value : [])
     setEvents(evtsR.status === 'fulfilled' ? evtsR.value : [])
@@ -357,7 +365,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const updateProfile = useCallback(
-    async (patch: Partial<User>) => {
+    async (patch: ProfilePatch) => {
       const updated = await api.updateProfile(patch)
       setUsers((list) => list.map((u) => (u.id === updated.id ? updated : u)))
     },
@@ -436,6 +444,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // People-you-may-know: everyone who isn't me, an admin/org account, or
   // already linked.
+  //
+  // Deliberately NOT filtered by profile completeness: hiding real members
+  // from suggestions to punish a thin profile costs the network more than it
+  // gains. Completeness only affects the ORDER (see rankByMatch).
   const suggestionIds = useMemo(
     () =>
       rankByMatch(
@@ -812,7 +824,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (rate: number) => {
       updateProfile({ isMentor: true, willingToMentor: true, mentorRate: rate, sessionsConducted: 0 })
         .then(() => notify('You are now listed as a mentor. 🎉'))
-        .catch(() => notify('Could not update your mentor status.', 'error'))
+        // Mentoring is gated (2+ years' experience, a postgraduate degree, or a
+        // passed assessment). The server's rejection names which requirement is
+        // missing — repeat it rather than hiding it behind a generic failure.
+        .catch((err) =>
+          notify(
+            err instanceof Error && err.message && !err.message.startsWith('Request failed')
+              ? err.message
+              : 'Could not update your mentor status.',
+            'error',
+          ),
+        )
     },
     [notify, updateProfile],
   )
@@ -941,7 +963,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const u = users.find((x) => x.id === id)
       api.approveMentor(id).then(
         () => {
-          setUsers((list) => list.map((x) => (x.id === id ? { ...x, isMentor: true, willingToMentor: true, mentorRate: x.mentorRate ?? 1000, sessionsConducted: x.sessionsConducted ?? 0 } : x)))
+          // Mirrors exactly what the approve route writes. mentorVerified is
+          // the half isBookableMentor() checks on top of isMentor, so leaving
+          // it out kept a just-approved mentor off the Mentors tab until the
+          // admin reloaded.
+          setUsers((list) =>
+            list.map((x) =>
+              x.id === id
+                ? {
+                    ...x,
+                    isMentor: true,
+                    willingToMentor: true,
+                    mentorVerified: true,
+                    mentorRate: x.mentorRate ?? 1000,
+                    sessionsConducted: x.sessionsConducted ?? 0,
+                  }
+                : x,
+            ),
+          )
           setPendingMentorIds((p) => p.filter((x) => x !== id))
           notify(`${u?.name ?? 'Alumnus'} approved as a mentor.`)
         },
@@ -952,10 +991,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const declineMentor = useCallback(
-    (id: string) => {
+    (id: string, reviewNote?: string) => {
       const u = users.find((x) => x.id === id)
-      api.declineMentor(id).then(
+      api.declineMentor(id, reviewNote).then(
         () => {
+          // The decline route also withdraws the listing (is_mentor,
+          // willing_to_mentor, mentor_verified_at). Without mirroring that, a
+          // previously approved member whose resubmission was declined stayed
+          // listed and bookable in this session.
+          setUsers((list) =>
+            list.map((x) =>
+              x.id === id
+                ? { ...x, isMentor: false, willingToMentor: false, mentorVerified: false }
+                : x,
+            ),
+          )
           setPendingMentorIds((p) => p.filter((x) => x !== id))
           notify(`${u?.name ?? 'Application'} declined.`, 'info')
         },

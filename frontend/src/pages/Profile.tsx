@@ -3,9 +3,9 @@ import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import {
   Briefcase,
   GraduationCap,
-  Link as LinkIcon,
   MapPin,
   MessageSquare,
+  Clock,
   Flag,
   Handshake,
   UserPlus,
@@ -13,18 +13,41 @@ import {
 } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { useLayout } from '../components/layout/LayoutContext'
-import { Button, Card, VerifiedBadge } from '../components/ui'
+import { Button, Card, VerifiedBadge, cx } from '../components/ui'
 import { PostCard } from '../components/feed/PostCard'
 import { EditProfileModal } from '../components/profile/EditProfileModal'
 import { ProfilePhoto } from '../components/profile/ProfilePhoto'
 import { ProfileBadges } from '../components/profile/ProfileBadges'
-import { ProfileTagsEditor } from '../components/profile/ProfileTagsEditor'
+import { ProfileCompletenessMeter } from '../components/profile/ProfileCompletenessMeter'
+import {
+  AboutSection,
+  AchievementsSection,
+  CertificationsSection,
+  DetailsSection,
+  EducationSection,
+  ExperienceSection,
+  hasSharedDetails,
+  MentorshipSection,
+  OpenToSection,
+  PrivateSection,
+  ProjectsSection,
+} from '../components/profile/ProfileSections'
 import { ReportModal } from '../components/ReportModal'
 import { ConnectNoteModal } from '../components/referral/ConnectNoteModal'
 import { ReachOutModal } from '../components/referral/ReachOutModal'
-import { compact, roleLine } from '../lib/format'
+import { CountUp, HoverLift, Reveal, motion } from '../components/profile/motion'
+import { BannerThemePicker } from '../components/profile/BannerThemePicker'
+import { roleLine } from '../lib/format'
 import { api } from '../lib/api'
-import { type Badge } from '../types'
+import { bannerThemeGradient, type Badge, type MentorApplication } from '../types'
+
+type Tab = 'overview' | 'posts' | 'about'
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'posts', label: 'Posts' },
+  { key: 'about', label: 'About' },
+]
 
 export function Profile() {
   const { id } = useParams<{ id: string }>()
@@ -32,7 +55,7 @@ export function Profile() {
   const [showReferral, setShowReferral] = useState(false)
   const [reportingUser, setReportingUser] = useState(false)
   const [showNoteModal, setShowNoteModal] = useState(false)
-  const [editingTags, setEditingTags] = useState(false)
+  const [tab, setTab] = useState<Tab>('overview')
   const navigate = useNavigate()
   const { openComposer, openChatWith } = useLayout()
   const [editing, setEditing] = useState(false)
@@ -43,136 +66,295 @@ export function Profile() {
 
   const userPosts = useMemo(() => posts.filter((p) => p.authorId === targetId), [posts, targetId])
 
+  // Reset to Overview when moving between profiles, so a tab chosen on one
+  // person's page doesn't carry over to the next.
+  useEffect(() => setTab('overview'), [targetId])
+
   if (!user) return <Navigate to="/home" replace />
 
   const conn = connectionState(user.id)
+  const openEditor = () => setEditing(true)
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* Header card */}
-      <Card className="overflow-hidden">
-        <div className="h-28 bg-gradient-to-r from-[#ff4500] to-[#ff6534]" />
-        <div className="px-5 pb-5">
-          <div className="-mt-12 flex items-end justify-between">
-            <span className="inline-block rounded-full ring-4 ring-white">
-              <ProfilePhoto
-                name={user.name}
-                photo={user.photo}
-                size={88}
-                canEdit={isMe}
-                onChange={async (photo) => {
-                  try {
-                    await updateProfile({ photo })
-                    notify(photo ? 'Profile photo updated.' : 'Profile photo removed.')
-                  } catch {
-                    notify('Could not update your photo. Try again.', 'error')
-                  }
-                }}
+    <div className="relative flex flex-col gap-4">
+      {/* Ambient wash behind the whole page — two faint, static blobs (no
+          motion: they sit behind scrolling content, so animating them would
+          be wasted GPU work nobody tracks with their eyes). Keeps the page
+          from reading as flat page-gray behind a stack of white cards. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -top-24 left-1/2 -z-10 h-[560px] w-[900px] -translate-x-1/2 opacity-[0.06]"
+        style={{
+          background:
+            'radial-gradient(50% 50% at 20% 20%, #ff4500 0%, transparent 70%),' +
+            'radial-gradient(40% 40% at 85% 10%, #ff6534 0%, transparent 70%)',
+        }}
+      />
+
+      {/* ---- Hero: banner, overlapping avatar, identity, actions -----------
+          LinkedIn's arrangement, with a mesh-gradient banner instead of a flat
+          bar so the page doesn't open on a solid orange slab. */}
+      <motion.div
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        className="overflow-hidden rounded-xl border border-[#edeff1] bg-white shadow-sm"
+      >
+        <div className="relative h-32 overflow-hidden bg-[#1c1c1c]">
+          {user.bannerImage ? (
+            // A custom cover photo replaces the gradient (and its drifting
+            // glow, which would just muddy a real photo) outright.
+            <img
+              src={user.bannerImage}
+              alt=""
+              aria-hidden
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          ) : (
+            <>
+              {/* Three offset radial washes read as depth where one linear
+                  gradient reads as a printed band. Colours come from the
+                  member's chosen cover theme — 'sunrise' (the default) is
+                  pixel-identical to the original hardcoded look. */}
+              <div
+                className="absolute inset-0"
+                style={{ background: bannerThemeGradient(user.bannerTheme) }}
               />
-            </span>
-            {isMe && (
-              <button
-                onClick={() => setEditingTags(true)}
-                className="flex items-center gap-1.5 rounded-full bg-[#f6f7f8] px-3 py-2 text-xs font-semibold text-[#1c1c1c] hover:bg-[#edeff1]"
-              >
-                <Edit2 size={14} />
-                Edit Tags
-              </button>
+              {/* Slow drift, so the header is alive without demanding attention. */}
+              <motion.div
+                aria-hidden
+                className="absolute -top-16 -right-10 h-52 w-52 rounded-full bg-white/15 blur-2xl"
+                animate={{ x: [0, 18, 0], y: [0, 10, 0] }}
+                transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
+              />
+            </>
+          )}
+          {/* Direct edit control, right on the banner — not routed through
+              Edit Profile or Quick View. Every choice here saves immediately. */}
+          {isMe && <BannerThemePicker current={user.bannerTheme} image={user.bannerImage} />}
+        </div>
+        <div className="px-5 pb-5">
+          <motion.span
+            initial={{ scale: 0.85, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ delay: 0.12, type: 'spring', stiffness: 220, damping: 18 }}
+            className="-mt-12 inline-block rounded-full ring-4 ring-white"
+          >
+            <ProfilePhoto
+              name={user.name}
+              photo={user.photo}
+              size={88}
+              canEdit={isMe}
+              onChange={async (photo) => {
+                try {
+                  await updateProfile({ photo })
+                  notify(photo ? 'Profile photo updated.' : 'Profile photo removed.')
+                } catch {
+                  notify('Could not update your photo. Try again.', 'error')
+                }
+              }}
+            />
+          </motion.span>
+
+          <div className="mt-3">
+            <h1 className="flex items-center gap-1.5 text-xl font-bold text-[#1c1c1c]">
+              {user.name}
+              <VerifiedBadge verified={user.emailVerified} size={18} />
+            </h1>
+            {roleLine(user) && (
+              <p className="text-sm font-medium text-[#1c1c1c]">{roleLine(user)}</p>
             )}
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h1 className="flex items-center gap-1.5 text-xl font-bold text-[#1c1c1c]">
-                {user.name}
-                <VerifiedBadge verified={user.emailVerified} size={18} />
-              </h1>
-              {roleLine(user) && <p className="text-sm text-[#1c1c1c]">{roleLine(user)}</p>}
-              <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#878a8c]">
-                <span className="flex items-center gap-1"><MapPin size={12} /> {user.city}</span>
-                <span className="flex items-center gap-1"><GraduationCap size={12} /> Batch {user.batchYear} · {user.course}</span>
+            <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#878a8c]">
+              {user.city && (
                 <span className="flex items-center gap-1">
-                  <Briefcase size={12} /> {user.experienceYears > 0 ? `${user.experienceYears} yrs · ` : ''}{user.domain}
+                  <MapPin size={12} /> {user.city}
                 </span>
-              </p>
-              <p className="mt-1 text-xs font-medium text-[#1c1c1c]">{compact(user.connectionsCount)} connections</p>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {isMe ? (
-                <Button variant="outline" onClick={() => setEditing(true)}>Edit Profile</Button>
-              ) : (
-                <>
-                  <Button
-                    icon={<UserPlus size={15} />}
-                    variant={conn === 'none' ? 'primary' : 'subtle'}
-                    disabled={conn !== 'none'}
-                    onClick={() => setShowNoteModal(true)}
-                  >
-                    {conn === 'connected' ? 'Connected' : conn === 'pending' ? 'Request sent' : 'Send Note'}
-                  </Button>
-                  <Button variant="outline" icon={<MessageSquare size={15} />} onClick={() => openChatWith(user.id)}>Message</Button>
-                  {user.company && (
-                    <Button variant="subtle" icon={<Handshake size={15} />} onClick={() => setShowReferral(true)}>
-                      Request Referral
-                    </Button>
-                  )}
-                  <button
-                    onClick={() => setReportingUser(true)}
-                    className="rounded-full p-2 text-[#c3c6c9] transition-colors hover:bg-red-50 hover:text-red-500"
-                    title={`Report ${user.name}`}
-                    aria-label={`Report ${user.name}`}
-                  >
-                    <Flag size={16} />
-                  </button>
-                  {user.isMentor && (
-                    <Button variant="ghost" className="!text-[#ff4500]" onClick={() => navigate('/mentorship')}>
-                      Book Session
-                    </Button>
-                  )}
-                </>
               )}
-            </div>
+              <span className="flex items-center gap-1">
+                <GraduationCap size={12} /> Batch {user.batchYear} · {user.course}
+              </span>
+              <span className="flex items-center gap-1">
+                <Briefcase size={12} />
+                {user.experienceYears > 0 ? `${user.experienceYears} yrs · ` : ''}
+                {user.domain}
+              </span>
+            </p>
           </div>
 
-          {/* Profile Tags/Badges */}
+          {/* Labels follow the member's own answers — nothing to pick by hand. */}
           <div className="mt-3">
             <ProfileBadges user={user} />
           </div>
 
-          {/* Bio */}
-          <p className="mt-4 text-sm leading-relaxed text-[#1c1c1c]">{user.bio}</p>
-
-          {/* Expertise */}
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {user.expertise.map((e) => (
-              <span key={e} className="rounded-full bg-[#f6f7f8] px-2.5 py-1 text-xs font-medium text-[#878a8c]">{e}</span>
-            ))}
+          {/* ---- Stat tiles, borrowed from Reddit ------------------------- */}
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <Stat value={user.connectionsCount} label="Connections" />
+            <Stat value={userPosts.length} label={userPosts.length === 1 ? 'Post' : 'Posts'} />
+            <Stat value={user.sessionsConducted ?? 0} label="Sessions" />
+            <Stat value={(user.experience ?? []).length} label="Roles" />
           </div>
 
-          {user.linkedin && (
-            <a href={user.linkedin} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-[#ff4500] hover:underline">
-              <LinkIcon size={14} /> LinkedIn
-            </a>
-          )}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {isMe ? (
+              <Button variant="outline" icon={<Edit2 size={15} />} onClick={openEditor}>
+                Edit Profile
+              </Button>
+            ) : (
+              <>
+                <Button
+                  icon={<UserPlus size={15} />}
+                  variant={conn === 'none' ? 'primary' : 'subtle'}
+                  disabled={conn !== 'none'}
+                  onClick={() => setShowNoteModal(true)}
+                >
+                  {conn === 'connected'
+                    ? 'Connected'
+                    : conn === 'pending'
+                      ? 'Request sent'
+                      : 'Send Note'}
+                </Button>
+                <Button
+                  variant="outline"
+                  icon={<MessageSquare size={15} />}
+                  onClick={() => openChatWith(user.id)}
+                >
+                  Message
+                </Button>
+                {user.company && (
+                  <Button
+                    variant="subtle"
+                    icon={<Handshake size={15} />}
+                    onClick={() => setShowReferral(true)}
+                  >
+                    Request Referral
+                  </Button>
+                )}
+                <button
+                  onClick={() => setReportingUser(true)}
+                  className="ml-auto rounded-full p-2 text-[#c3c6c9] transition-colors hover:bg-red-50 hover:text-red-500"
+                  title={`Report ${user.name}`}
+                  aria-label={`Report ${user.name}`}
+                >
+                  <Flag size={16} />
+                </button>
+              </>
+            )}
+          </div>
         </div>
-      </Card>
+      </motion.div>
 
-      <AchievementsCard userId={user.id} isMe={isMe} />
-
-      {/* Posts */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-[#1c1c1c]">{isMe ? 'Your Posts' : 'Posts'}</h2>
-        {isMe && <Button variant="outline" className="!px-3 !py-1.5 text-xs" onClick={() => openComposer()}>New Post</Button>}
+      {/* ---- Tabs, borrowed from Reddit: three short pages instead of one
+          very long scroll. Sticky under the 56px app header. */}
+      <div className="sticky top-14 z-10 -mx-4 border-b border-[#edeff1] bg-[#f6f7f8]/95 px-4 backdrop-blur">
+        <div className="flex gap-1">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              aria-current={tab === t.key ? 'page' : undefined}
+              className={cx(
+                'relative px-4 py-3 text-sm font-semibold transition-colors',
+                tab === t.key ? 'text-[#ff4500]' : 'text-[#878a8c] hover:text-[#1c1c1c]',
+              )}
+            >
+              {t.label}
+              {t.key === 'posts' && userPosts.length > 0 && (
+                <span className="ml-1.5 text-xs font-normal">{userPosts.length}</span>
+              )}
+              {tab === t.key && (
+                // layoutId lets the underline travel between tabs instead of
+                // disappearing and reappearing.
+                <motion.span
+                  layoutId="profile-tab-underline"
+                  className="absolute inset-x-2 bottom-0 h-[3px] rounded-full bg-[#ff4500]"
+                  transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+                />
+              )}
+            </button>
+          ))}
+        </div>
       </div>
-      {userPosts.map((p) => (
-        <PostCard key={p.id} post={p} />
-      ))}
-      {userPosts.length === 0 && (
-        <div className="rounded-xl border border-[#edeff1] bg-white py-12 text-center text-sm text-[#878a8c] shadow-sm">
-          No posts yet.
+
+      {tab === 'overview' && (
+        <div className="flex flex-col gap-4">
+          {/* Feature row: the completeness meter, About and a verified
+              Mentorship offer all earn full width — they carry the most
+              information and, for Mentorship, the darkest visual weight on
+              the page. Stacked, not gridded, so each reads top to bottom. */}
+          {[
+            isMe ? (
+              <ProfileCompletenessMeter
+                user={user}
+                postCount={userPosts.length}
+                onEdit={openEditor}
+              />
+            ) : null,
+            <AboutSection user={user} isMe={isMe} onAdd={openEditor} />,
+            <MentorshipSection
+              user={user}
+              onBook={isMe ? undefined : () => navigate('/mentorship')}
+            />,
+            // Only the owner ever sees this — someone else's application
+            // status is not this profile's business to advertise.
+            isMe ? <MentorshipStatusCard onEdit={openEditor} /> : null,
+          ].map((node, i) =>
+            node ? (
+              <Reveal key={`feature-${i}`} index={i}>
+                {node}
+              </Reveal>
+            ) : null,
+          )}
+
+          {/*
+            A plain CSS grid, not masonry: items sit in reading order (left to
+            right, top to bottom) grouped by what they're actually about —
+            career (Experience, Education), proof of work (Projects,
+            Certifications), then the smaller extras. `items-start` stops a
+            short card from being stretched to match a tall neighbour; the
+            trailing solo card spans the full row instead of being stranded
+            to one side.
+          */}
+          <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {(
+              [
+                [<ExperienceSection user={user} isMe={isMe} onAdd={openEditor} />, ''],
+                [<EducationSection user={user} isMe={isMe} onAdd={openEditor} />, ''],
+                [<ProjectsSection user={user} isMe={isMe} onAdd={openEditor} />, ''],
+                [<CertificationsSection user={user} isMe={isMe} onAdd={openEditor} />, ''],
+                [<AchievementsSection user={user} isMe={isMe} onAdd={openEditor} />, ''],
+                [<OpenToSection user={user} />, ''],
+                // A lone trailing tile in a 3-column grid would otherwise sit
+                // stranded on the left with two empty slots beside it.
+                [<BadgesCard userId={user.id} isMe={isMe} />, 'md:col-span-2 xl:col-span-3'],
+              ] as const
+            ).map(([node, span], i) => (
+              <Reveal key={`bento-${i}`} index={i + 3} className={span}>
+                {node}
+              </Reveal>
+            ))}
+          </div>
         </div>
       )}
+
+      {tab === 'posts' && (
+        <>
+          {isMe && (
+            <Button variant="outline" className="self-start" onClick={() => openComposer()}>
+              New Post
+            </Button>
+          )}
+          {userPosts.map((p) => (
+            <PostCard key={p.id} post={p} />
+          ))}
+          {userPosts.length === 0 && (
+            <div className="rounded-xl border border-[#edeff1] bg-white py-12 text-center text-sm text-[#878a8c] shadow-sm">
+              {isMe ? "You haven't posted yet." : 'No posts yet.'}
+            </div>
+          )}
+        </>
+      )}
+
+      {tab === 'about' && <AboutTab user={user} isMe={isMe} onEdit={openEditor} />}
 
       {reportingUser && (
         <ReportModal
@@ -183,23 +365,122 @@ export function Profile() {
         />
       )}
       {editing && <EditProfileModal onClose={() => setEditing(false)} />}
-      {editingTags && (
-        <ProfileTagsEditor
-          currentTags={user.profileTags ?? []}
-          onSave={async (tags) => {
-            await updateProfile({ profileTags: tags })
-          }}
-          onCancel={() => setEditingTags(false)}
-        />
-      )}
       {showReferral && <ReachOutModal user={user} onClose={() => setShowReferral(false)} />}
       {showNoteModal && <ConnectNoteModal user={user} onClose={() => setShowNoteModal(false)} />}
     </div>
   )
 }
 
-// Achievements: computed badges + points, fetched per profile.
-function AchievementsCard({ userId, isMe }: { userId: string; isMe: boolean }) {
+/** One tile in the stat strip. Counts up the first time it's seen. */
+function Stat({ value, label }: { value: number; label: string }) {
+  return (
+    <HoverLift className="rounded-lg bg-[#f6f7f8] px-3 py-2 text-center">
+      <CountUp to={value} className="block text-lg font-bold leading-tight text-[#1c1c1c]" />
+      <span className="text-[11px] font-medium tracking-wide text-[#878a8c] uppercase">
+        {label}
+      </span>
+    </HoverLift>
+  )
+}
+
+/**
+ * Contact, links and preferences — plus the owner-only block. Both halves can
+ * be empty, so the tab falls back to a prompt rather than a blank screen.
+ */
+function AboutTab({
+  user,
+  isMe,
+  onEdit,
+}: {
+  user: Parameters<typeof DetailsSection>[0]['user']
+  isMe: boolean
+  onEdit: () => void
+}) {
+  // Asks <DetailsSection> itself rather than re-listing its fields: the old
+  // hand-written list left out other links, address, age and salary, so a
+  // profile sharing only one of those rendered the card AND "No details
+  // shared." at the same time.
+  const hasDetails = hasSharedDetails(user)
+
+  return (
+    <>
+      <DetailsSection user={user} />
+      {isMe && <PrivateSection user={user} />}
+      {!hasDetails && (
+        <div className="rounded-xl border border-[#edeff1] bg-white py-12 text-center text-sm text-[#878a8c] shadow-sm">
+          {isMe ? (
+            <>
+              Nothing here yet.{' '}
+              <button onClick={onEdit} className="font-semibold text-[#ff4500] hover:underline">
+                Add your links and details
+              </button>
+            </>
+          ) : (
+            'No details shared.'
+          )}
+        </div>
+      )}
+    </>
+  )
+}
+
+/**
+ * "Mentorship application pending/declined", shown ONLY to the profile owner
+ * and ONLY while they have a submission that isn't approved yet. Nothing
+ * renders for a verified mentor (MentorshipSection already covers that), for
+ * someone who never applied, or on anyone else's profile — a member's
+ * application status is theirs to see, not the network's.
+ */
+function MentorshipStatusCard({ onEdit }: { onEdit: () => void }) {
+  const [app, setApp] = useState<MentorApplication | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let live = true
+    api
+      .getMyMentorApplication()
+      .then((a) => live && setApp(a))
+      .catch(() => live && setApp(null))
+      .finally(() => live && setLoading(false))
+    return () => {
+      live = false
+    }
+  }, [])
+
+  if (loading || !app || app.status === 'approved') return null
+  const pending = app.status === 'pending'
+
+  return (
+    <div
+      className={cx(
+        'rounded-xl border p-5',
+        pending ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50',
+      )}
+    >
+      <h2 className="flex items-center gap-2 text-base font-bold text-[#1c1c1c]">
+        <Clock size={17} className={pending ? 'text-amber-600' : 'text-red-500'} />
+        {pending ? 'Mentorship application pending' : 'Mentorship application declined'}
+      </h2>
+      <p className="mt-1 text-sm leading-relaxed text-[#1c1c1c]/70">
+        {pending
+          ? 'An admin is reviewing the proof you submitted — this usually takes a couple of days. Your profile will show you as a mentor once approved.'
+          : app.reviewNote ||
+            'Your last submission was not accepted. You can attach clearer proof and try again.'}
+      </p>
+      {!pending && (
+        <button
+          onClick={onEdit}
+          className="mt-3 rounded-full bg-[#ff4500] px-4 py-2 text-xs font-bold text-white hover:bg-[#ff6534]"
+        >
+          Resubmit proof
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** Computed badges + activity points, fetched per profile. */
+function BadgesCard({ userId, isMe }: { userId: string; isMe: boolean }) {
   const [data, setData] = useState<{ points: number; badges: Badge[] } | null>(null)
 
   useEffect(() => {
@@ -213,7 +494,7 @@ function AchievementsCard({ userId, isMe }: { userId: string; isMe: boolean }) {
   return (
     <Card className="p-5">
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-bold text-[#1c1c1c]">Achievements</h2>
+        <h2 className="text-base font-bold text-[#1c1c1c]">Badges</h2>
         <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-[#ff4500]">
           ⭐ {data.points} points
         </span>
@@ -238,4 +519,3 @@ function AchievementsCard({ userId, isMe }: { userId: string; isMe: boolean }) {
     </Card>
   )
 }
-

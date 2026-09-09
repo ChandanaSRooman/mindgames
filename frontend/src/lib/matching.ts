@@ -1,4 +1,5 @@
 import type { User } from '../types'
+import { profileCompleteness } from './profileCompleteness'
 
 // Why a candidate matched — surfaced later as "why you matched" pills.
 export interface MatchReason {
@@ -58,6 +59,20 @@ export function scoreMatch(candidate: User, me: User): MatchResult {
 
 // Ranks candidates by match score against `me`, highest first. Stable for
 // ties (Array.prototype.sort is stable in modern JS engines).
+//
+// Profile completeness breaks ties rather than contributing to the match score:
+// how complete someone's profile is says nothing about how well they match you,
+// but between two equally good matches the one you can actually learn something
+// about is the more useful suggestion. This is the "ranks higher in
+// suggestions" effect the completeness meter promises.
 export function rankByMatch<T extends User>(candidates: T[], me: User): T[] {
-  return [...candidates].sort((a, b) => scoreMatch(b, me).score - scoreMatch(a, me).score)
+  // Both scores are computed once per candidate up front rather than inside the
+  // comparator, which would recompute them O(n log n) times for the same person.
+  const ranked = candidates.map((u) => ({
+    u,
+    score: scoreMatch(u, me).score,
+    completeness: profileCompleteness(u).percent,
+  }))
+  ranked.sort((a, b) => b.score - a.score || b.completeness - a.completeness)
+  return ranked.map((r) => r.u)
 }
