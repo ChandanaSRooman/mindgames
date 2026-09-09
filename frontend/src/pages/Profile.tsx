@@ -100,35 +100,41 @@ export function Profile() {
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
         className="overflow-hidden rounded-xl border border-[#edeff1] bg-white shadow-sm"
       >
-        <div className="relative h-32 overflow-hidden bg-[#1c1c1c]">
-          {user.bannerImage ? (
-            // A custom cover photo replaces the gradient (and its drifting
-            // glow, which would just muddy a real photo) outright.
-            <img
-              src={user.bannerImage}
-              alt=""
-              aria-hidden
-              className="absolute inset-0 h-full w-full object-cover"
-            />
-          ) : (
-            <>
-              {/* Three offset radial washes read as depth where one linear
-                  gradient reads as a printed band. Colours come from the
-                  member's chosen cover theme — 'sunrise' (the default) is
-                  pixel-identical to the original hardcoded look. */}
-              <div
-                className="absolute inset-0"
-                style={{ background: bannerThemeGradient(user.bannerTheme) }}
-              />
-              {/* Slow drift, so the header is alive without demanding attention. */}
-              <motion.div
+        <div className="relative h-32 bg-[#1c1c1c]">
+          {/* Background art gets its own clipped layer so it still respects
+              the card's rounded top corners — the outer container can't
+              carry overflow-hidden itself, or it would clip the cover-picker
+              dropdown below, which needs to render past the banner's edge. */}
+          <div className="absolute inset-0 overflow-hidden rounded-t-xl">
+            {user.bannerImage ? (
+              // A custom cover photo replaces the gradient (and its drifting
+              // glow, which would just muddy a real photo) outright.
+              <img
+                src={user.bannerImage}
+                alt=""
                 aria-hidden
-                className="absolute -top-16 -right-10 h-52 w-52 rounded-full bg-white/15 blur-2xl"
-                animate={{ x: [0, 18, 0], y: [0, 10, 0] }}
-                transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
+                className="absolute inset-0 h-full w-full object-cover"
               />
-            </>
-          )}
+            ) : (
+              <>
+                {/* Three offset radial washes read as depth where one linear
+                    gradient reads as a printed band. Colours come from the
+                    member's chosen cover theme — 'sunrise' (the default) is
+                    pixel-identical to the original hardcoded look. */}
+                <div
+                  className="absolute inset-0"
+                  style={{ background: bannerThemeGradient(user.bannerTheme) }}
+                />
+                {/* Slow drift, so the header is alive without demanding attention. */}
+                <motion.div
+                  aria-hidden
+                  className="absolute -top-16 -right-10 h-52 w-52 rounded-full bg-white/15 blur-2xl"
+                  animate={{ x: [0, 18, 0], y: [0, 10, 0] }}
+                  transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
+                />
+              </>
+            )}
+          </div>
           {/* Direct edit control, right on the banner — not routed through
               Edit Profile or Quick View. Every choice here saves immediately. */}
           {isMe && <BannerThemePicker current={user.bannerTheme} image={user.bannerImage} />}
