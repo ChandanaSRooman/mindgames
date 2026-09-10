@@ -165,54 +165,52 @@ export function mapOwnUser(r: UserRow) {
 /**
  * A private member as seen by someone they aren't connected to.
  *
- * Deliberately still discoverable: name, photo, bio, batch, course and role
- * are kept so they show up in suggestions and search, and so the person
- * deciding whether to connect has something to go on. Everything a
- * connection is *for* — the rich profile detail, their availability and
- * mentoring offer — is withheld until the connection exists.
+ * An explicit ALLOWLIST, built field by field — not `mapUser` with fields
+ * blanked afterwards. That earlier shape was a blocklist: it let 40 of
+ * mapUser's fields through untouched, including `industry`, `roomanCenter`
+ * and `workEmailDomain`, and any field added to mapUser in future would have
+ * joined them silently. Listing what may be seen means a new field is
+ * withheld by default, which is the direction a privacy filter has to fail
+ * in.
  *
- * Built by emptying the fields on top of mapUser rather than by listing what
- * to keep: a field added to mapUser later then stays hidden here by default,
- * which is the safe direction for a privacy filter to fail in.
+ * What stays visible is what makes someone findable and worth connecting to:
+ * their name, photo, bio, batch, course, role, employer, city and training
+ * domain, plus the mentor badge. Everything a connection is *for* — the rich
+ * detail, availability, intent, contact — is withheld.
+ *
+ * Fields the client requires (see the non-optional members of `User` in
+ * frontend/src/types.ts) are emitted empty rather than omitted, so the shape
+ * stays valid; optional fields are simply absent.
  */
 export function mapLimitedUser(r: UserRow) {
   return {
-    ...mapUser(r),
-    // Rich detail — the substance of a profile.
-    experience: [],
-    education: [],
-    projects: [],
-    certifications: [],
-    achievements: [],
-    otherLinks: [],
-    expertise: [],
-    interests: [],
-    languagesKnown: [],
-    // Links out.
-    github: undefined,
-    portfolio: undefined,
-    linkedin: undefined,
-    // Availability / intent — only meaningful to someone connected.
-    workMode: undefined,
-    openToRelocate: false,
-    openToSpeakAtEvents: false,
-    mentorTopics: [],
-    mentorAvailability: undefined,
-    mentorshipMode: undefined,
-    openToReferrals: false,
-    referralNote: undefined,
-    hiringFor: [],
-    startupIntent: undefined,
-    startupLookingFor: [],
-    // Contact stays withheld regardless of the member's own show* flags:
-    // those mean "visible to members", and this viewer is a member the
-    // private account has not accepted.
+    // --- identity: enough to recognise them in a directory or search result
+    id: r.id,
+    name: r.name,
+    photo: r.photo ?? undefined,
+    avatar: r.avatar,
+    bio: r.bio,
+    batchYear: r.batch_year,
+    course: r.course,
+    designation: r.designation,
+    company: r.company,
+    city: r.city,
+    domain: r.domain,
+    employmentType: r.employment_type,
+    connectionsCount: r.connections_count,
+    // Mentoring status is public by design — a mentee choosing whether to
+    // book is entitled to know an admin verified the credentials.
+    isMentor: r.is_mentor,
+    mentorVerified: !!r.mentor_verified_at,
+    // So the UI can explain why the rest is missing, and offer to connect.
+    isPrivate: true,
+
+    // --- withheld, but required by the client type
     email: '',
-    phone: undefined,
-    homeAddress: undefined,
-    age: undefined,
-    salaryCurrent: undefined,
-    salaryExpected: undefined,
+    expertise: [],
+    experienceYears: 0,
+    interestedInStartup: false,
+    willingToMentor: false,
   }
 }
 

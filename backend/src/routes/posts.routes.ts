@@ -176,10 +176,30 @@ postsRouter.post(
       ],
     )
 
+    // A private author's post is only visible to their connections, so a
+    // notification quoting it must reach the same people — otherwise it
+    // previews content the recipient's own feed deliberately filters out,
+    // and links them to a post they can't open. Both fan-outs below narrow
+    // to connections when the author is private; for a public author the
+    // clause is a no-op and the audience is unchanged.
+    const CONNECTED_IF_PRIVATE = `
+      AND (
+        NOT EXISTS (SELECT 1 FROM users au WHERE au.id = $2 AND au.is_private)
+        OR EXISTS (
+             SELECT 1 FROM connections c
+              WHERE c.status = 'accepted'
+                AND ((c.requester_id = $2 AND c.addressee_id = recipient_id)
+                  OR (c.addressee_id = $2 AND c.requester_id = recipient_id))
+           )
+      )`
+
     // Event update: let RSVP'd attendees know, without paging the author themself.
     if (event) {
       const attendees = await query<{ user_id: string }>(
-        `SELECT user_id FROM event_rsvps WHERE event_id = $1 AND user_id <> $2`,
+        `SELECT user_id FROM (
+           SELECT user_id AS recipient_id, user_id FROM event_rsvps
+            WHERE event_id = $1 AND user_id <> $2
+         ) r WHERE TRUE ${CONNECTED_IF_PRIVATE}`,
         [p.eventId, req.user!.sub],
       )
       for (const a of attendees.rows) {
@@ -191,7 +211,10 @@ postsRouter.post(
     if (p.type === 'Hiring' && p.domain) {
       const poster = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
       const matches = await query<{ id: string }>(
-        `SELECT id FROM users WHERE domain = $1 AND id <> $2 AND NOT is_admin`,
+        `SELECT id FROM (
+           SELECT id, id AS recipient_id FROM users
+            WHERE domain = $1 AND id <> $2 AND NOT is_admin
+         ) r WHERE TRUE ${CONNECTED_IF_PRIVATE}`,
         [p.domain, req.user!.sub],
       )
       for (const m of matches.rows) {
