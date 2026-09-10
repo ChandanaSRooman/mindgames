@@ -736,10 +736,22 @@ function PreviewTable({
 function SettingsPanel() {
   const [integrations, setIntegrations] = useState<{ google: boolean; smtp: boolean; ai: boolean } | null>(null)
   const [editingTemplate, setEditingTemplate] = useState(false)
+  const [appUrl, setAppUrl] = useState<string | null>(null)
 
   useEffect(() => {
-    api.getAdminStats().then((s) => setIntegrations(s.integrations), () => {})
+    api.getAdminStats().then((s) => {
+      setIntegrations(s.integrations)
+      setAppUrl(s.appUrl)
+    }, () => {})
   }, [])
+
+  // This box's public IP changes whenever it stops and starts (no Elastic IP),
+  // but APP_URL in the server's .env doesn't follow — so invite emails keep
+  // pointing at the previous address and every link in them times out. The
+  // mismatch is invisible until a recipient reports a dead link, so compare it
+  // against the address this console is actually being served from.
+  const consoleOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+  const appUrlStale = !!appUrl && !!consoleOrigin && appUrl.replace(/\/+$/, '') !== consoleOrigin
 
   return (
     <div className="space-y-6">
@@ -775,6 +787,24 @@ function SettingsPanel() {
           Goes out automatically every Monday morning to opted-in members. You can also trigger it now.
         </p>
         <DigestButton />
+      </Card>
+      <Card className="p-6">
+        <h2 className="mb-1 text-base font-bold text-[#1c1c1c]">Invite Link Address</h2>
+        <p className="mb-3 text-sm text-[#878a8c]">
+          Every invite email links to this address. It comes from <code className="rounded bg-[#f6f7f8] px-1">APP_URL</code>{' '}
+          in the server&rsquo;s <code className="rounded bg-[#f6f7f8] px-1">.env</code>.
+        </p>
+        <p className="font-mono text-sm text-[#1c1c1c]">{appUrl ?? '—'}</p>
+        {appUrlStale && (
+          <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+            <p className="font-semibold">This doesn&rsquo;t match where you are.</p>
+            <p className="mt-1">
+              You&rsquo;re using the console at <span className="font-mono">{consoleOrigin}</span>, but invites are
+              being sent with links to <span className="font-mono">{appUrl}</span> — recipients will get a link that
+              times out. Update <code>APP_URL</code> in the server&rsquo;s <code>.env</code> and restart the API.
+            </p>
+          </div>
+        )}
       </Card>
       <Card className="p-6">
         <h2 className="mb-1 text-base font-bold text-[#1c1c1c]">Invite Email</h2>
