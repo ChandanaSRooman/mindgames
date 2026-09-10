@@ -29,6 +29,30 @@ const POST_SELECT = `
          ), '[]'::json) AS comments
   FROM posts p`
 
+// A private member's posts are visible only to their connections. Enforced
+// here rather than in the client, so the posts never leave the server: the
+// Home feed's own network-first ordering is a preference, not a boundary.
+//
+// A post survives this filter when any of these holds:
+//   - the author is a public account (the default, so nothing changes for
+//     the existing network)
+//   - the viewer is the author
+//   - the viewer and author have an accepted connection
+//   - it's pinned — official Rooman announcements reach everyone
+//
+// $1 is the viewer (null when signed out, which then sees public accounts'
+// posts only, exactly as before for every account that hasn't opted in).
+const VISIBLE_TO_VIEWER = `
+  WHERE p.pinned
+     OR p.author_id = $1
+     OR NOT EXISTS (SELECT 1 FROM users au WHERE au.id = p.author_id AND au.is_private)
+     OR EXISTS (
+          SELECT 1 FROM connections c
+           WHERE c.status = 'accepted'
+             AND ((c.requester_id = $1 AND c.addressee_id = p.author_id)
+               OR (c.addressee_id = $1 AND c.requester_id = p.author_id))
+        )`
+
 // GET /api/posts — full feed, pinned first then newest. Auth optional (drives
 // likedByMe/saved flags when present).
 postsRouter.get(
@@ -37,7 +61,7 @@ postsRouter.get(
   asyncHandler(async (req, res) => {
     const uid = req.user?.sub ?? null
     const result = await query<PostRow>(
-      `${POST_SELECT} ORDER BY p.pinned DESC, p.created_at DESC`,
+      `${POST_SELECT} ${VISIBLE_TO_VIEWER} ORDER BY p.pinned DESC, p.created_at DESC`,
       [uid],
     )
     res.json(result.rows.map(mapPost))

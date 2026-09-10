@@ -20,7 +20,7 @@ export const USER_COLS = `id, name, email, phone, photo, profile_tag, profile_ta
   mentor_assessment_score, mentor_assessment_provider, mentor_verified_at,
   show_email, show_phone,
   home_address, date_of_birth, salary_current, salary_expected,
-  show_address, show_age, show_salary, banner_theme, banner_image, must_change_password`
+  show_address, show_age, show_salary, banner_theme, banner_image, must_change_password, is_private`
 
 export interface UserRow {
   id: string
@@ -96,6 +96,7 @@ export interface UserRow {
   banner_theme: string
   banner_image: string | null
   must_change_password?: boolean
+  is_private?: boolean
 }
 
 /**
@@ -161,6 +162,60 @@ export function mapOwnUser(r: UserRow) {
   }
 }
 
+/**
+ * A private member as seen by someone they aren't connected to.
+ *
+ * Deliberately still discoverable: name, photo, bio, batch, course and role
+ * are kept so they show up in suggestions and search, and so the person
+ * deciding whether to connect has something to go on. Everything a
+ * connection is *for* — the rich profile detail, their availability and
+ * mentoring offer — is withheld until the connection exists.
+ *
+ * Built by emptying the fields on top of mapUser rather than by listing what
+ * to keep: a field added to mapUser later then stays hidden here by default,
+ * which is the safe direction for a privacy filter to fail in.
+ */
+export function mapLimitedUser(r: UserRow) {
+  return {
+    ...mapUser(r),
+    // Rich detail — the substance of a profile.
+    experience: [],
+    education: [],
+    projects: [],
+    certifications: [],
+    achievements: [],
+    otherLinks: [],
+    expertise: [],
+    interests: [],
+    languagesKnown: [],
+    // Links out.
+    github: undefined,
+    portfolio: undefined,
+    linkedin: undefined,
+    // Availability / intent — only meaningful to someone connected.
+    workMode: undefined,
+    openToRelocate: false,
+    openToSpeakAtEvents: false,
+    mentorTopics: [],
+    mentorAvailability: undefined,
+    mentorshipMode: undefined,
+    openToReferrals: false,
+    referralNote: undefined,
+    hiringFor: [],
+    startupIntent: undefined,
+    startupLookingFor: [],
+    // Contact stays withheld regardless of the member's own show* flags:
+    // those mean "visible to members", and this viewer is a member the
+    // private account has not accepted.
+    email: '',
+    phone: undefined,
+    homeAddress: undefined,
+    age: undefined,
+    salaryCurrent: undefined,
+    salaryExpected: undefined,
+  }
+}
+
 export function mapUser(r: UserRow) {
   return {
     id: r.id,
@@ -184,6 +239,9 @@ export function mapUser(r: UserRow) {
     showAge: r.show_age,
     showSalary: r.show_salary,
     photo: r.photo ?? undefined,
+    // Whether this member restricts their posts and detail to connections.
+    // Public information: the UI needs it to show the right call to action.
+    isPrivate: !!r.is_private,
     profileTag: r.profile_tag ?? undefined,
     profileTags: r.profile_tags ?? [],
     emailVerified: !!r.email_verified_at,
