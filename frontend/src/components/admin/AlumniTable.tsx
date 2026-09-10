@@ -178,12 +178,14 @@ export function AlumniTable({
   const someOn = counts.total > 0
 
   function toggleAll(on: boolean) {
+    // Ticking applies only to what's on screen — arming rows hidden behind a
+    // filter is how an accidental mass-mail happens. Unticking clears the
+    // WHOLE selection, though: Send reads the full selection, so clearing
+    // only visible rows would leave hidden ones armed and mail them.
+    if (!on) return setSelection({})
     setSelection((s) => {
       const next = { ...s }
-      for (const a of visible) {
-        if (on) next[a.id] = { email: true, whatsapp: true }
-        else delete next[a.id]
-      }
+      for (const a of visible) next[a.id] = { email: true, whatsapp: true }
       return next
     })
   }

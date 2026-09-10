@@ -77,9 +77,13 @@ adminRouter.get(
     }>(
       `SELECT id, name, email, city, created_at, last_login_at, must_change_password,
               -- Proof the account has actually been used, for members who
-              -- signed in before last_login_at existed: you cannot finish
-              -- onboarding (course) or edit a profile without signing in.
-              (course <> '' OR updated_at > created_at) AS ever_active
+              -- signed in before last_login_at existed. Deliberately does NOT
+              -- read updated_at: system writes bump it too (re-issuing an
+              -- invite password, a password reset), which made one resend
+              -- flip a never-signed-in member to "signed in earlier" and drop
+              -- them out of every pending filter. Only member-authored
+              -- content counts, none of which can be set while logged out.
+              (course <> '' OR bio <> '' OR city <> '' OR photo IS NOT NULL) AS ever_active
          FROM users WHERE NOT is_admin ORDER BY created_at DESC LIMIT 8`,
     )
 

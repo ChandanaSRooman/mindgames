@@ -1,10 +1,13 @@
 import { Router } from 'express'
 import { query } from '../db/pool.js'
-import { asyncHandler } from '../http.js'
+import { ApiError, asyncHandler } from '../http.js'
 import { sendInviteEmails, emailEnabled, INVITE_TEMPLATE_KEY, type EmailTemplate } from '../email.js'
 import { requireAdmin, requireAuth } from '../auth/middleware.js'
 import { generatePassword, hashPassword } from '../auth/password.js'
 import { USER_COLS, type UserRow } from '../mappers.js'
+
+/** Upper bound on one send, so the request finishes inside a proxy timeout. */
+const MAX_BATCH = 100
 
 export const invitesRouter = Router()
 invitesRouter.use(requireAuth, requireAdmin)
@@ -21,6 +24,17 @@ invitesRouter.post(
   '/batch',
   asyncHandler(async (req, res) => {
     const invites: Array<{ id: string; email?: boolean; whatsapp?: boolean }> = req.body?.invites ?? []
+    // Sending is serial (bcrypt, then SMTP paced at 5/sec) and happens on the
+    // request path, so a large batch would outlive a proxy's idle timeout and
+    // leave the admin with no idea what got through. Cap it and let them send
+    // in passes — the filters make that straightforward.
+    if (invites.length > MAX_BATCH) {
+      throw new ApiError(
+        400,
+        `That's ${invites.length} recipients — send at most ${MAX_BATCH} at a time so the batch ` +
+          `completes before the request times out.`,
+      )
+    }
     const emailIds = invites.filter((i) => i.email).map((i) => i.id)
     const whatsappCount = invites.filter((i) => i.whatsapp).length
 
@@ -92,13 +106,13 @@ invitesRouter.post(
       `SELECT subject, body FROM email_templates WHERE key = $1`,
       [INVITE_TEMPLATE_KEY],
     )
-    const results = await sendInviteEmails(recipients, tpl.rows[0])
-
-    // Record the outcome on each invitee row, so the console can report who
-    // actually received their credentials — and why, when one didn't.
-    for (const r of results) {
+    // Record each outcome as it happens rather than after the loop: the
+    // accounts already exist by then, and their generated passwords only
+    // survive inside the emails just sent, so losing the delivery record to a
+    // mid-batch failure is unrecoverable.
+    const results = await sendInviteEmails(recipients, tpl.rows[0], async (r) => {
       const id = idByEmail.get(r.email.toLowerCase())
-      if (!id) continue
+      if (!id) return
       await query(
         `UPDATE invitees
             SET invited_at = now(),
@@ -110,7 +124,7 @@ invitesRouter.post(
           WHERE id = $1`,
         [id, r.status, r.error ?? null, r.sentSubject, r.sentBody],
       )
-    }
+    })
 
     const failed = results.filter((r) => r.status === 'failed')
     const emailCount = results.filter((r) => r.status !== 'failed').length

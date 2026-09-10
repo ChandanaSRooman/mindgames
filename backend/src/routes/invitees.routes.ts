@@ -31,10 +31,14 @@ inviteesRouter.get(
               (u.id IS NOT NULL)                         AS has_account,
               (u.id IS NOT NULL AND NOT u.must_change_password) AS password_changed,
               u.last_login_at,
-              -- See admin.routes.ts: onboarding or editing a profile is only
-              -- possible while signed in, so this rescues members who signed
-              -- in before last_login_at was recorded from reading as "never".
-              (u.id IS NOT NULL AND (u.course <> '' OR u.updated_at > u.created_at)) AS ever_active
+              -- See admin.routes.ts: member-authored content proves a
+              -- sign-in for accounts predating last_login_at. Must not read
+              -- updated_at — re-issuing an invite password bumps it, which
+              -- would mark the member "signed in" and hide them from the
+              -- very filters used to chase them up.
+              (u.id IS NOT NULL
+                AND (u.course <> '' OR u.bio <> '' OR u.city <> '' OR u.photo IS NOT NULL))
+                AS ever_active
          FROM invitees i
          LEFT JOIN users u ON lower(u.email) = lower(i.email)
         ORDER BY i.created_at`,

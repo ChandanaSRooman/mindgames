@@ -1,10 +1,10 @@
-import { createHash, randomBytes, randomInt } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { Router } from 'express'
 import { z } from 'zod'
 import jwt from 'jsonwebtoken'
 import { config } from '../config.js'
 import { query } from '../db/pool.js'
-import { appUrl, emailEnabled, sendEmail, sendPasswordResetEmail, sendVerificationEmail } from '../email.js'
+import { appUrl, emailEnabled, sendPasswordResetEmail, sendVerificationEmail } from '../email.js'
 import { hashPassword, verifyPassword } from '../auth/password.js'
 import { signToken } from '../auth/jwt.js'
 import { requireAuth } from '../auth/middleware.js'
@@ -85,9 +85,16 @@ function issue(userRow: UserRow & { is_admin: boolean }) {
 
 const signupStartSchema = z.object({ email: z.string().trim().email('a valid email is required') })
 
-// POST /api/auth/signup/start — first step of registration: email a 6-digit
-// code so the new member proves the address is real and correctly typed before
-// the account is created. Consumed by POST /signup.
+// POST /api/auth/signup/start — retained so the endpoint answers coherently,
+// but self-registration no longer exists: an admin's invite creates the
+// account and mails its credentials (see invites.routes.ts), so there is no
+// path where a member signs themselves up.
+//
+// This previously allowed anyone with an `invitees` row through, which let
+// someone merely imported from a CSV register before their invite was sent.
+// The admin's later invite then found an existing account, reported them as
+// already joined, and skipped them — so they never received credentials and
+// the admin had no way to tell. Rejecting outright avoids that dead end.
 authRouter.post(
   '/signup/start',
   asyncHandler(async (req, res) => {
@@ -98,52 +105,10 @@ authRouter.post(
     const exists = await query('SELECT 1 FROM users WHERE lower(email) = lower($1)', [email])
     if (exists.rowCount) throw new ApiError(409, 'An account with this email already exists')
 
-    // Invite-only: an admin's invite (see invites.routes.ts) creates the
-    // account and mails its credentials directly, so a legitimate invitee
-    // already has an account (caught above) by the time they'd reach this
-    // far. Anyone not on the invitee list — invited or not yet emailed —
-    // cannot self-register a new one this way.
-    const invited = await query('SELECT 1 FROM invitees WHERE lower(email) = lower($1)', [email])
-    if (!invited.rowCount) {
-      throw new ApiError(
-        403,
-        'Sign-ups are invite-only. Please check your email for an invitation, or contact your administrator.',
-      )
-    }
-
-    // Rate-limit: one code per minute per address.
-    const existing = await query<{ sent_at: Date }>(`SELECT sent_at FROM signup_otps WHERE email = $1`, [email])
-    if (existing.rowCount && Date.now() - new Date(existing.rows[0].sent_at).getTime() < 60_000) {
-      throw new ApiError(429, 'Please wait a minute before requesting another code.')
-    }
-
-    const code = String(randomInt(0, 1_000_000)).padStart(6, '0')
-    await query(
-      `INSERT INTO signup_otps (email, code_hash, expires_at, attempts, sent_at)
-       VALUES ($1, $2, now() + interval '10 minutes', 0, now())
-       ON CONFLICT (email) DO UPDATE
-         SET code_hash = EXCLUDED.code_hash, expires_at = EXCLUDED.expires_at, attempts = 0, sent_at = now()`,
-      [email, sha256(code)],
+    throw new ApiError(
+      403,
+      'Sign-ups are invite-only. Please check your email for an invitation, or contact your administrator.',
     )
-
-    // Fire-and-forget the email — the code is already stored, so we must NOT
-    // block the HTTP response on the SMTP round-trip (a slow/unreachable mail
-    // server would otherwise hang the whole request, freezing the UI).
-    void sendEmail(
-      email,
-      'Verify your email for Root Connect',
-      `Welcome to the Rooman Alumni Network!\n\nYour verification code is ${code}\n\n` +
-        `Enter it to finish creating your account. The code expires in 10 minutes.\n\n` +
-        `If you didn't request this, you can safely ignore this email.\n\n— The Rooman Team`,
-    ).catch((err) => console.error('signup verification email failed:', err instanceof Error ? err.message : err))
-
-    // Only surface the code in the response when there's no other way to get it:
-    // a non-production environment with SMTP unconfigured (dev/demo). Matches the
-    // devResetLink / devVerifyLink guard. Using AND (not OR) is deliberate — a
-    // staging box with real SMTP must NOT echo codes, or anyone who sees the
-    // response could verify an address they don't own.
-    const exposeCode = !emailEnabled && config.nodeEnv !== 'production'
-    res.json({ ok: true, email: maskEmail(email), simulated: !emailEnabled, ...(exposeCode ? { devCode: code } : {}) })
   }),
 )
 
@@ -409,6 +374,15 @@ authRouter.post(
 authRouter.post(
   '/social/:provider',
   asyncHandler(async (req, res) => {
+    // Invite-only: this route upserts a demo account and returns a session to
+    // an unauthenticated caller, so leaving it reachable defeats the gate on
+    // /signup/start and /auth/google. Off unless ALLOW_DEMO_LOGIN is set.
+    if (!config.allowDemoLogin) {
+      throw new ApiError(
+        403,
+        'Sign-ups are invite-only. Please check your email for an invitation, or contact your administrator.',
+      )
+    }
     const provider = req.params.provider
     if (provider !== 'google' && provider !== 'linkedin') {
       throw new ApiError(400, 'unsupported provider')

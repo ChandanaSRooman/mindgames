@@ -33,6 +33,14 @@ export const config = {
     ? process.env.DATABASE_SSL === 'true'
     : isProd,
 
+  // The simulated social login (POST /auth/social/:provider) hands out a real
+  // session for a fixed demo account with no credentials at all, so it is an
+  // authentication bypass wherever it is reachable. Fail closed: it stays off
+  // unless explicitly switched on, and never turns on in production even then.
+  // NODE_ENV is not guaranteed to be set on the deployed box, so the opt-in
+  // flag — not the environment — is what keeps this shut.
+  allowDemoLogin: process.env.ALLOW_DEMO_LOGIN === 'true' && !isProd,
+
   // Auth. JWT_SECRET must be set in prod; dev gets an obvious placeholder.
   jwtSecret: isProd ? required('JWT_SECRET') : process.env.JWT_SECRET || 'dev-insecure-secret-change-me',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',

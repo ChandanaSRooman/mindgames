@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { motion, useMotionValue, useReducedMotion, useSpring, useTransform } from 'motion/react'
 import { GraduationCap, KeyRound, ShieldCheck } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { api } from '../lib/api'
 import { landingRoute } from '../lib/landingRoute'
+import { takePendingPassword } from '../lib/pendingPassword'
 import { Button } from '../components/ui'
 
 // Shown once, right after an invited member's first sign-in: the password they
@@ -52,13 +53,15 @@ function useStars(count: number): Star[] {
 
 export function SetPassword() {
   const navigate = useNavigate()
-  const location = useLocation()
   const { currentUser, notify } = useApp()
   const reduced = useReducedMotion()
 
   // The password typed on the sign-in screen a moment ago, if we got here the
-  // intended way. Never persisted — it lives only in this navigation's state.
-  const passedCurrent = (location.state as { currentPassword?: string } | null)?.currentPassword ?? ''
+  // intended way. Held in a module variable, not router state, so it is never
+  // serialised into window.history — which means a reload legitimately loses
+  // it and the `needsCurrent` fallback below takes over, as intended.
+  // useState's initialiser runs once, so the read-and-clear happens once.
+  const [passedCurrent] = useState(takePendingPassword)
   const [current, setCurrent] = useState(passedCurrent)
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')

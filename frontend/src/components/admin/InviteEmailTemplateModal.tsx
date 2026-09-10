@@ -72,10 +72,18 @@ export function InviteEmailTemplateModal({
 
   // Which required tokens the current draft has dropped — surfaced live so the
   // admin sees it while typing rather than only when Save is refused.
-  const missing = useMemo(
-    () => (tpl ? tpl.required.filter((name) => !body.includes(`{{${name}}}`)) : []),
-    [body, tpl],
-  )
+  // Probe through the same substitution the server uses, rather than a
+  // literal `includes`: the server's regex tolerates `{{ password }}`, so a
+  // literal check rejected valid bodies while telling the admin to add a
+  // token that was already there.
+  const missing = useMemo(() => {
+    if (!tpl) return []
+    const probe = render(
+      body,
+      Object.fromEntries(tpl.placeholders.map((name) => [name, `<<${name}>>`])),
+    )
+    return tpl.required.filter((name) => !probe.includes(`<<${name}>>`))
+  }, [body, tpl])
 
   /** Drops a token in at the cursor, so the legend is usable, not just documentation. */
   function insert(token: string) {

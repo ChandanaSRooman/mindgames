@@ -4,6 +4,7 @@ import { GraduationCap, Lock } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { isValidEmail } from '../lib/csv'
 import { landingRoute } from '../lib/landingRoute'
+import { setPendingPassword } from '../lib/pendingPassword'
 import { Button, Card } from '../components/ui'
 
 // Sign-in for existing members. Authenticates against the backend (JWT) via the
@@ -35,10 +36,12 @@ export function Login() {
       const user = await login(email, password)
       // Invite-created accounts are still on the password we generated and
       // mailed them — offer to replace it before anything else. The password
-      // they just typed rides along so that screen doesn't have to ask for it
-      // a second time; it never touches the URL or storage.
+      // they just typed is handed over in memory (see pendingPassword) rather
+      // than router state, which would serialise it into window.history and
+      // leave it there across reloads.
       if (user.mustChangePassword) {
-        navigate('/set-password', { replace: true, state: { currentPassword: password } })
+        setPendingPassword(password)
+        navigate('/set-password', { replace: true })
         return
       }
       navigate(landingRoute(user))

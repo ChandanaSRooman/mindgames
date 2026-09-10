@@ -117,6 +117,11 @@ export interface InviteSendResult {
 export async function sendInviteEmails(
   recipients: Array<{ name: string; email: string; password: string }>,
   template?: EmailTemplate,
+  // Called after each recipient so the caller can persist that outcome
+  // immediately. Without it, a mid-batch failure loses the delivery status of
+  // everyone already sent while their accounts exist — the worst state to
+  // recover from, since the generated passwords live only in those emails.
+  onResult?: (result: InviteSendResult) => Promise<void>,
 ): Promise<InviteSendResult[]> {
   const subject = template?.subject || INVITE_DEFAULT_SUBJECT
   const body = template?.body || INVITE_DEFAULT_BODY
@@ -141,49 +146,56 @@ export async function sendInviteEmails(
     }),
   })
 
-  if (!transport) {
-    // Simulated: log the whole thing, so a dev without SMTP can still read the
-    // generated password and click through the flow.
-    return recipients.map((r) => {
-      const real = render(r, r.password)
-      const safe = render(r, PASSWORD_REDACTED)
-      console.log(`[email simulated] to=${r.email} subject="${real.subject}"\n${real.text}`)
-      return {
-        email: r.email,
-        status: 'simulated' as const,
-        sentSubject: safe.subject,
-        sentBody: safe.text,
-      }
-    })
-  }
-
   const results: InviteSendResult[] = []
   for (const r of recipients) {
     const safe = render(r, PASSWORD_REDACTED)
-    try {
+    let result: InviteSendResult
+
+    if (!transport) {
+      // Simulated: log the whole thing, so a dev without SMTP can still read
+      // the generated password and click through the flow.
       const real = render(r, r.password)
-      await transport.sendMail({
-        from: SMTP_FROM || SMTP_USER,
-        to: r.email,
-        subject: real.subject,
-        text: real.text,
-      })
-      results.push({
+      console.log(`[email simulated] to=${r.email} subject="${real.subject}"\n${real.text}`)
+      result = {
         email: r.email,
-        status: 'sent',
+        status: 'simulated',
         sentSubject: safe.subject,
         sentBody: safe.text,
-      })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error(`Email to ${r.email} failed:`, message)
-      results.push({
-        email: r.email,
-        status: 'failed',
-        error: message.slice(0, 500),
-        sentSubject: safe.subject,
-        sentBody: safe.text,
-      })
+      }
+    } else {
+      try {
+        const real = render(r, r.password)
+        await transport.sendMail({
+          from: SMTP_FROM || SMTP_USER,
+          to: r.email,
+          subject: real.subject,
+          text: real.text,
+        })
+        result = { email: r.email, status: 'sent', sentSubject: safe.subject, sentBody: safe.text }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error(`Email to ${r.email} failed:`, message)
+        result = {
+          email: r.email,
+          status: 'failed',
+          error: message.slice(0, 500),
+          sentSubject: safe.subject,
+          sentBody: safe.text,
+        }
+      }
+    }
+
+    results.push(result)
+    // Persist before moving on, so a later failure can't lose the delivery
+    // status of recipients already sent. A throw here would cost one row's
+    // status, not the batch's, so it's logged rather than propagated.
+    if (onResult) {
+      await onResult(result).catch((err) =>
+        console.error(
+          `recording invite status for ${r.email} failed:`,
+          err instanceof Error ? err.message : err,
+        ),
+      )
     }
   }
   return results
