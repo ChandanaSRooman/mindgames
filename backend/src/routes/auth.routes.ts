@@ -1,10 +1,10 @@
-import { createHash, randomBytes, randomInt } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { Router } from 'express'
 import { z } from 'zod'
 import jwt from 'jsonwebtoken'
 import { config } from '../config.js'
 import { query } from '../db/pool.js'
-import { appUrl, emailEnabled, sendEmail, sendPasswordResetEmail, sendVerificationEmail } from '../email.js'
+import { appUrl, emailEnabled, sendPasswordResetEmail, sendVerificationEmail } from '../email.js'
 import { hashPassword, verifyPassword } from '../auth/password.js'
 import { signToken } from '../auth/jwt.js'
 import { requireAuth } from '../auth/middleware.js'
@@ -67,6 +67,16 @@ async function sendVerification(userId: string, name: string, email: string): Pr
   return link
 }
 
+/** Record that this account just signed in. Best-effort: a failure here must
+ *  never cost someone their session, so it's logged rather than thrown. */
+async function stampLogin(userId: string): Promise<void> {
+  try {
+    await query(`UPDATE users SET last_login_at = now() WHERE id = $1`, [userId])
+  } catch (err) {
+    console.error('could not stamp last_login_at:', err instanceof Error ? err.message : err)
+  }
+}
+
 // Issue a token + return the created/authenticated user.
 function issue(userRow: UserRow & { is_admin: boolean }) {
   const token = signToken({ sub: userRow.id, email: userRow.email, isAdmin: userRow.is_admin })
@@ -75,9 +85,16 @@ function issue(userRow: UserRow & { is_admin: boolean }) {
 
 const signupStartSchema = z.object({ email: z.string().trim().email('a valid email is required') })
 
-// POST /api/auth/signup/start — first step of registration: email a 6-digit
-// code so the new member proves the address is real and correctly typed before
-// the account is created. Consumed by POST /signup.
+// POST /api/auth/signup/start — retained so the endpoint answers coherently,
+// but self-registration no longer exists: an admin's invite creates the
+// account and mails its credentials (see invites.routes.ts), so there is no
+// path where a member signs themselves up.
+//
+// This previously allowed anyone with an `invitees` row through, which let
+// someone merely imported from a CSV register before their invite was sent.
+// The admin's later invite then found an existing account, reported them as
+// already joined, and skipped them — so they never received credentials and
+// the admin had no way to tell. Rejecting outright avoids that dead end.
 authRouter.post(
   '/signup/start',
   asyncHandler(async (req, res) => {
@@ -88,39 +105,10 @@ authRouter.post(
     const exists = await query('SELECT 1 FROM users WHERE lower(email) = lower($1)', [email])
     if (exists.rowCount) throw new ApiError(409, 'An account with this email already exists')
 
-    // Rate-limit: one code per minute per address.
-    const existing = await query<{ sent_at: Date }>(`SELECT sent_at FROM signup_otps WHERE email = $1`, [email])
-    if (existing.rowCount && Date.now() - new Date(existing.rows[0].sent_at).getTime() < 60_000) {
-      throw new ApiError(429, 'Please wait a minute before requesting another code.')
-    }
-
-    const code = String(randomInt(0, 1_000_000)).padStart(6, '0')
-    await query(
-      `INSERT INTO signup_otps (email, code_hash, expires_at, attempts, sent_at)
-       VALUES ($1, $2, now() + interval '10 minutes', 0, now())
-       ON CONFLICT (email) DO UPDATE
-         SET code_hash = EXCLUDED.code_hash, expires_at = EXCLUDED.expires_at, attempts = 0, sent_at = now()`,
-      [email, sha256(code)],
+    throw new ApiError(
+      403,
+      'Sign-ups are invite-only. Please check your email for an invitation, or contact your administrator.',
     )
-
-    // Fire-and-forget the email — the code is already stored, so we must NOT
-    // block the HTTP response on the SMTP round-trip (a slow/unreachable mail
-    // server would otherwise hang the whole request, freezing the UI).
-    void sendEmail(
-      email,
-      'Verify your email for Root Connect',
-      `Welcome to the Rooman Alumni Network!\n\nYour verification code is ${code}\n\n` +
-        `Enter it to finish creating your account. The code expires in 10 minutes.\n\n` +
-        `If you didn't request this, you can safely ignore this email.\n\n— The Rooman Team`,
-    ).catch((err) => console.error('signup verification email failed:', err instanceof Error ? err.message : err))
-
-    // Only surface the code in the response when there's no other way to get it:
-    // a non-production environment with SMTP unconfigured (dev/demo). Matches the
-    // devResetLink / devVerifyLink guard. Using AND (not OR) is deliberate — a
-    // staging box with real SMTP must NOT echo codes, or anyone who sees the
-    // response could verify an address they don't own.
-    const exposeCode = !emailEnabled && config.nodeEnv !== 'production'
-    res.json({ ok: true, email: maskEmail(email), simulated: !emailEnabled, ...(exposeCode ? { devCode: code } : {}) })
   }),
 )
 
@@ -242,7 +230,11 @@ authRouter.post(
     if (!userId) throw new ApiError(400, 'This reset link is invalid or has expired. Request a new one.')
 
     const passwordHash = await hashPassword(parsed.data.password)
-    await query(`UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2`, [passwordHash, userId])
+    await query(
+      `UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = now()
+       WHERE id = $2`,
+      [passwordHash, userId],
+    )
     res.json({ ok: true })
   }),
 )
@@ -300,6 +292,7 @@ authRouter.post(
     if (!row || !row.password_hash || !(await verifyPassword(password, row.password_hash))) {
       throw new ApiError(401, 'Invalid email or password')
     }
+    await stampLogin(row.id)
     res.json(issue(row))
   }),
 )
@@ -356,23 +349,22 @@ authRouter.post(
     const email = profile.email
     if (!email) throw new ApiError(401, 'Google account has no email')
     if (profile.email_verified === false) throw new ApiError(401, 'Google email is not verified')
-    const name = profile.name || email.split('@')[0]
 
-    // 3. Upsert by email: existing users just sign in; new ones get an account
-    //    with no password (they sign in via Google).
+    // 3. Existing users sign in. Invite-only: this must never create a new
+    //    account — that would let anyone with a Google account join without
+    //    ever being invited, bypassing the same rule /signup/start enforces.
     const existing = await query<UserRow & { is_admin: boolean }>(
       `SELECT ${USER_COLS} FROM users WHERE lower(email) = lower($1)`,
       [email],
     )
-    if (existing.rowCount) return res.json(issue(existing.rows[0]))
-
-    const created = await query<UserRow & { is_admin: boolean }>(
-      `INSERT INTO users (name, email, avatar, batch_year)
-       VALUES ($1, $2, $1, date_part('year', now()))
-       RETURNING ${USER_COLS}`,
-      [name, email],
-    )
-    res.status(201).json(issue(created.rows[0]))
+    if (!existing.rowCount) {
+      throw new ApiError(
+        403,
+        'Sign-ups are invite-only. Please check your email for an invitation, or contact your administrator.',
+      )
+    }
+    await stampLogin(existing.rows[0].id)
+    res.json(issue(existing.rows[0]))
   }),
 )
 
@@ -382,6 +374,15 @@ authRouter.post(
 authRouter.post(
   '/social/:provider',
   asyncHandler(async (req, res) => {
+    // Invite-only: this route upserts a demo account and returns a session to
+    // an unauthenticated caller, so leaving it reachable defeats the gate on
+    // /signup/start and /auth/google. Off unless ALLOW_DEMO_LOGIN is set.
+    if (!config.allowDemoLogin) {
+      throw new ApiError(
+        403,
+        'Sign-ups are invite-only. Please check your email for an invitation, or contact your administrator.',
+      )
+    }
     const provider = req.params.provider
     if (provider !== 'google' && provider !== 'linkedin') {
       throw new ApiError(400, 'unsupported provider')
@@ -426,10 +427,13 @@ authRouter.post(
         throw new ApiError(401, 'Current password is incorrect')
       }
     }
-    await query(`UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2`, [
-      await hashPassword(newPassword),
-      req.user!.sub,
-    ])
+    // Clearing must_change_password here is what retires the post-invite
+    // prompt — the generated password they were mailed is now replaced.
+    await query(
+      `UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = now()
+       WHERE id = $2`,
+      [await hashPassword(newPassword), req.user!.sub],
+    )
     res.json({ ok: true })
   }),
 )

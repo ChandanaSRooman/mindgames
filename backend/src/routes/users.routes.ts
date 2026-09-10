@@ -5,7 +5,7 @@ import { query } from '../db/pool.js'
 import { requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { mapOwnUser, mapUser, USER_COLS, type UserRow } from '../mappers.js'
-import { sendEmail } from '../email.js'
+import { sendEmail, sendEmailChangeRequestEmail } from '../email.js'
 
 export const usersRouter = Router()
 
@@ -354,6 +354,69 @@ usersRouter.patch(
   }),
 )
 
+// Throttle for the admin-notification mail below. Cleared on restart, which
+// is fine — it exists to stop a retry loop spamming the admin, not to hold
+// state that matters.
+const EMAIL_CHANGE_COOLDOWN_MS = 10 * 60 * 1000
+const emailChangeRequestedAt = new Map<string, number>()
+
+const emailChangeRequestSchema = z.object({
+  newEmail: z.string().trim().email('a valid email is required'),
+  reason: z.string().trim().max(500).optional(),
+})
+
+// POST /api/users/me/request-email-change — the account email is not
+// self-serve editable (it's the sign-in identity, see PATCH /me above, where
+// it's simply absent from patchSchema). This notifies the admin instead of
+// changing anything, since there is no self-serve email change in this app.
+usersRouter.post(
+  '/me/request-email-change',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = emailChangeRequestSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
+
+    const me = await query<{ name: string; email: string }>(`SELECT name, email FROM users WHERE id = $1`, [
+      req.user!.sub,
+    ])
+    if (!me.rowCount) throw new ApiError(404, 'User not found')
+
+    const newEmail = parsed.data.newEmail.toLowerCase()
+    if (newEmail === me.rows[0].email.toLowerCase()) {
+      throw new ApiError(400, 'That is already your sign-in email.')
+    }
+    // Email is the account identity and is UNIQUE, so a request the admin
+    // could never grant is worth refusing here rather than after they've
+    // tried to apply it.
+    const taken = await query('SELECT 1 FROM users WHERE lower(email) = lower($1)', [newEmail])
+    if (taken.rowCount) {
+      throw new ApiError(409, 'Another account already uses that email address.')
+    }
+
+    // One request per user per 10 minutes. In-process is enough: this app
+    // runs single-instance (see resume.routes.ts), and the point is to stop a
+    // stuck retry loop mailing the admin repeatedly, not to resist an attack.
+    const last = emailChangeRequestedAt.get(req.user!.sub)
+    if (last && Date.now() - last < EMAIL_CHANGE_COOLDOWN_MS) {
+      throw new ApiError(429, 'You have already sent a request. Please wait before sending another.')
+    }
+    emailChangeRequestedAt.set(req.user!.sub, Date.now())
+
+    // Fire-and-forget with a catch, matching the pattern used by the OTP and
+    // verification sends in this file: a slow or unreachable mail server must
+    // not hang the request, and an SMTP failure must not surface as a 500.
+    void sendEmailChangeRequestEmail(
+      req.user!.sub,
+      me.rows[0].name,
+      me.rows[0].email,
+      newEmail,
+      parsed.data.reason ?? '',
+    ).catch((err) =>
+      console.error('email-change request mail failed:', err instanceof Error ? err.message : err),
+    )
+    res.json({ ok: true })
+  }),
+)
 
 // --- Employer (work-email) verification ------------------------------------
 // A user proves they work at a company by verifying a work email with a

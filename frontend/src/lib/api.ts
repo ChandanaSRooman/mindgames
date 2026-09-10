@@ -8,6 +8,9 @@ import type {
   Company,
   CompanyDetail,
   ContactRow,
+  InviteEmailTemplate,
+  InviteStatus,
+  SentInviteEmail,
   EventAttendee,
   EventFeedbackEntry,
   JobApplicant,
@@ -150,6 +153,12 @@ export const api = {
     http<{ ok: boolean }>('/api/auth/change-password', {
       method: 'POST',
       body: JSON.stringify({ currentPassword: currentPassword || undefined, newPassword }),
+    }),
+
+  requestEmailChange: (newEmail: string, reason?: string) =>
+    http<{ ok: boolean }>('/api/users/me/request-email-change', {
+      method: 'POST',
+      body: JSON.stringify({ newEmail, reason }),
     }),
 
   // users
@@ -389,7 +398,19 @@ export const api = {
       jobApplications: number
       messages: number
       integrations: { google: boolean; smtp: boolean; ai: boolean }
-      recentMembers: Array<{ id: string; name: string; email: string; city: string; joinedAt: string }>
+      recentMembers: Array<{
+        id: string
+        name: string
+        email: string
+        city: string
+        /** When the ACCOUNT was created — an invite does this on their behalf. */
+        joinedAt: string
+        /** When they actually signed in. null = no login recorded. */
+        lastLoginAt: string | null
+        passwordChanged: boolean
+        /** Has used the account (onboarded/edited) even if no login was logged. */
+        everActive: boolean
+      }>
     }>('/api/admin/stats'),
 
   // admin: official content — pin=true announcement, pin=false quiet news update
@@ -402,16 +423,42 @@ export const api = {
   getAlumni: () => http<Alumni[]>('/api/alumni'),
   addAlumni: (row: { name: string; phone: string; email: string }) =>
     http<Alumni>('/api/alumni', { method: 'POST', body: JSON.stringify(row) }),
-  bulkAddAlumni: (rows: ContactRow[]) =>
-    http<{ added: Alumni[]; skipped: Array<{ email?: string; reason: string }> }>(
+  bulkAddAlumni: (rows: ContactRow[], batch?: string) =>
+    http<{ added: Alumni[]; skipped: Array<{ email?: string; reason: string }>; batch: string }>(
       '/api/alumni/bulk',
-      { method: 'POST', body: JSON.stringify({ rows }) },
+      { method: 'POST', body: JSON.stringify({ rows, batch }) },
     ),
   sendInvites: (invites: Array<{ id: string; email: boolean; whatsapp: boolean }>) =>
-    http<{ emailCount: number; whatsappCount: number; total: number; message: string }>(
-      '/api/invites/batch',
-      { method: 'POST', body: JSON.stringify({ invites }) },
+    http<{
+      emailCount: number
+      whatsappCount: number
+      total: number
+      // Emailing an invitee creates their account, so a batch reports how many
+      // were newly created vs. already had one.
+      accountsCreated: number
+      created: number
+      reissued: number
+      alreadyJoined: number
+      failedCount: number
+      results: Array<{ email: string; status: InviteStatus; error?: string }>
+      message: string
+    }>('/api/invites/batch', { method: 'POST', body: JSON.stringify({ invites }) }),
+
+  /** The invite email a specific person was sent (password redacted). */
+  getSentInviteEmail: (inviteeId: string) =>
+    http<SentInviteEmail>(`/api/alumni/${inviteeId}/invite-email`),
+
+  // admin: editable invite email copy
+  getInviteEmailTemplate: () => http<InviteEmailTemplate>('/api/admin/email-template/invite'),
+  saveInviteEmailTemplate: (subject: string, body: string) =>
+    http<{ ok: boolean; preview: { subject: string; body: string } }>(
+      '/api/admin/email-template/invite',
+      { method: 'PUT', body: JSON.stringify({ subject, body }) },
     ),
+  resetInviteEmailTemplate: () =>
+    http<{ ok: boolean; subject: string; body: string }>('/api/admin/email-template/invite', {
+      method: 'DELETE',
+    }),
 
   // events
   getEvents: () => http<AppEvent[]>('/api/events'),

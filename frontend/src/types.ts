@@ -278,6 +278,9 @@ export interface User {
   profileTagsVerified?: Record<ProfileTag, TagVerificationStatus>
   // Set once the user clicks the verification link emailed at signup.
   emailVerified?: boolean
+  // True on an invite-created account until the member replaces the password
+  // that was generated and emailed to them. Prompts, never blocks.
+  mustChangePassword?: boolean
   // Weekly digest email preference (Settings toggle).
   emailDigest?: boolean
   avatar: string // initials-based color seed; rendered by <Avatar>
@@ -694,6 +697,30 @@ export type StatusTag = 'Ready to work' | 'Working' | 'Can mentor' | 'Need mento
 
 export const STATUS_TAGS: StatusTag[] = ['Ready to work', 'Working', 'Can mentor', 'Need mentoring']
 
+export type InviteStatus = 'sent' | 'failed' | 'simulated'
+
+/**
+ * The invite email one recipient was sent. `exact` false means it was
+ * reconstructed from the current template because this send predates keeping
+ * a copy — the wording may differ from what actually went out.
+ *
+ * The password is always redacted: it's hashed at account creation and never
+ * stored readable, so it can't be shown back.
+ */
+export interface SentInviteEmail {
+  name: string
+  email: string
+  subject: string
+  body: string
+  exact: boolean
+  invitedAt: string | null
+  inviteStatus: InviteStatus | null
+  inviteError: string | null
+  inviteCount: number
+  inviteLink: string
+  passwordRedacted: string
+}
+
 export interface Alumni {
   id: string
   name: string
@@ -702,6 +729,48 @@ export interface Alumni {
   role: string
   batchYear: number
   statusTags: StatusTag[]
+  /** When the last invite went out; null if never invited. */
+  invitedAt: string | null
+  /** Outcome of that send. null = never attempted. */
+  inviteStatus: InviteStatus | null
+  /** Why delivery failed, when it did. */
+  inviteError: string | null
+  /** How many times an invite has been sent to this address. */
+  inviteCount: number
+  /** Which import this person arrived in. '' = predates batch tracking. */
+  batch: string
+  /** The sign-in link that was emailed (address pre-filled). */
+  inviteLink: string
+  /** Whether an account exists for this address yet. */
+  hasAccount: boolean
+  /** False while they're still using the password we generated for them. */
+  passwordChanged: boolean
+  /** When they last signed in. null = no login was recorded (which is not the
+   *  same as never — see everActive). */
+  lastLoginAt: string | null
+  /** Has demonstrably used the account, even with no login timestamp: you
+   *  can't onboard or edit a profile without signing in. Distinguishes
+   *  "signed in before we tracked it" from "genuinely never turned up". */
+  everActive: boolean
+}
+
+/**
+ * Admin-editable copy for the invite email (which carries an invited member's
+ * generated credentials). `isCustom` false means the built-in default is in
+ * force and there is nothing stored to reset.
+ */
+export interface InviteEmailTemplate {
+  subject: string
+  body: string
+  isCustom: boolean
+  updatedAt: string | null
+  defaults: { subject: string; body: string }
+  /** Substitution tokens the body understands, e.g. 'name' → {{name}}. */
+  placeholders: string[]
+  /** Of those, the ones an invite is unusable without. */
+  required: string[]
+  /** Worked example values, so the editor can preview realistic output. */
+  sample: Record<string, string>
 }
 
 export interface Experience {

@@ -62,6 +62,18 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS college TEXT NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS work_email TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS work_email_domain TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS work_verified_at TIMESTAMPTZ;
+
+-- must_change_password: TRUE on accounts created by an admin invite, whose
+-- password was generated for them and mailed in the clear (see
+-- invites.routes.ts). Cleared the first time they set their own password.
+-- Only prompts; it never blocks access, so a stuck flag can't lock anyone out.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- last_login_at: stamped on every successful sign-in. Without it the console
+-- could only INFER whether an invited member ever arrived (by whether they'd
+-- replaced their generated password), which cannot tell "never signed in"
+-- apart from "signed in and skipped the password prompt". NULL = never.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_profile_tag_check;
 ALTER TABLE users
   ADD CONSTRAINT users_profile_tag_check
@@ -198,6 +210,29 @@ CREATE TABLE IF NOT EXISTS invitees (
   invited_at  TIMESTAMPTZ,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Per-recipient outcome of the last invite send, so the console can show who
+-- actually received their credentials rather than just who was selected.
+-- invite_status: 'sent' (SMTP accepted it), 'failed' (it did not — invite_error
+-- says why), or 'simulated' (no SMTP configured; logged instead of delivered).
+-- NULL = never attempted.
+ALTER TABLE invitees ADD COLUMN IF NOT EXISTS invite_status TEXT;
+ALTER TABLE invitees ADD COLUMN IF NOT EXISTS invite_error TEXT;
+ALTER TABLE invitees ADD COLUMN IF NOT EXISTS invite_count INTEGER NOT NULL DEFAULT 0;
+
+-- A copy of the invite that actually went out, so the console can show what a
+-- recipient received rather than re-deriving it from a template that may have
+-- been edited since. The password is REDACTED in this copy — it is bcrypt'd at
+-- account creation and must never exist in readable form anywhere.
+ALTER TABLE invitees ADD COLUMN IF NOT EXISTS invite_sent_subject TEXT;
+ALTER TABLE invitees ADD COLUMN IF NOT EXISTS invite_sent_body TEXT;
+
+-- Which import an invitee arrived in. Admins load alumni in batches (one CSV
+-- per centre/course/year), and need to work through them a batch at a time —
+-- without this every upload dissolves into one undifferentiated list.
+-- NULL = added before batches were tracked.
+ALTER TABLE invitees ADD COLUMN IF NOT EXISTS batch_label TEXT;
+CREATE INDEX IF NOT EXISTS invitees_batch_label_idx ON invitees (batch_label);
 
 -- ---------------------------------------------------------------------------
 -- Direct messages (1:1). A conversation is a unique unordered pair of users,
@@ -745,3 +780,16 @@ ALTER TABLE users
 -- data URL), just with a larger cap since a 1200x400 cover photo is bigger
 -- than a 384x384 avatar.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS banner_image TEXT;
+
+-- ---------------------------------------------------------------------------
+-- email_templates: admin-editable copy for the emails this app sends, keyed
+-- by purpose ('invite'). A missing row means "use the built-in default" (see
+-- email.ts), so this table only ever holds deliberate overrides — that's what
+-- makes "reset to default" a DELETE rather than a copy of the default text.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS email_templates (
+  key        TEXT PRIMARY KEY,
+  subject    TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

@@ -18,8 +18,31 @@ export function Settings() {
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
+  // request an email change
+  const [requestingEmailChange, setRequestingEmailChange] = useState(false)
+  const [newEmail, setNewEmail] = useState('')
+  const [emailReason, setEmailReason] = useState('')
+  const [sendingEmailRequest, setSendingEmailRequest] = useState(false)
+
   const field =
     'w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]'
+
+  async function requestEmailChange(e: React.FormEvent) {
+    e.preventDefault()
+    if (!newEmail.trim()) return
+    setSendingEmailRequest(true)
+    try {
+      await api.requestEmailChange(newEmail.trim(), emailReason.trim() || undefined)
+      notify('Request sent. Your administrator will follow up by email.')
+      setRequestingEmailChange(false)
+      setNewEmail('')
+      setEmailReason('')
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Could not send the request.', 'error')
+    } finally {
+      setSendingEmailRequest(false)
+    }
+  }
 
   async function changePassword(e: React.FormEvent) {
     e.preventDefault()
@@ -64,8 +87,52 @@ export function Settings() {
           </Button>
         </div>
         <p className="mt-3 text-xs text-[#878a8c]">
-          Your email is your sign-in identity and can't be changed here.
+          Your email is your sign-in identity and can't be changed here.{' '}
+          {!requestingEmailChange && (
+            <button
+              type="button"
+              className="font-medium text-[#ff4500] hover:underline"
+              onClick={() => setRequestingEmailChange(true)}
+            >
+              Request a change
+            </button>
+          )}
         </p>
+        {requestingEmailChange && (
+          <form onSubmit={requestEmailChange} className="mt-3 flex max-w-md flex-col gap-2">
+            <input
+              className={field}
+              type="email"
+              placeholder="New email address"
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+              required
+            />
+            <input
+              className={field}
+              type="text"
+              placeholder="Reason (optional)"
+              value={emailReason}
+              onChange={(e) => setEmailReason(e.target.value)}
+            />
+            <div className="flex gap-2">
+              <Button type="submit" disabled={sendingEmailRequest}>
+                {sendingEmailRequest ? 'Sending…' : 'Send request'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setRequestingEmailChange(false)
+                  setNewEmail('')
+                  setEmailReason('')
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        )}
       </Card>
 
       {/* Change password */}

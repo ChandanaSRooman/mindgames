@@ -15,6 +15,7 @@ import { EventsMyRegistered } from './pages/events/EventsMyRegistered'
 import { EventsPast } from './pages/events/EventsPast'
 import { EventsHost } from './pages/events/EventsHost'
 import { AcceptInvite } from './pages/AcceptInvite'
+import { SetPassword } from './pages/SetPassword'
 import { Onboarding } from './pages/Onboarding'
 import { Home } from './pages/Home'
 import { NetworkLayout } from './pages/network/NetworkLayout'
@@ -78,6 +79,8 @@ export default function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/accept-invite" element={<AcceptInvite />} />
+          {/* Post-invite: replace the generated password. Skippable. */}
+          <Route path="/set-password" element={<RequireAuth><SetPassword /></RequireAuth>} />
           <Route path="/onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
           <Route
             path="/admin"
