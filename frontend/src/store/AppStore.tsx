@@ -390,16 +390,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshNetwork = useCallback(async () => {
     if (!getToken()) return
     try {
-      const [graph, notifs, allUsers] = await Promise.all([
+      // The feed is re-pulled alongside the graph, not just at bootstrap:
+      // a private member's posts become visible the moment their connection
+      // request is accepted, and without this they stayed missing until a
+      // reload even though their profile had already unlocked on this poll.
+      const [graph, notifs, allUsers, feed] = await Promise.all([
         api.getConnections(),
         api.getNotifications(),
         api.getUsers(),
+        api.getFeed(),
       ])
       setConnectionIds(graph.connectionIds)
       setSentRequestIds(graph.sentRequestIds)
       setPendingRequestIds(graph.pendingRequestIds)
       setConnectionNotes(graph.connectionNotes || {})
       setNotifications(notifs)
+      setPosts(feed)
       setUsers((prev) => {
         const me = prev.find((u) => u.id === currentUserId)
         // Keep my own row from local state (it may hold an in-flight edit).

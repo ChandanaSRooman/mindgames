@@ -736,10 +736,28 @@ function PreviewTable({
 function SettingsPanel() {
   const [integrations, setIntegrations] = useState<{ google: boolean; smtp: boolean; ai: boolean } | null>(null)
   const [editingTemplate, setEditingTemplate] = useState(false)
+  const [appUrl, setAppUrl] = useState<string | null>(null)
 
   useEffect(() => {
-    api.getAdminStats().then((s) => setIntegrations(s.integrations), () => {})
+    api.getAdminStats().then((s) => {
+      setIntegrations(s.integrations)
+      setAppUrl(s.appUrl)
+    }, () => {})
   }, [])
+
+  // This box's public IP changes whenever it stops and starts (no Elastic IP),
+  // but APP_URL in the server's .env doesn't follow — so invite emails keep
+  // pointing at the previous address and every link in them times out.
+  //
+  // Comparing APP_URL against this console's own origin does NOT detect that:
+  // it fires whenever the console is reached by a different-but-valid route
+  // (a hostname, an SSH port-forward, localhost during development), and says
+  // nothing in the case that actually matters, because an admin browsing the
+  // stale address sees the two agree. So the value is shown plainly for the
+  // admin to check against the address they expect testers to use, rather
+  // than dressed up as a verdict the app can't actually reach.
+  const consoleOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+  const appUrlDiffers = !!appUrl && !!consoleOrigin && appUrl.replace(/\/+$/, '') !== consoleOrigin
 
   return (
     <div className="space-y-6">
@@ -775,6 +793,27 @@ function SettingsPanel() {
           Goes out automatically every Monday morning to opted-in members. You can also trigger it now.
         </p>
         <DigestButton />
+      </Card>
+      <Card className="p-6">
+        <h2 className="mb-1 text-base font-bold text-[#1c1c1c]">Invite Link Address</h2>
+        <p className="mb-3 text-sm text-[#878a8c]">
+          Every invite email links to this address. It comes from <code className="rounded bg-[#f6f7f8] px-1">APP_URL</code>{' '}
+          in the server&rsquo;s <code className="rounded bg-[#f6f7f8] px-1">.env</code>.
+        </p>
+        <p className="font-mono text-sm text-[#1c1c1c]">{appUrl ?? '—'}</p>
+        <p className="mt-2 text-xs text-[#878a8c]">
+          Check this is an address your recipients can reach — if this server&rsquo;s public address
+          has changed, invite links keep pointing at the old one until <code>APP_URL</code> is
+          updated in the server&rsquo;s <code>.env</code> and the API restarted.
+          {appUrlDiffers && (
+            <>
+              {' '}You&rsquo;re currently viewing this console at{' '}
+              <span className="font-mono">{consoleOrigin}</span>, which is a different address —
+              that&rsquo;s expected if you reach it by hostname or a port-forward, but worth a look
+              if it isn&rsquo;t.
+            </>
+          )}
+        </p>
       </Card>
       <Card className="p-6">
         <h2 className="mb-1 text-base font-bold text-[#1c1c1c]">Invite Email</h2>

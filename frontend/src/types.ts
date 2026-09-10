@@ -283,6 +283,13 @@ export interface User {
   mustChangePassword?: boolean
   // Weekly digest email preference (Settings toggle).
   emailDigest?: boolean
+  /**
+   * Account privacy. When true, this member's posts and rich profile detail
+   * are visible only to their connections — their name, photo, bio, batch,
+   * course and role stay visible so they remain discoverable. Enforced
+   * server-side (posts.routes.ts / users.routes.ts), not in the client.
+   */
+  isPrivate?: boolean
   avatar: string // initials-based color seed; rendered by <Avatar>
   batchYear: number
   course: string

@@ -30,8 +30,11 @@ const transport = emailEnabled
     })
   : null
 
-// Where the deployed frontend lives; set APP_URL in .env (e.g. http://44.249.86.223).
-const APP_URL = process.env.APP_URL || 'http://localhost:5173'
+// Where the deployed frontend lives; set APP_URL in .env (e.g. http://13.206.89.213).
+// Trailing slashes are stripped: every use appends its own leading "/", so
+// "http://host/" would otherwise produce "http://host//login?email=…" in the
+// invite link — which works in a browser but looks broken in an email.
+const APP_URL = (process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '')
 
 // The invite email's default copy. The account already exists by the time
 // this is sent (see invites.routes.ts) — this carries the one-time
@@ -74,9 +77,10 @@ export const INVITE_PLACEHOLDERS = ['name', 'email', 'password', 'link'] as cons
 export const INVITE_REQUIRED_PLACEHOLDERS = ['password', 'link'] as const
 
 /**
- * The sign-in URL for an invited member. ?email= pre-fills (and locks) the
- * address on the sign-in screen, so the only thing they have to copy across
- * from the email is the password.
+ * Where an invite lands: straight at sign-in, with ?email= pre-filling and
+ * locking the address, so the only thing the recipient types is the password
+ * from the same email. No intermediate page — they already know what they've
+ * been invited to, they just clicked a link saying so.
  */
 export const inviteLinkFor = (email: string) => `${APP_URL}/login?email=${encodeURIComponent(email)}`
 

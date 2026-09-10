@@ -59,6 +59,7 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
     expertise: currentUser.expertise.join(', '),
     willingToMentor: currentUser.willingToMentor,
     interestedInStartup: currentUser.interestedInStartup,
+    isPrivate: currentUser.isPrivate ?? false,
     mentorRate: currentUser.mentorRate ? String(currentUser.mentorRate) : '',
   })
 
@@ -163,6 +164,7 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
         // the rest of their edit saveable.
         willingToMentor: offersMentorship,
         interestedInStartup: form.interestedInStartup,
+        isPrivate: form.isPrivate,
         isMentor: offersMentorship,
         ...(offersMentorship && form.mentorRate ? { mentorRate: Number(form.mentorRate) } : {}),
         // `form.willingToMentor`, NOT `offersMentorship`: the drop to false
@@ -398,6 +400,25 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
               <p className="mt-1 text-xs text-[#878a8c]">Shown on your mentor card. Leave empty for "Rate on request".</p>
             </div>
           )}
+          {/* Account privacy. Enforced server-side (posts.routes.ts and
+              users.routes.ts) — this only sets the flag. Off by default, so
+              an existing member's reach is unchanged until they choose. */}
+          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-[#edeff1] p-3 text-sm text-[#1c1c1c]">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-[#ff4500]"
+              checked={form.isPrivate}
+              onChange={(e) => set('isPrivate', e.target.checked)}
+            />
+            <span>
+              <span className="block font-semibold">Private account</span>
+              <span className="block text-xs text-[#878a8c]">
+                Only your connections can see your posts and full profile. Your name, photo, bio,
+                batch and role stay visible so people can still find you and send a request — and
+                anyone who requests you can see your full profile while you decide.
+              </span>
+            </span>
+          </label>
           <label className="flex items-center gap-2 text-sm text-[#1c1c1c]">
             <input type="checkbox" className="h-4 w-4 accent-[#ff4500]" checked={form.interestedInStartup} onChange={(e) => set('interestedInStartup', e.target.checked)} />
             Interested in StartupVarsity

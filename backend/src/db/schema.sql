@@ -74,6 +74,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL
 -- replaced their generated password), which cannot tell "never signed in"
 -- apart from "signed in and skipped the password prompt". NULL = never.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+
+-- is_private: a private member's POSTS and rich profile detail are visible
+-- only to their connections. Their card-level identity (name, photo, bio,
+-- batch, course, role) stays public so they remain discoverable — otherwise
+-- nobody could find them to send a request in the first place.
+-- Defaults FALSE so every existing account stays exactly as it is today.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_profile_tag_check;
 ALTER TABLE users
   ADD CONSTRAINT users_profile_tag_check

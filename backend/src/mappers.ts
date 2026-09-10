@@ -20,7 +20,7 @@ export const USER_COLS = `id, name, email, phone, photo, profile_tag, profile_ta
   mentor_assessment_score, mentor_assessment_provider, mentor_verified_at,
   show_email, show_phone,
   home_address, date_of_birth, salary_current, salary_expected,
-  show_address, show_age, show_salary, banner_theme, banner_image, must_change_password`
+  show_address, show_age, show_salary, banner_theme, banner_image, must_change_password, is_private`
 
 export interface UserRow {
   id: string
@@ -96,6 +96,7 @@ export interface UserRow {
   banner_theme: string
   banner_image: string | null
   must_change_password?: boolean
+  is_private?: boolean
 }
 
 /**
@@ -161,6 +162,58 @@ export function mapOwnUser(r: UserRow) {
   }
 }
 
+/**
+ * A private member as seen by someone they aren't connected to.
+ *
+ * An explicit ALLOWLIST, built field by field — not `mapUser` with fields
+ * blanked afterwards. That earlier shape was a blocklist: it let 40 of
+ * mapUser's fields through untouched, including `industry`, `roomanCenter`
+ * and `workEmailDomain`, and any field added to mapUser in future would have
+ * joined them silently. Listing what may be seen means a new field is
+ * withheld by default, which is the direction a privacy filter has to fail
+ * in.
+ *
+ * What stays visible is what makes someone findable and worth connecting to:
+ * their name, photo, bio, batch, course, role, employer, city and training
+ * domain, plus the mentor badge. Everything a connection is *for* — the rich
+ * detail, availability, intent, contact — is withheld.
+ *
+ * Fields the client requires (see the non-optional members of `User` in
+ * frontend/src/types.ts) are emitted empty rather than omitted, so the shape
+ * stays valid; optional fields are simply absent.
+ */
+export function mapLimitedUser(r: UserRow) {
+  return {
+    // --- identity: enough to recognise them in a directory or search result
+    id: r.id,
+    name: r.name,
+    photo: r.photo ?? undefined,
+    avatar: r.avatar,
+    bio: r.bio,
+    batchYear: r.batch_year,
+    course: r.course,
+    designation: r.designation,
+    company: r.company,
+    city: r.city,
+    domain: r.domain,
+    employmentType: r.employment_type,
+    connectionsCount: r.connections_count,
+    // Mentoring status is public by design — a mentee choosing whether to
+    // book is entitled to know an admin verified the credentials.
+    isMentor: r.is_mentor,
+    mentorVerified: !!r.mentor_verified_at,
+    // So the UI can explain why the rest is missing, and offer to connect.
+    isPrivate: true,
+
+    // --- withheld, but required by the client type
+    email: '',
+    expertise: [],
+    experienceYears: 0,
+    interestedInStartup: false,
+    willingToMentor: false,
+  }
+}
+
 export function mapUser(r: UserRow) {
   return {
     id: r.id,
@@ -184,6 +237,9 @@ export function mapUser(r: UserRow) {
     showAge: r.show_age,
     showSalary: r.show_salary,
     photo: r.photo ?? undefined,
+    // Whether this member restricts their posts and detail to connections.
+    // Public information: the UI needs it to show the right call to action.
+    isPrivate: !!r.is_private,
     profileTag: r.profile_tag ?? undefined,
     profileTags: r.profile_tags ?? [],
     emailVerified: !!r.email_verified_at,

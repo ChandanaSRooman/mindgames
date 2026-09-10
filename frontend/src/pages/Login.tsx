@@ -21,7 +21,14 @@ export function Login() {
   const invitedEmail = params.get('email')?.trim() ?? ''
   const fromInvite = isValidEmail(invitedEmail)
 
+  // The address is locked when it arrives in the URL, so an invited member
+  // types only their password. But ?email= is caller-supplied — anyone can
+  // craft or forward a link carrying somebody else's address — so the lock
+  // has to be escapable, or following such a link leaves a member unable to
+  // sign in as themselves without hand-editing the URL.
+  const [unlocked, setUnlocked] = useState(false)
   const [email, setEmail] = useState(fromInvite ? invitedEmail : '')
+  const emailLocked = fromInvite && !unlocked
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -74,14 +81,24 @@ export function Login() {
         </p>
 
         <form onSubmit={submit} className="mt-6 space-y-3" noValidate>
-          {fromInvite ? (
+          {emailLocked ? (
             <div>
               <div className="flex items-center gap-2 rounded-lg border border-[#edeff1] bg-[#f6f7f8] px-3 py-2.5">
                 <Lock size={14} className="shrink-0 text-[#878a8c]" />
                 <span className="truncate text-sm font-medium text-[#1c1c1c]">{email}</span>
               </div>
               <p className="mt-1.5 text-xs text-[#878a8c]">
-                This is the address your invitation was sent to and can't be changed.
+                This is the address your invitation was sent to.{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUnlocked(true)
+                    setEmail('')
+                  }}
+                  className="font-medium text-[#ff4500] hover:underline"
+                >
+                  Not you?
+                </button>
               </p>
             </div>
           ) : (
@@ -97,7 +114,7 @@ export function Login() {
             className={field}
             type="password"
             placeholder="Password"
-            autoFocus={fromInvite}
+            autoFocus={emailLocked}
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}

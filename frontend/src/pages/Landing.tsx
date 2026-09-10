@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ArrowRight,
   BadgeCheck,
@@ -362,6 +362,14 @@ function scrollToSection(e: React.MouseEvent<HTMLAnchorElement>, id: string) {
 // ---- Page -------------------------------------------------------------------
 
 export function Landing() {
+  // Invite emails link here with ?email=… (see backend/src/email.ts), so the
+  // recipient sees what they've been invited to before being asked to sign
+  // in. Carry the address through to /login, which pre-fills and locks it —
+  // otherwise landing here first would cost them the one thing the invite
+  // link was for.
+  const [inviteParams] = useSearchParams()
+  const invitedEmail = inviteParams.get('email')?.trim() ?? ''
+  const signInTo = invitedEmail ? `/login?email=${encodeURIComponent(invitedEmail)}` : '/login'
   const navigate = useNavigate()
 
   return (
@@ -400,13 +408,13 @@ export function Landing() {
           </nav>
           <div className="flex items-center gap-3">
             <Link
-              to="/login"
+              to={signInTo}
               className="inline-flex items-center py-2 text-sm font-semibold text-[#1c1c1c] transition-colors hover:text-[#ff4500]"
             >
               Sign In
             </Link>
             <button
-              onClick={() => navigate('/accept-invite')}
+              onClick={() => navigate(invitedEmail ? signInTo : '/accept-invite')}
               className="hidden rounded-full bg-[#d13a00] px-4 py-2 text-sm font-bold text-white transition-all hover:bg-[#ff4500] active:scale-95 sm:inline-flex"
             >
               Join Now
@@ -500,7 +508,7 @@ export function Landing() {
           <Reveal delay={300}>
             <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <button
-                onClick={() => navigate('/accept-invite')}
+                onClick={() => navigate(invitedEmail ? signInTo : '/accept-invite')}
                 className="inline-flex items-center gap-2 rounded-full bg-[#d13a00] px-7 py-3.5 text-base font-bold text-white shadow-lg shadow-orange-500/30 transition-all hover:-translate-y-0.5 hover:bg-[#ff4500] hover:shadow-xl hover:shadow-orange-500/30 active:scale-95"
               >
                 Accept Invite & Join Now <ArrowRight size={20} />
@@ -709,7 +717,7 @@ export function Landing() {
               {roomanStats.alumni} alumni. One invite between you and all of them.
             </p>
             <button
-              onClick={() => navigate('/accept-invite')}
+              onClick={() => navigate(invitedEmail ? signInTo : '/accept-invite')}
               className="relative mt-7 inline-flex items-center gap-2 rounded-full bg-white px-7 py-3.5 text-base font-bold text-[#c2410c] shadow-lg transition-all hover:-translate-y-0.5 hover:bg-orange-50 hover:shadow-xl active:scale-95"
             >
               Accept Invite & Join Now <ArrowRight size={20} />

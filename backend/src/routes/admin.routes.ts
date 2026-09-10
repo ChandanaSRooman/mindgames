@@ -11,6 +11,7 @@ import {
   INVITE_PLACEHOLDERS,
   INVITE_REQUIRED_PLACEHOLDERS,
   INVITE_TEMPLATE_KEY,
+  appUrl,
   inviteLinkFor,
   renderTemplate,
 } from '../email.js'
@@ -105,6 +106,11 @@ adminRouter.get(
         smtp: emailEnabled,
         ai: aiEnabled,
       },
+      // The base every invite link is built from. Surfaced so a stale value
+      // is visible in the console instead of only discovered when a tester
+      // reports a dead link: this box's public IP changes on stop/start
+      // unless an Elastic IP is attached, and APP_URL does not follow it.
+      appUrl,
       recentMembers: recent.rows.map((r) => ({
         id: r.id,
         name: r.name,

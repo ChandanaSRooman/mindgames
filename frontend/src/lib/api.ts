@@ -398,6 +398,8 @@ export const api = {
       jobApplications: number
       messages: number
       integrations: { google: boolean; smtp: boolean; ai: boolean }
+      /** Base URL invite links are built from — shown in Settings to catch drift. */
+      appUrl: string
       recentMembers: Array<{
         id: string
         name: string
