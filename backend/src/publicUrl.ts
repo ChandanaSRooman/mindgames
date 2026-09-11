@@ -57,38 +57,82 @@ export async function detectPublicIp(): Promise<string | null> {
 
 let resolved: string | null = null
 
+/** Where the resolved address came from, for logging and the admin console. */
+export type BaseUrlSource = 'configured' | 'detected' | 'fallback' | 'default'
+let source: BaseUrlSource = 'default'
+
+const DEV_DEFAULT = 'http://localhost:5173'
+
+const clean = (v: string | undefined): string => (v ?? '').trim().replace(/\/+$/, '')
+
 /**
- * The base URL for links in outgoing email.
+ * The base URL for links in outgoing email, resolved most-explicit first:
  *
- * APP_URL wins unless it is literally "auto", in which case the instance's
- * own public IP is used. Resolved once and remembered: the address cannot
- * change without the process restarting, and a restart re-resolves it.
+ *   1. APP_URL, when it names an address — a domain or load balancer must win,
+ *      since this instance's raw IP would be wrong there
+ *   2. APP_URL=auto, and the instance's own public IP from EC2 metadata
+ *   3. APP_URL_FALLBACK — the address captured at deploy time, used when
+ *      detection fails. Without it a metadata failure (endpoint disabled, hop
+ *      limit 1, no public IPv4, running in a container) would put localhost
+ *      into live reset and verification emails, and the deploy's health check
+ *      would still pass because it only ever talks to localhost itself
+ *   4. a development default
+ *
+ * Detection is attempted ONLY for the literal value "auto". An empty or unset
+ * APP_URL takes the default, so a staging box with no configuration cannot
+ * start advertising its real public IP by accident.
  */
 export async function resolveAppBaseUrl(): Promise<string> {
   if (resolved) return resolved
-  const configured = (process.env.APP_URL ?? '').trim().replace(/\/+$/, '')
+
+  const configured = clean(process.env.APP_URL)
+  const fallback = clean(process.env.APP_URL_FALLBACK)
 
   if (configured && configured.toLowerCase() !== 'auto') {
     resolved = configured
+    source = 'configured'
     return resolved
   }
 
-  const ip = await detectPublicIp()
-  if (ip) {
-    resolved = `http://${ip}`
-    console.log(`APP_URL=auto — detected public address ${resolved}`)
+  if (configured.toLowerCase() === 'auto') {
+    const ip = await detectPublicIp()
+    if (ip) {
+      resolved = `http://${ip}`
+      source = 'detected'
+      return resolved
+    }
+    // Loud, because every link in every email is now wrong-by-default until
+    // someone notices, and nothing downstream will fail to draw attention.
+    if (fallback) {
+      resolved = fallback
+      source = 'fallback'
+      console.error(
+        `APP_URL=auto but EC2 instance metadata was unreachable — using APP_URL_FALLBACK ` +
+          `(${resolved}) for email links. Detection retries on the next restart.`,
+      )
+      return resolved
+    }
+    resolved = DEV_DEFAULT
+    source = 'default'
+    console.error(
+      `APP_URL=auto but EC2 instance metadata was unreachable and APP_URL_FALLBACK is unset — ` +
+        `email links will point at ${resolved}, which is almost certainly wrong outside local ` +
+        `development. Set APP_URL to a fixed address, or APP_URL_FALLBACK as a safety net.`,
+    )
     return resolved
   }
 
-  resolved = configured && configured.toLowerCase() !== 'auto' ? configured : 'http://localhost:5173'
-  console.warn(
-    `APP_URL=auto but the instance metadata service was unreachable — falling back to ${resolved}. ` +
-      `Email links will use that address.`,
-  )
+  // Unset or empty: take the default rather than probing metadata.
+  resolved = fallback || DEV_DEFAULT
+  source = fallback ? 'fallback' : 'default'
   return resolved
 }
+
+/** Where the value in force came from. Exposed in the admin console. */
+export const baseUrlSource = (): BaseUrlSource => source
 
 /** Test seam: forget the cached value so the next call re-resolves. */
 export function resetResolvedBaseUrl(): void {
   resolved = null
+  source = 'default'
 }

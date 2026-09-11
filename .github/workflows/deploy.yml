@@ -165,7 +165,13 @@ jobs:
           set -euo pipefail
           # Unquoted heredoc: ${BACKEND_DIR}/${SERVICE} expand on the runner; the
           # \$-escaped bits run on the box.
-          ssh -F "$HOME/.ssh/config" deploy-target bash -s <<REMOTE
+          # APP_URL_VALUE is passed through the SSH command environment rather
+          # than interpolated into the script text. Interpolating placed it in
+          # two sinks at once: shell source executed under passwordless sudo,
+          # and a sed replacement, where "&" means "the whole match" — so an
+          # ordinary URL containing & would silently corrupt the .env line.
+          ssh -F "$HOME/.ssh/config" deploy-target \
+            APP_URL_VALUE="${APP_URL_VALUE}" bash -s <<REMOTE
           set -eu
           cd "${BACKEND_DIR}"
           # Keep APP_URL in step with reality. The instance has no Elastic IP,
@@ -176,13 +182,29 @@ jobs:
           # "auto" makes the API ask EC2 for its own address at startup (see
           # backend/src/publicUrl.ts), so a restart is enough to correct it.
           # Set the APP_URL repository variable to a domain to override.
-          echo "Ensuring APP_URL=${APP_URL_VALUE} in .env…"
+          #
+          # APP_URL_FALLBACK records the address observed at deploy time. If
+          # metadata is ever unreachable at startup, links fall back to that
+          # instead of localhost — the health check only ever talks to
+          # localhost, so such a failure would otherwise ship green.
+          echo "Ensuring APP_URL=\$APP_URL_VALUE in .env…"
           sudo touch .env
-          if sudo grep -q '^APP_URL=' .env; then
-            sudo sed -i "s|^APP_URL=.*|APP_URL=${APP_URL_VALUE}|" .env
+          # Rewritten rather than sed'd: no replacement-syntax metacharacters,
+          # and printf %s leaves the value exactly as supplied.
+          sudo grep -v '^APP_URL=' .env > /tmp/env.next || true
+          printf 'APP_URL=%s\n' "\$APP_URL_VALUE" >> /tmp/env.next
+          TOKEN=\$(curl -sS -m 3 -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' || true)
+          PUBIP=\$(curl -sS -m 3 -H "X-aws-ec2-metadata-token: \$TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4 || true)
+          if echo "\$PUBIP" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+\$'; then
+            echo "Recording APP_URL_FALLBACK=http://\$PUBIP"
+            grep -v '^APP_URL_FALLBACK=' /tmp/env.next > /tmp/env.next2 || true
+            printf 'APP_URL_FALLBACK=http://%s\n' "\$PUBIP" >> /tmp/env.next2
+            mv /tmp/env.next2 /tmp/env.next
           else
-            echo "APP_URL=${APP_URL_VALUE}" | sudo tee -a .env >/dev/null
+            echo "No public IPv4 from metadata; leaving APP_URL_FALLBACK unchanged."
           fi
+          sudo cp /tmp/env.next .env
+          rm -f /tmp/env.next
           echo "Installing prod deps + migrating…"
           npm ci --omit=dev --no-audit --no-fund
           npm run db:migrate:prod

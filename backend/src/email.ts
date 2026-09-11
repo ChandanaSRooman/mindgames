@@ -40,7 +40,19 @@ const transport = emailEnabled
 // a stale snapshot. Trailing slashes are stripped: every use appends its own
 // leading "/", so "http://host/" would produce "http://host//login?email=…"
 // — valid in a browser, but it reads as broken in an email.
-let APP_BASE = (process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '')
+// Seeded with a *usable* address, never the literal "auto": that value is an
+// instruction to go and look one up, not a URL, and anything sent in the
+// window before resolution completes would otherwise link to
+// "auto/reset-password?token=…". Reset tokens are single-use with a 1h TTL,
+// so a recipient who clicks a broken one cannot recover by clicking again.
+// server.ts now resolves before listening, which closes that window entirely;
+// this seed is the belt to that braces.
+const SEED = (process.env.APP_URL ?? '').trim()
+let APP_BASE = (
+  SEED && SEED.toLowerCase() !== 'auto'
+    ? SEED
+    : (process.env.APP_URL_FALLBACK || 'http://localhost:5173')
+).replace(/\/+$/, '')
 
 /** The base URL for links in outgoing email. */
 export const appBaseUrl = (): string => APP_BASE
@@ -308,6 +320,6 @@ export function sendEmailChangeRequestEmail(
   )
 }
 
-/** @deprecated read appBaseUrl() — a const snapshot goes stale once
- *  setAppBaseUrl runs. Kept only so no import breaks. */
-export const appUrl = APP_BASE
+// (A deprecated `appUrl` const lived here. It snapshotted APP_BASE at module
+// load, so under APP_URL=auto it held the string "auto" rather than a
+// stale-but-valid URL, and nothing imported it any more. Read appBaseUrl().)
