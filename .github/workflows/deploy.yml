@@ -104,6 +104,10 @@ jobs:
       AWS_REGION: ap-south-1
       INSTANCE_ID: i-097cc672e9a49a72e
       BACKEND_DIR: /opt/rooconnect
+      # Written into the box's .env on every deploy. "auto" = let the instance
+      # detect its own public address; set the APP_URL repository variable to
+      # a fixed domain (e.g. https://alumni.rooman.com) to pin it instead.
+      APP_URL_VALUE: ${{ vars.APP_URL || 'auto' }}
       FRONTEND_DIR: /var/www/rooconnect
       SERVICE: rooconnect
     steps:
@@ -164,6 +168,21 @@ jobs:
           ssh -F "$HOME/.ssh/config" deploy-target bash -s <<REMOTE
           set -eu
           cd "${BACKEND_DIR}"
+          # Keep APP_URL in step with reality. The instance has no Elastic IP,
+          # so its public address changes on every stop/start, and .env is a
+          # file nothing rewrites — twice now every outgoing email kept
+          # pointing at the previous address until someone edited it by hand.
+          #
+          # "auto" makes the API ask EC2 for its own address at startup (see
+          # backend/src/publicUrl.ts), so a restart is enough to correct it.
+          # Set the APP_URL repository variable to a domain to override.
+          echo "Ensuring APP_URL=${APP_URL_VALUE} in .env…"
+          sudo touch .env
+          if sudo grep -q '^APP_URL=' .env; then
+            sudo sed -i "s|^APP_URL=.*|APP_URL=${APP_URL_VALUE}|" .env
+          else
+            echo "APP_URL=${APP_URL_VALUE}" | sudo tee -a .env >/dev/null
+          fi
           echo "Installing prod deps + migrating…"
           npm ci --omit=dev --no-audit --no-fund
           npm run db:migrate:prod

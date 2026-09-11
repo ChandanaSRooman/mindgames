@@ -30,11 +30,25 @@ const transport = emailEnabled
     })
   : null
 
-// Where the deployed frontend lives; set APP_URL in .env (e.g. http://13.206.89.213).
-// Trailing slashes are stripped: every use appends its own leading "/", so
-// "http://host/" would otherwise produce "http://host//login?email=…" in the
-// invite link — which works in a browser but looks broken in an email.
-const APP_URL = (process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '')
+// Where the deployed frontend lives. Seeded from APP_URL, then replaced at
+// startup by setAppBaseUrl once resolveAppBaseUrl has run — which is what
+// allows APP_URL=auto to mean "ask EC2 for this instance's own address"
+// instead of naming an address that goes stale on every stop/start.
+//
+// Mutable rather than a const because the resolved value arrives after this
+// module loads; everything reads it through appBaseUrl() so nobody captures
+// a stale snapshot. Trailing slashes are stripped: every use appends its own
+// leading "/", so "http://host/" would produce "http://host//login?email=…"
+// — valid in a browser, but it reads as broken in an email.
+let APP_BASE = (process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '')
+
+/** The base URL for links in outgoing email. */
+export const appBaseUrl = (): string => APP_BASE
+
+/** Called once at startup with the resolved address (see publicUrl.ts). */
+export function setAppBaseUrl(url: string): void {
+  APP_BASE = url.replace(/\/+$/, '')
+}
 
 // The invite email's default copy. The account already exists by the time
 // this is sent (see invites.routes.ts) — this carries the one-time
@@ -83,7 +97,7 @@ export const INVITE_REQUIRED_PLACEHOLDERS = ['password', 'link'] as const
  * been invited to, they just clicked a link saying so.
  */
 export const inviteLinkFor = (email: string, baseUrl?: string) =>
-  `${(baseUrl || APP_URL).replace(/\/+$/, '')}/login?email=${encodeURIComponent(email)}`
+  `${(baseUrl || appBaseUrl()).replace(/\/+$/, '')}/login?email=${encodeURIComponent(email)}`
 
 /**
  * The address the caller reached this server on, for building invite links.
@@ -294,4 +308,6 @@ export function sendEmailChangeRequestEmail(
   )
 }
 
-export const appUrl = APP_URL
+/** @deprecated read appBaseUrl() — a const snapshot goes stale once
+ *  setAppBaseUrl runs. Kept only so no import breaks. */
+export const appUrl = APP_BASE

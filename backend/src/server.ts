@@ -22,6 +22,8 @@ import { sseHandler } from './realtime.js'
 import { aiRouter } from './routes/ai.routes.js'
 import { reportsRouter } from './routes/reports.routes.js'
 import { companiesRouter } from './routes/companies.routes.js'
+import { setAppBaseUrl } from './email.js'
+import { resolveAppBaseUrl } from './publicUrl.js'
 
 const app = express()
 app.use(cors())
@@ -70,6 +72,23 @@ app.use(errorHandler)
 
 startDigestScheduler()
 startEventReminderScheduler()
+
+// Work out the address to put in outgoing email links before anything can
+// send one. With APP_URL=auto this asks EC2 for the instance's own public
+// address, so a stop/start that changes the IP fixes itself on restart
+// instead of silently mailing links to the previous address. Off EC2 the
+// metadata service is unroutable and this falls through in well under a
+// second (see publicUrl.ts), so local startup is unaffected.
+void resolveAppBaseUrl()
+  .then((base) => {
+    setAppBaseUrl(base)
+    console.log(`Email links will use ${base}`)
+  })
+  .catch((err) => {
+    // Never fatal: a wrong address in an email is recoverable, an API that
+    // refuses to boot is not.
+    console.error('could not resolve the public base URL:', err instanceof Error ? err.message : err)
+  })
 
 app.listen(config.port, () => {
   console.log(`Rooman Alumni API listening on http://localhost:${config.port}`)
