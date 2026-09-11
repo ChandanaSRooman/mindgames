@@ -82,7 +82,37 @@ export const INVITE_REQUIRED_PLACEHOLDERS = ['password', 'link'] as const
  * from the same email. No intermediate page — they already know what they've
  * been invited to, they just clicked a link saying so.
  */
-export const inviteLinkFor = (email: string) => `${APP_URL}/login?email=${encodeURIComponent(email)}`
+export const inviteLinkFor = (email: string, baseUrl?: string) =>
+  `${(baseUrl || APP_URL).replace(/\/+$/, '')}/login?email=${encodeURIComponent(email)}`
+
+/**
+ * The address the caller reached this server on, for building invite links.
+ *
+ * APP_URL goes stale the moment the box's public IP changes (it has, twice),
+ * and every invite sent after that carries a link that times out. The admin
+ * console is by definition being served from an address that works, so using
+ * it removes the failure mode entirely.
+ *
+ * Deliberately limited to invite sends, which are admin-authenticated. The
+ * Host header is caller-controlled, and letting it into a PUBLIC email — a
+ * password reset above all — is a known attack: an attacker triggers a reset
+ * for someone else's account with a forged Host and the emailed link points
+ * at their own server. Those paths keep APP_URL.
+ */
+export function originOf(req: { protocol: string; get(name: string): string | undefined }): string | undefined {
+  const host = req.get('host')
+  if (!host) return undefined
+  // Strip anything that isn't a hostname[:port] — a header carrying a path,
+  // a scheme or whitespace is malformed, and not something to interpolate.
+  if (!/^[A-Za-z0-9.\-]+(:\d+)?$/.test(host)) return undefined
+  // A loopback host means the request reached the API directly rather than
+  // through the proxy that serves the console — either a local dev call or a
+  // reverse proxy not forwarding Host. Either way the recipient cannot use
+  // it, so fall back to APP_URL: stale is bad, but a link to the recipient's
+  // own machine is worse and harder to diagnose.
+  if (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(host)) return undefined
+  return `${req.protocol}://${host}`
+}
 
 /** Substitutes {{name}}-style placeholders. Unknown ones are left untouched. */
 export function renderTemplate(template: string, vars: Record<string, string>): string {
@@ -126,6 +156,8 @@ export async function sendInviteEmails(
   // everyone already sent while their accounts exist — the worst state to
   // recover from, since the generated passwords live only in those emails.
   onResult?: (result: InviteSendResult) => Promise<void>,
+  /** Base URL for the sign-in link; falls back to APP_URL. See originOf. */
+  baseUrl?: string,
 ): Promise<InviteSendResult[]> {
   const subject = template?.subject || INVITE_DEFAULT_SUBJECT
   const body = template?.body || INVITE_DEFAULT_BODY
@@ -140,13 +172,13 @@ export async function sendInviteEmails(
       name: r.name,
       email: r.email,
       password,
-      link: inviteLinkFor(r.email),
+      link: inviteLinkFor(r.email, baseUrl),
     }),
     text: renderTemplate(body, {
       name: r.name,
       email: r.email,
       password,
-      link: inviteLinkFor(r.email),
+      link: inviteLinkFor(r.email, baseUrl),
     }),
   })
 

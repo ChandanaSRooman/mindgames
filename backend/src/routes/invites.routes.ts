@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { query } from '../db/pool.js'
 import { ApiError, asyncHandler } from '../http.js'
-import { sendInviteEmails, emailEnabled, INVITE_TEMPLATE_KEY, type EmailTemplate } from '../email.js'
+import { sendInviteEmails, emailEnabled, originOf, INVITE_TEMPLATE_KEY, type EmailTemplate } from '../email.js'
 import { requireAdmin, requireAuth } from '../auth/middleware.js'
 import { generatePassword, hashPassword } from '../auth/password.js'
 import { USER_COLS, type UserRow } from '../mappers.js'
@@ -110,6 +110,9 @@ invitesRouter.post(
     // accounts already exist by then, and their generated passwords only
     // survive inside the emails just sent, so losing the delivery record to a
     // mid-batch failure is unrecoverable.
+    // Build the sign-in link from the address this admin reached the console
+    // on, so a stale APP_URL can't send everyone a dead link (see originOf).
+    const baseUrl = originOf(req)
     const results = await sendInviteEmails(recipients, tpl.rows[0], async (r) => {
       const id = idByEmail.get(r.email.toLowerCase())
       if (!id) return
@@ -124,7 +127,7 @@ invitesRouter.post(
           WHERE id = $1`,
         [id, r.status, r.error ?? null, r.sentSubject, r.sentBody],
       )
-    })
+    }, baseUrl)
 
     const failed = results.filter((r) => r.status === 'failed')
     const emailCount = results.filter((r) => r.status !== 'failed').length
