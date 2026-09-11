@@ -39,6 +39,10 @@ const POST_SELECT = `
 //   - the viewer is the author
 //   - the viewer and author have an accepted connection
 //   - it's pinned — official Rooman announcements reach everyone
+//   - it's an update on an event the viewer has RSVP'd to. Attending is its
+//     own relationship: a venue change has to reach the people who signed up
+//     regardless of whether the host later made their account private, and
+//     without this the notification would link to a post they can't open.
 //
 // $1 is the viewer (null when signed out, which then sees public accounts'
 // posts only, exactly as before for every account that hasn't opted in).
@@ -51,7 +55,10 @@ const VISIBLE_TO_VIEWER = `
            WHERE c.status = 'accepted'
              AND ((c.requester_id = $1 AND c.addressee_id = p.author_id)
                OR (c.addressee_id = $1 AND c.requester_id = p.author_id))
-        )`
+        )
+     OR (p.event_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM event_rsvps r WHERE r.event_id = p.event_id AND r.user_id = $1
+        ))`
 
 // GET /api/posts — full feed, pinned first then newest. Auth optional (drives
 // likedByMe/saved flags when present).
@@ -178,10 +185,14 @@ postsRouter.post(
 
     // A private author's post is only visible to their connections, so a
     // notification quoting it must reach the same people — otherwise it
-    // previews content the recipient's own feed deliberately filters out,
-    // and links them to a post they can't open. Both fan-outs below narrow
-    // to connections when the author is private; for a public author the
-    // clause is a no-op and the audience is unchanged.
+    // previews content the recipient's own feed filters out and links to a
+    // post they can't open.
+    //
+    // This applies to the Hiring fan-out, whose recipients are same-domain
+    // members with no relationship to the author. It must NOT be applied to
+    // event updates: RSVP is itself the relationship, the feed grants
+    // attendees sight of the post above, and gating on the author's flag
+    // stopped a venue change reaching people who had signed up.
     const CONNECTED_IF_PRIVATE = `
       AND (
         NOT EXISTS (SELECT 1 FROM users au WHERE au.id = $2 AND au.is_private)
@@ -196,10 +207,7 @@ postsRouter.post(
     // Event update: let RSVP'd attendees know, without paging the author themself.
     if (event) {
       const attendees = await query<{ user_id: string }>(
-        `SELECT user_id FROM (
-           SELECT user_id AS recipient_id, user_id FROM event_rsvps
-            WHERE event_id = $1 AND user_id <> $2
-         ) r WHERE TRUE ${CONNECTED_IF_PRIVATE}`,
+        `SELECT user_id FROM event_rsvps WHERE event_id = $1 AND user_id <> $2`,
         [p.eventId, req.user!.sub],
       )
       for (const a of attendees.rows) {

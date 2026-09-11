@@ -199,9 +199,14 @@ export function mapLimitedUser(r: UserRow) {
     employmentType: r.employment_type,
     connectionsCount: r.connections_count,
     // Mentoring status is public by design — a mentee choosing whether to
-    // book is entitled to know an admin verified the credentials.
+    // book is entitled to know an admin verified the credentials. The rate
+    // and session count travel with it: they are what a mentee decides on,
+    // and keeping isMentor without them rendered a private mentor as the
+    // literal "₹/hr ·  sessions" wherever those fields are printed.
     isMentor: r.is_mentor,
     mentorVerified: !!r.mentor_verified_at,
+    mentorRate: r.mentor_rate ?? undefined,
+    sessionsConducted: r.sessions_conducted ?? undefined,
     // So the UI can explain why the rest is missing, and offer to connect.
     isPrivate: true,
 

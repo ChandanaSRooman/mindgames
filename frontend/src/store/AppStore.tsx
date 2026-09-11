@@ -394,23 +394,52 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // a private member's posts become visible the moment their connection
       // request is accepted, and without this they stayed missing until a
       // reload even though their profile had already unlocked on this poll.
-      const [graph, notifs, allUsers, feed] = await Promise.all([
+      //
+      // allSettled, not Promise.all — for the same reason bootstrap uses it.
+      // This runs on a 30s timer, and one failing call (the feed is the
+      // largest and slowest) must not take the connection graph,
+      // notifications, the directory and refreshThreads down with it.
+      const startedAt = Date.now()
+      const [graphR, notifsR, allUsersR, feedR] = await Promise.allSettled([
         api.getConnections(),
         api.getNotifications(),
         api.getUsers(),
         api.getFeed(),
       ])
-      setConnectionIds(graph.connectionIds)
-      setSentRequestIds(graph.sentRequestIds)
-      setPendingRequestIds(graph.pendingRequestIds)
-      setConnectionNotes(graph.connectionNotes || {})
-      setNotifications(notifs)
-      setPosts(feed)
-      setUsers((prev) => {
-        const me = prev.find((u) => u.id === currentUserId)
-        // Keep my own row from local state (it may hold an in-flight edit).
-        return allUsers.map((u) => (u.id === currentUserId && me ? me : u))
-      })
+
+      if (graphR.status === 'fulfilled') {
+        const graph = graphR.value
+        setConnectionIds(graph.connectionIds)
+        setSentRequestIds(graph.sentRequestIds)
+        setPendingRequestIds(graph.pendingRequestIds)
+        setConnectionNotes(graph.connectionNotes || {})
+      }
+      if (notifsR.status === 'fulfilled') setNotifications(notifsR.value)
+      if (feedR.status === 'fulfilled') {
+        const feed = feedR.value
+        setPosts((prev) => {
+          // Replacing the array wholesale drops anything published while
+          // this fetch was already in flight: the snapshot predates the new
+          // post, so the "Your post is live" toast fired and the post then
+          // vanished until the next poll. Carry those forward.
+          const incoming = new Set(feed.map((p) => p.id))
+          const publishedSinceFetch = prev.filter(
+            (p) => !incoming.has(p.id) && +new Date(p.createdAt) >= startedAt,
+          )
+          return [...publishedSinceFetch, ...feed]
+        })
+      }
+      if (allUsersR.status === 'fulfilled') {
+        const allUsers = allUsersR.value
+        setUsers((prev) => {
+          const me = prev.find((u) => u.id === currentUserId)
+          // Keep my own row from local state (it may hold an in-flight edit).
+          return allUsers.map((u) => (u.id === currentUserId && me ? me : u))
+        })
+      }
+      // Outside the guard on purpose: an early return here would make the
+      // directory's failure stop chat updating, which is the very coupling
+      // allSettled was introduced to break.
       await refreshThreads() // incoming chat messages + unread badge
     } catch {
       /* transient network failure — next poll retries */
