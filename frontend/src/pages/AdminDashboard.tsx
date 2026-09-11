@@ -56,9 +56,20 @@ export function AdminDashboard() {
       setAlumni((prev) => [...added, ...prev])
       setPreview([])
       setPreviewBatch('')
+      // The server says WHY each row was skipped — already in the directory,
+      // not a valid email, no name. Reporting only a count left the admin to
+      // guess, and "skipped 4" reads like a failure rather than four rows
+      // that were already there.
+      const why = skipped.reduce<Record<string, number>>((acc, s) => {
+        acc[s.reason] = (acc[s.reason] ?? 0) + 1
+        return acc
+      }, {})
+      const detail = Object.entries(why)
+        .map(([reason, n]) => `${n} ${reason}`)
+        .join(', ')
       notify(
-        `Imported ${added.length} alumni into "${batch}"${skipped.length ? `, skipped ${skipped.length}` : ''}.`,
-        'success',
+        `Imported ${added.length} into "${batch}"${detail ? ` · skipped ${skipped.length}: ${detail}` : ''}.`,
+        skipped.length && !added.length ? 'error' : 'success',
       )
     } catch (e) {
       notify(e instanceof Error ? e.message : 'Import failed', 'error')

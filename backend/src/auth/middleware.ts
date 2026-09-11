@@ -42,7 +42,15 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 /** Rejects unless the authenticated user is an admin. */
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   if (!req.user?.isAdmin) {
-    res.status(403).json({ error: 'Admin access required' })
+    // Name the account, because this is otherwise indistinguishable from the
+    // real errors an admin action can return — someone signed in on a normal
+    // member account sees every add, import and invite fail with the same
+    // opaque line and no clue that the account, not the input, is the problem.
+    res.status(403).json({
+      error:
+        `This action needs an admin account. You're signed in as ${req.user?.email ?? 'an unknown user'}, ` +
+        `which doesn't have admin access.`,
+    })
     return
   }
   next()

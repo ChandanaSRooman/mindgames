@@ -56,6 +56,9 @@ const addSchema = z.object({
 /** Batch label for people typed in one at a time rather than imported. */
 const MANUAL_BATCH = 'Added individually'
 
+/** Same shape the single-add route validates with, applied per CSV row. */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 inviteesRouter.post(
   '/',
   asyncHandler(async (req, res) => {
@@ -88,12 +91,19 @@ inviteesRouter.post(
     const skipped: Array<{ email?: string; reason: string }> = []
     for (const row of rows) {
       if (!row.name || !row.email) {
-        skipped.push({ email: row.email, reason: 'missing name or email' })
+        skipped.push({
+          email: row.email,
+          reason: !row.email ? 'no email address' : 'no name',
+        })
+        continue
+      }
+      if (!EMAIL_RE.test(row.email)) {
+        skipped.push({ email: row.email, reason: 'not a valid email address' })
         continue
       }
       const dup = await query('SELECT 1 FROM invitees WHERE lower(email) = lower($1)', [row.email])
       if (dup.rowCount) {
-        skipped.push({ email: row.email, reason: 'duplicate email' })
+        skipped.push({ email: row.email, reason: 'already in the directory' })
         continue
       }
       const result = await query<InviteeRow>(
