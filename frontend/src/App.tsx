@@ -26,6 +26,7 @@ import { NetworkMyNetwork } from './pages/network/NetworkMyNetwork'
 import { Jobs } from './pages/Jobs'
 import { Companies } from './pages/Companies'
 import { CompanyPage } from './pages/CompanyPage'
+import { CompanyRoadmaps } from './pages/CompanyRoadmaps'
 import { Mentorship } from './pages/Mentorship'
 import { StartupVarsity } from './pages/StartupVarsity'
 import { News } from './pages/News'
@@ -121,6 +122,7 @@ export default function App() {
             <Route path="/jobs" element={<Jobs />} />
             <Route path="/companies" element={<Companies />} />
             <Route path="/companies/:id" element={<CompanyPage />} />
+            <Route path="/companies/:id/roadmaps" element={<CompanyRoadmaps />} />
             <Route path="/mentorship" element={<Mentorship />} />
             <Route path="/startupvarsity" element={<StartupVarsity />} />
             <Route path="/news" element={<News />} />
