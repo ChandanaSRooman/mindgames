@@ -4,7 +4,7 @@ import { z } from 'zod'
 import jwt from 'jsonwebtoken'
 import { config } from '../config.js'
 import { query } from '../db/pool.js'
-import { appUrl, emailEnabled, sendPasswordResetEmail, sendVerificationEmail } from '../email.js'
+import { appBaseUrl, emailEnabled, sendPasswordResetEmail, sendVerificationEmail } from '../email.js'
 import { hashPassword, verifyPassword } from '../auth/password.js'
 import { signToken } from '../auth/jwt.js'
 import { requireAuth } from '../auth/middleware.js'
@@ -60,7 +60,7 @@ async function consumeAuthToken(raw: string, purpose: 'reset' | 'verify'): Promi
 /** Email a verification link; fire-and-forget from signup. */
 async function sendVerification(userId: string, name: string, email: string): Promise<string> {
   const raw = await createAuthToken(userId, 'verify', 7 * 24 * 60 * 60 * 1000)
-  const link = `${appUrl}/verify-email?token=${raw}`
+  const link = `${appBaseUrl()}/verify-email?token=${raw}`
   void sendVerificationEmail(email, name, link).catch((err) =>
     console.error('verification email failed:', err instanceof Error ? err.message : err),
   )
@@ -204,7 +204,7 @@ authRouter.post(
     let devResetLink: string | undefined
     if (user.rowCount) {
       const raw = await createAuthToken(user.rows[0].id, 'reset', 60 * 60 * 1000)
-      const link = `${appUrl}/reset-password?token=${raw}`
+      const link = `${appBaseUrl()}/reset-password?token=${raw}`
       await sendPasswordResetEmail(user.rows[0].email, user.rows[0].name, link)
       // SMTP unconfigured (dev/demo): surface the link so the flow stays usable.
       if (!emailEnabled && config.nodeEnv !== 'production') devResetLink = link

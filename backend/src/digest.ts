@@ -1,5 +1,5 @@
 import { query } from './db/pool.js'
-import { appUrl, emailEnabled, sendEmail } from './email.js'
+import { appBaseUrl, emailEnabled, sendEmail } from './email.js'
 
 const DIGEST_KEY = 'digest_last_sent_at'
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000
@@ -63,7 +63,7 @@ async function buildDigest(): Promise<string> {
     lines.push(`${newMembers.rows[0].count} new member${newMembers.rows[0].count === 1 ? '' : 's'} joined the network this week.`)
     lines.push('')
   }
-  lines.push(`Catch up: ${appUrl}/home`)
+  lines.push(`Catch up: ${appBaseUrl()}/home`)
   lines.push('')
   lines.push('— The Rooman Alumni Network')
   lines.push('(You can turn this digest off under Settings.)')
