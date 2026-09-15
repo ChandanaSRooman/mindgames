@@ -422,6 +422,48 @@ export function mapCompany(r: CompanyRow) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Company signals: what a company "looks like", aggregated from the Rooman
+// alumni already there plus the Hiring posts that name it.
+//
+// These are facts about the company side only — nothing here knows who is
+// asking. The viewer-specific part (how well YOU match) is scored in the
+// frontend's lib/companyMatch.ts, next to the existing person-to-person
+// scorer in lib/matching.ts, so both live in one place and share a vocabulary.
+// ---------------------------------------------------------------------------
+export interface CompanySignalsRow {
+  top_skills: { skill: string; holders: number }[] | null
+  top_certifications: { name: string; holders: number }[] | null
+  cities: { city: string; count: number }[] | null
+  domains: { domain: string; count: number }[] | null
+  hiring_roles: { role: string; count: number }[] | null
+  /** Median years of experience among alumni there; null when nobody has said. */
+  median_experience: number | null
+  referral_open: number
+  mentor_count: number
+  roadmap_count: number
+  /** Alumni there the viewer is already connected to — the network signal. */
+  connected_alumni: number
+  /** How many alumni these aggregates were computed from — drives confidence. */
+  sample_size: number
+}
+
+export function mapCompanySignals(r: CompanySignalsRow) {
+  return {
+    topSkills: r.top_skills ?? [],
+    topCertifications: r.top_certifications ?? [],
+    cities: r.cities ?? [],
+    domains: r.domains ?? [],
+    hiringRoles: r.hiring_roles ?? [],
+    medianExperience: r.median_experience ?? undefined,
+    referralOpen: r.referral_open,
+    mentorCount: r.mentor_count,
+    roadmapCount: r.roadmap_count,
+    connectedAlumni: r.connected_alumni,
+    sampleSize: r.sample_size,
+  }
+}
+
 export interface CompanyAlumnusRow {
   id: string
   name: string
@@ -441,6 +483,115 @@ export function mapCompanyAlumnus(r: CompanyAlumnusRow) {
     location: r.location,
     journey: r.journey,
     mutualConnections: r.mutual_connections,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Company roadmap: one alumnus's actual route into a company.
+//
+// Assembled from data the member already maintains — their experience
+// timeline, course, batch and certifications — plus the advice they wrote if
+// they answered a "share how you got in" ask. Nothing here is generated or
+// guessed: every step is something a real person entered about themselves.
+// ---------------------------------------------------------------------------
+
+/**
+ * First 4-digit year in a free-text period like "2019 — 2022" or
+ * "Jun 2021 - Present". Returns null when there is no year to find, which
+ * sorts those entries to the end rather than to 1970.
+ */
+function startYearOf(period: unknown): number | null {
+  if (typeof period !== 'string') return null
+  const m = period.match(/\b(19|20)\d{2}\b/)
+  return m ? Number(m[0]) : null
+}
+
+interface RoadmapStep {
+  role: string
+  company: string
+  period: string
+  summary: string
+  /** True for the stop at the company whose page this roadmap is shown on. */
+  atThisCompany: boolean
+}
+
+export interface CompanyRoadmapRow {
+  id: string
+  name: string
+  photo: string | null
+  designation: string
+  city: string
+  course: string
+  batch_year: number
+  experience_years: number
+  expertise: string[]
+  experience: unknown
+  certifications: unknown
+  is_mentor: boolean
+  mentor_topics: string[]
+  open_to_referrals: boolean
+  mutual_connections: number
+  // Left-joined from company_roadmap_contributions — null when this alumnus
+  // has not (yet) written anything on top of their timeline.
+  contrib_role: string | null
+  contrib_headline: string | null
+  contrib_stages: unknown
+  contrib_advice: string | null
+  contrib_updated_at: Date | string | null
+}
+
+export function mapCompanyRoadmap(r: CompanyRoadmapRow, companyName: string) {
+  const here = companyName.trim().toLowerCase()
+  const steps: RoadmapStep[] = arr(r.experience)
+    .map((e) => (e && typeof e === 'object' ? (e as Record<string, unknown>) : {}))
+    .map((e) => ({
+      role: String(e.role ?? ''),
+      company: String(e.company ?? ''),
+      period: String(e.period ?? ''),
+      summary: String(e.summary ?? ''),
+      atThisCompany: String(e.company ?? '').trim().toLowerCase() === here,
+    }))
+    // Oldest first: a roadmap is read from where they started, not from where
+    // they are now. Entries with no parseable year keep their relative order
+    // at the end rather than jumping to the front.
+    .sort((a, b) => {
+      const ay = startYearOf(a.period)
+      const by = startYearOf(b.period)
+      if (ay === null && by === null) return 0
+      if (ay === null) return 1
+      if (by === null) return -1
+      return ay - by
+    })
+
+  return {
+    userId: r.id,
+    name: r.name,
+    photo: r.photo ?? undefined,
+    currentRole: r.designation,
+    city: r.city,
+    course: r.course,
+    batchYear: r.batch_year,
+    experienceYears: r.experience_years,
+    skills: r.expertise ?? [],
+    steps,
+    certifications: arr(r.certifications),
+    isMentor: r.is_mentor,
+    mentorTopics: r.mentor_topics ?? [],
+    openToReferrals: r.open_to_referrals,
+    mutualConnections: r.mutual_connections,
+    // The written part. `contributed` is what the UI uses to separate "shared
+    // their advice" from "timeline only" — a contribution row with empty text
+    // should not earn the badge, so it is derived from content, not existence.
+    contributed: !!(r.contrib_headline || r.contrib_advice || arr(r.contrib_stages).length),
+    roleGoal: r.contrib_role || r.designation,
+    headline: r.contrib_headline ?? '',
+    stages: arr(r.contrib_stages),
+    advice: r.contrib_advice ?? '',
+    // When they last wrote it — drives the "3 days ago" line on the roadmap
+    // feed. Undefined for a derived-only timeline, which has no such moment.
+    updatedAt: r.contrib_updated_at
+      ? new Date(r.contrib_updated_at).toISOString()
+      : undefined,
   }
 }
 
