@@ -22,6 +22,8 @@ import { sseHandler } from './realtime.js'
 import { aiRouter } from './routes/ai.routes.js'
 import { reportsRouter } from './routes/reports.routes.js'
 import { companiesRouter } from './routes/companies.routes.js'
+import { setAppBaseUrl } from './email.js'
+import { baseUrlSource, resolveAppBaseUrl } from './publicUrl.js'
 
 const app = express()
 app.use(cors())
@@ -71,6 +73,32 @@ app.use(errorHandler)
 startDigestScheduler()
 startEventReminderScheduler()
 
-app.listen(config.port, () => {
-  console.log(`Rooman Alumni API listening on http://localhost:${config.port}`)
-})
+// Resolve the address for email links BEFORE accepting requests. Awaiting it
+// is what makes that guarantee true: fire-and-forget left a window in which a
+// password reset could be sent with an unresolved base, and reset tokens are
+// single-use, so a broken link in that window is not recoverable by retrying.
+//
+// With APP_URL=auto this asks EC2 for the instance's own public address, so a
+// stop/start that changes the IP corrects itself on restart. Off EC2 the
+// metadata endpoint is unroutable and the attempt abandons in ~35ms (see
+// publicUrl.ts), so this delays local startup imperceptibly.
+async function start(): Promise<void> {
+  try {
+    const base = await resolveAppBaseUrl()
+    setAppBaseUrl(base)
+    console.log(`Email links will use ${base} (${baseUrlSource()})`)
+  } catch (err) {
+    // Never fatal: a wrong address in an email is recoverable, an API that
+    // refuses to boot is not. resolveAppBaseUrl already logs the detail.
+    console.error(
+      'could not resolve the public base URL:',
+      err instanceof Error ? err.message : err,
+    )
+  }
+
+  app.listen(config.port, () => {
+    console.log(`Rooman Alumni API listening on http://localhost:${config.port}`)
+  })
+}
+
+void start()
