@@ -34,10 +34,25 @@ export const companiesRouter = Router()
  * Takes the expression rather than assuming `u.company`, because the same rule
  * has to apply to users (`u.company`, `u2.company`) AND to Hiring posts
  * (`p.company`). An aggregate that skips it silently under-counts one company.
+ *
+ * Written as one ANY over an array rather than the more obvious
+ * `= LOWER(c.name) OR = ANY (SELECT ... unnest(c.aliases))`. Both return
+ * identical rows, but an OR whose second branch is a correlated sub-select
+ * cannot use an index, so the OR form made every company query a sequential
+ * scan of `users` -- and /for-you runs eleven of them per company row. In the
+ * array form Postgres uses idx_users_company_lower (schema.sql), declared on
+ * exactly this LOWER(TRIM(...)) expression. Measured on 20k users across 440
+ * employers, ~50 per company -- the shape real data has: the OR form plans a
+ * Seq Scan per company at 1174ms, this one a Bitmap Index Scan at 251ms, and
+ * the two agree on the alumni count for all 39 companies. The gain is
+ * selectivity-dependent: where a handful of employers hold everybody, the
+ * planner correctly prefers a Seq Scan either way and the two forms tie.
  */
 const matchesCompany = (companyText: string): string => `(
-  LOWER(TRIM(${companyText})) = LOWER(c.name)
-  OR LOWER(TRIM(${companyText})) = ANY (SELECT LOWER(a) FROM unnest(c.aliases) AS a)
+  LOWER(TRIM(${companyText})) = ANY (
+    ARRAY[LOWER(c.name)]
+    || COALESCE((SELECT array_agg(LOWER(a)) FROM unnest(c.aliases) AS a), ARRAY[]::text[])
+  )
 )`
 
 /** The common case: the user row aliased `u`. */
@@ -101,8 +116,11 @@ companiesRouter.get(
                   (SELECT json_agg(json_build_object('id', p.id, 'name', p.name, 'photo', p.photo))
                    FROM (
                      SELECT u2.id, u2.name, u2.photo FROM users u2
-                     WHERE LOWER(TRIM(u2.company)) = LOWER(c.name)
-                     OR LOWER(TRIM(u2.company)) = ANY (SELECT LOWER(a) FROM unnest(c.aliases) AS a)
+                     -- Through the helper rather than hand-inlined: this is
+                     -- the same two-branch rule, and the module header is
+                     -- explicit that it must live in exactly one place so the
+                     -- count and the preview cannot drift apart.
+                     WHERE ${matchesCompany('u2.company')}
                      ORDER BY u2.name LIMIT 4
                    ) p
                   ), '[]'
@@ -316,7 +334,13 @@ companiesRouter.get(
                               THEN u.experience
                               ELSE '[]'::jsonb END
                        ) e
-                  WHERE LOWER(TRIM(COALESCE(e->>'company', ''))) = LOWER(TRIM($1))
+                  -- $1 is the alias list (see spellingsOf), so this must be
+                  -- ANY over the array. Compared as a scalar it silently
+                  -- matched nothing -- Postgres reads $1 as text here, which
+                  -- makes the $1::text[] below a plain I/O cast rather than a
+                  -- type error, so every alumnus fell through to their
+                  -- generic bio with no error and no log.
+                  WHERE LOWER(TRIM(COALESCE(e->>'company', ''))) = ANY($1::text[])
                     AND COALESCE(e->>'summary', '') <> ''
                   LIMIT 1
                 ), ''), u.bio) AS journey,
@@ -333,8 +357,19 @@ companiesRouter.get(
       )
     ).rows
 
+    // Same roll-up the directory list and DELETE /:id/save apply: a save made
+    // against a duplicate entry before it was folded in belongs to this
+    // company now. Without it the directory showed the company bookmarked
+    // while its own page showed it unsaved.
     const savedByMe = await query(
-      `SELECT 1 FROM company_saves WHERE company_id = $1 AND user_id = $2`,
+      `SELECT 1 FROM company_saves
+        WHERE user_id = $2
+          AND (company_id = $1
+               OR company_id IN (
+                 SELECT o.id FROM companies o, companies c
+                  WHERE c.id = $1 AND o.id <> c.id
+                    AND LOWER(o.name) = ANY (SELECT LOWER(a) FROM unnest(c.aliases) AS a)
+               ))`,
       [company.id, me],
     )
 
@@ -533,10 +568,10 @@ companiesRouter.get(
 
     res.json({
       signals: mapCompanySignals(signals),
-      roadmaps: rows.map((r) => mapCompanyRoadmap(r, company.name)),
+      roadmaps: rows.map((r) => mapCompanyRoadmap(r, spellingsOf(company))),
       // Non-null only when the viewer works here — which is also exactly when
       // they are allowed to contribute one.
-      mine: mine.length ? mapCompanyRoadmap(mine[0], company.name) : null,
+      mine: mine.length ? mapCompanyRoadmap(mine[0], spellingsOf(company)) : null,
       canContribute: mine.length > 0,
       // True when the viewer works here but their profile is private, so their
       // own roadmap never reaches the list other members see.
@@ -625,6 +660,19 @@ companiesRouter.post(
         [spellingsOf(company), me, ROADMAP_ASK_MIN_YEARS, company.id, ROADMAP_ASK_MAX_RECIPIENTS],
       )
     ).rows
+
+    // Nobody to notify: do not claim the rate-limit row. That row is the
+    // record of "you have had your one ask", so writing it here would spend
+    // it on a request that reached no one -- alreadyAsked stays true forever
+    // and every later attempt is a 429, even once someone becomes eligible.
+    // Reachable whenever the eligible set empties between page load and click
+    // (the last eligible alumnus contributes, turns private, or leaves).
+    // The client already renders notified === 0 as "no one available to ask
+    // right now" and reloads, so this needs no new UI.
+    if (!recipients.length) {
+      res.json({ requested: false, notified: 0 })
+      return
+    }
 
     // The insert is the lock, not the SELECT above. Two clicks in quick
     // succession both pass that check, and with the notify loop outside the

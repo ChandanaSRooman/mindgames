@@ -42,6 +42,14 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_domain ON users (domain);
 
+-- Every company query matches members on their free-text employer through
+-- LOWER(TRIM(company)) -- see matchesCompany() in routes/companies.routes.ts,
+-- the single place that rule lives. An expression index has to match that
+-- expression exactly to be usable, so this mirrors it character for character.
+-- Without it each company row on /companies/for-you drives its own sequential
+-- scan of users, and that endpoint refires on every tab-visibility change.
+CREATE INDEX IF NOT EXISTS idx_users_company_lower ON users (LOWER(TRIM(company)));
+
 -- ---------------------------------------------------------------------------
 -- posts: feed items authored by a user.
 -- ---------------------------------------------------------------------------

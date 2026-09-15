@@ -540,8 +540,20 @@ export interface CompanyRoadmapRow {
   contrib_updated_at: Date | string | null
 }
 
-export function mapCompanyRoadmap(r: CompanyRoadmapRow, companyName: string) {
-  const here = companyName.trim().toLowerCase()
+export function mapCompanyRoadmap(
+  r: CompanyRoadmapRow,
+  // One name or every spelling of it. The queries that select these rows
+  // match on the company's alias list, so matching only the canonical name
+  // here left a member whose company reads "Rooman", shown on the "Rooman
+  // Technologies" page, with no step marked as here -- the current-company
+  // dot never highlighted for exactly the case aliasing exists to fix.
+  companyNames: string | string[],
+) {
+  const here = new Set(
+    (Array.isArray(companyNames) ? companyNames : [companyNames]).map((n) =>
+      n.trim().toLowerCase(),
+    ),
+  )
   const steps: RoadmapStep[] = arr(r.experience)
     .map((e) => (e && typeof e === 'object' ? (e as Record<string, unknown>) : {}))
     .map((e) => ({
@@ -549,7 +561,7 @@ export function mapCompanyRoadmap(r: CompanyRoadmapRow, companyName: string) {
       company: String(e.company ?? ''),
       period: String(e.period ?? ''),
       summary: String(e.summary ?? ''),
-      atThisCompany: String(e.company ?? '').trim().toLowerCase() === here,
+      atThisCompany: here.has(String(e.company ?? '').trim().toLowerCase()),
     }))
     // Oldest first: a roadmap is read from where they started, not from where
     // they are now. Entries with no parseable year keep their relative order
