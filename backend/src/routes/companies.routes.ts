@@ -101,9 +101,13 @@ async function ensureCompanyExists(
   return found.rows[0]
 }
 
-// GET /api/companies — the directory: every company, alumni count, and a
-// 4-avatar preview for the overlapping-avatars card. Alumni are matched by
-// comparing users.company to companies.name case/whitespace-insensitively.
+// GET /api/companies — the directory: every company with at least one
+// matched alumnus, its alumni count, and a 4-avatar preview for the
+// overlapping-avatars card. Curated companies with zero alumni (seeded in
+// schema.sql) are excluded via HAVING rather than deleted from the table —
+// they still exist so a matching alumnus's profile picks up the curated
+// domain/industry. Alumni are matched by comparing users.company to
+// companies.name case/whitespace-insensitively.
 companiesRouter.get(
   '/',
   requireAuth,
@@ -134,6 +138,7 @@ companiesRouter.get(
          LEFT JOIN users u ON ${MATCHES_COMPANY}
          WHERE ${NOT_MERGED}
          GROUP BY c.id
+         HAVING COUNT(u.id) > 0
          ORDER BY alumni_count DESC, c.name`,
         [req.user!.sub],
       )
