@@ -26,12 +26,20 @@ const IMDS_TIMEOUT_MS = 400
 async function imds(path: string, token?: string): Promise<string | null> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), IMDS_TIMEOUT_MS)
+  // Which header to send depends on which request this is, not on whether a
+  // token happens to exist. The TTL header is only meaningful on the token
+  // PUT; putting it on the metadata GET made the IMDSv1 fallback — the one
+  // path that runs when the token PUT failed — send a wrong header instead
+  // of none, so the v2-then-v1 sequence was untested exactly where it counts.
+  const isTokenRequest = path === '/latest/api/token'
   try {
     const res = await fetch(`${IMDS}${path}`, {
-      method: path === '/latest/api/token' ? 'PUT' : 'GET',
-      headers: token
-        ? { 'X-aws-ec2-metadata-token': token }
-        : { 'X-aws-ec2-metadata-token-ttl-seconds': '60' },
+      method: isTokenRequest ? 'PUT' : 'GET',
+      headers: isTokenRequest
+        ? { 'X-aws-ec2-metadata-token-ttl-seconds': '60' }
+        : token
+          ? { 'X-aws-ec2-metadata-token': token }
+          : {},
       signal: controller.signal,
     })
     if (!res.ok) return null
@@ -122,9 +130,16 @@ export async function resolveAppBaseUrl(): Promise<string> {
     return resolved
   }
 
-  // Unset or empty: take the default rather than probing metadata.
-  resolved = fallback || DEV_DEFAULT
-  source = fallback ? 'fallback' : 'default'
+  // Unset or empty: take the development default — deliberately NOT
+  // APP_URL_FALLBACK. The deploy always records APP_URL_FALLBACK as the
+  // address observed at deploy time, so honouring it here would mean that
+  // blanking APP_URL — the one action an operator takes to stop advertising
+  // the raw instance address — carried on advertising it, at an address that
+  // is stale by construction. That is the bug this module exists to end.
+  // No metadata probe either, so an unconfigured box cannot start publishing
+  // its real public IP by accident.
+  resolved = DEV_DEFAULT
+  source = 'default'
   return resolved
 }
 
