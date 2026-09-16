@@ -603,6 +603,111 @@ export interface CompanyDetail extends Company {
   alumni: CompanyAlumnus[]
 }
 
+// ---------------------------------------------------------------------------
+// "Companies for you" — the company-side aggregates that GET /companies/for-you
+// returns alongside each company. Mirrors mapCompanySignals in the backend's
+// mappers.ts; a rename there without a rename here silently yields undefined.
+//
+// Everything in here describes the COMPANY, never the viewer. How well a
+// company fits *you* is computed in lib/companyMatch.ts from these plus your
+// own profile, so the scoring rules live in one readable place.
+// ---------------------------------------------------------------------------
+export interface SkillFrequency {
+  skill: string
+  holders: number
+}
+
+export interface NamedFrequency {
+  name: string
+  holders: number
+}
+
+export interface CountedValue {
+  count: number
+}
+
+export interface CompanySignals {
+  /** Skills held by alumni there, most-held first. */
+  topSkills: SkillFrequency[]
+  topCertifications: NamedFrequency[]
+  cities: (CountedValue & { city: string })[]
+  domains: (CountedValue & { domain: string })[]
+  /** Roles named by active Hiring posts for this company. */
+  hiringRoles: (CountedValue & { role: string })[]
+  /** Median years of experience among alumni; undefined when nobody has said. */
+  medianExperience?: number
+  referralOpen: number
+  mentorCount: number
+  roadmapCount: number
+  connectedAlumni: number
+  /** Alumni the aggregates were computed from — drives match confidence. */
+  sampleSize: number
+}
+
+export interface CompanyWithSignals extends Company {
+  signals: CompanySignals
+}
+
+// ---------------------------------------------------------------------------
+// Roadmaps — how one alumnus got into a company.
+// ---------------------------------------------------------------------------
+
+/** One stop on a career timeline, derived from the member's own profile. */
+export interface RoadmapStep {
+  role: string
+  company: string
+  period: string
+  summary: string
+  /** True for the stop at the company whose page this is shown on. */
+  atThisCompany: boolean
+}
+
+/** An extra step the contributor wrote, beyond what their timeline shows. */
+export interface RoadmapStage {
+  title: string
+  detail: string
+}
+
+export interface CompanyRoadmap {
+  userId: string
+  name: string
+  photo?: string
+  currentRole: string
+  city: string
+  course: string
+  batchYear: number
+  experienceYears: number
+  skills: string[]
+  steps: RoadmapStep[]
+  certifications: CertificationEntry[]
+  isMentor: boolean
+  mentorTopics: string[]
+  openToReferrals: boolean
+  mutualConnections: number
+  /** True once they have written something beyond the derived timeline. */
+  contributed: boolean
+  roleGoal: string
+  headline: string
+  stages: RoadmapStage[]
+  advice: string
+  /** ISO timestamp of their last edit; absent for a derived-only timeline. */
+  updatedAt?: string
+}
+
+export interface CompanyRoadmaps {
+  /** The same aggregates the match score uses — drives the gap checklist. */
+  signals: CompanySignals
+  roadmaps: CompanyRoadmap[]
+  /** The viewer's own, when they work here — null otherwise. */
+  mine: CompanyRoadmap | null
+  canContribute: boolean
+  /** Viewer works here but is private — their roadmap reaches nobody else. */
+  viewerIsPrivate: boolean
+  alreadyAsked: boolean
+  /** How many alumni an ask would reach; 0 hides the button. */
+  eligibleToAsk: number
+}
+
 // requested → (mentor accepts) upcoming → (mentor completes) past; or declined.
 export type SessionStatus = 'requested' | 'upcoming' | 'declined' | 'past'
 

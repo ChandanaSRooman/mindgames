@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "check": "tsx src/lib/csv.check.ts && tsx src/lib/profileCompleteness.check.ts && tsx src/lib/profileRequired.check.ts"
+    "check": "tsx src/lib/csv.check.ts && tsx src/lib/profileCompleteness.check.ts && tsx src/lib/profileRequired.check.ts && tsx src/lib/companyMatch.check.ts"
   },
   "dependencies": {
     "lucide-react": "^1.21.0",
