@@ -7,6 +7,9 @@ import type {
   Community,
   Company,
   CompanyDetail,
+  CompanyRoadmaps,
+  CompanyWithSignals,
+  RoadmapStage,
   ContactRow,
   InviteEmailTemplate,
   InviteStatus,
@@ -301,6 +304,20 @@ export const api = {
     http<{ saved: boolean }>(`/api/companies/${id}/save`, { method: 'POST' }),
   unsaveCompany: (id: string) =>
     http<{ saved: boolean }>(`/api/companies/${id}/save`, { method: 'DELETE' }),
+
+  // Companies for you: the directory plus the aggregate signals lib/companyMatch.ts
+  // scores against. Separate from getCompanies so the plain directory stays cheap.
+  getCompaniesForYou: () => http<CompanyWithSignals[]>('/api/companies/for-you'),
+  getCompanyRoadmaps: (id: string) => http<CompanyRoadmaps>(`/api/companies/${id}/roadmaps`),
+  saveCompanyRoadmap: (id: string, body: { role: string; headline: string; advice: string; stages: RoadmapStage[] }) =>
+    http<{ saved: boolean }>(`/api/companies/${id}/roadmap`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  requestCompanyRoadmaps: (id: string) =>
+    http<{ requested: boolean; notified: number }>(`/api/companies/${id}/roadmap/request`, {
+      method: 'POST',
+    }),
 
   // mentorship
   getSessions: () => http<MentorshipSession[]>('/api/mentorship/sessions'),

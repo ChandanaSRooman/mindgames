@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Bookmark, BookOpen, Building2, Search, Sparkles } from 'lucide-react'
 import { api } from '../lib/api'
+import { ForYouSection } from '../components/companies/ForYouSection'
 import { matchesCompanyQuery } from '../lib/search'
 import { AvatarStack, Button, Card, CompanyLogo, Pill } from '../components/ui'
 import type { Company } from '../types'
@@ -76,6 +77,11 @@ export function Companies() {
           Prepare using our Rooman LMS
         </Button>
       </div>
+
+      {/* Ranked against the viewer's own profile. Sits above the directory
+          rather than replacing it — the plain search/filter grid below is
+          untouched, so nothing anyone relies on today has moved. */}
+      <ForYouSection />
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2">

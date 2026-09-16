@@ -42,6 +42,14 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_domain ON users (domain);
 
+-- Every company query matches members on their free-text employer through
+-- LOWER(TRIM(company)) -- see matchesCompany() in routes/companies.routes.ts,
+-- the single place that rule lives. An expression index has to match that
+-- expression exactly to be usable, so this mirrors it character for character.
+-- Without it each company row on /companies/for-you drives its own sequential
+-- scan of users, and that endpoint refires on every tab-visibility change.
+CREATE INDEX IF NOT EXISTS idx_users_company_lower ON users (LOWER(TRIM(company)));
+
 -- ---------------------------------------------------------------------------
 -- posts: feed items authored by a user.
 -- ---------------------------------------------------------------------------
@@ -800,3 +808,72 @@ CREATE TABLE IF NOT EXISTS email_templates (
   body       TEXT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ---------------------------------------------------------------------------
+-- Company roadmaps: how alumni actually got into a company.
+--
+-- The timeline itself is NOT stored here. A member's path is already in
+-- users.experience (a JSONB array of {role, company, period, summary}) plus
+-- their course, batch_year and certifications — so a roadmap is derived from
+-- the profile they already maintain, and stays correct when they update it.
+-- Duplicating it would create a second copy that silently rots.
+--
+-- What IS stored is the part that exists nowhere else: the advice an alumnus
+-- writes on top of their own timeline when asked to help others in.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS company_roadmap_contributions (
+  company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- The role this path leads to, e.g. 'Senior Data Engineer'. Defaults to the
+  -- contributor's designation when they don't override it.
+  role       TEXT NOT NULL DEFAULT '',
+  -- One-line summary of the route in, shown under their name in the list.
+  headline   TEXT NOT NULL DEFAULT '',
+  -- Ordered extra steps the profile timeline cannot express: what to learn,
+  -- what the interview was like. Array of {title, detail}. The timeline
+  -- supplies the WHERE and WHEN; these supply the HOW.
+  stages     JSONB NOT NULL DEFAULT '[]'::jsonb,
+  -- Free-text advice shown as the closing note on their roadmap.
+  advice     TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- One contribution per person per company: re-submitting edits their own
+  -- entry rather than stacking duplicates onto the company page.
+  PRIMARY KEY (company_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_roadmap_contrib_company
+  ON company_roadmap_contributions (company_id, updated_at DESC);
+
+-- Records that someone asked the alumni at a company to share their path.
+-- Exists purely so the ask can be rate-limited: without it, a company page
+-- with 20 alumni is a one-click way to notification-bomb 20 members.
+CREATE TABLE IF NOT EXISTS company_roadmap_requests (
+  company_id   TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  requester_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- How many alumni the ask actually reached, for the confirmation message.
+  notified     INTEGER NOT NULL DEFAULT 0,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (company_id, requester_id)
+);
+
+-- ---------------------------------------------------------------------------
+-- Company aliases: other spellings of the same employer.
+--
+-- users.company is free text that members type themselves, so one employer
+-- arrives as "Rooman", "Rooman Technologies" and "Rooman Technologies,
+-- Bengaluru" — three directory entries splitting one company's alumni between
+-- them, and three separate roadmap pages.
+--
+-- An alias list rather than a data merge: nothing is deleted and no member's
+-- profile is rewritten, so this is reversible by emptying the array, and a new
+-- spelling is fixed by adding one string instead of editing people's records.
+-- A company whose own name appears in another company's aliases is treated as
+-- folded into that one and is hidden from the directory.
+-- ---------------------------------------------------------------------------
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS aliases TEXT[] NOT NULL DEFAULT '{}';
+
+-- Idempotent: re-running replaces the same list rather than appending to it.
+UPDATE companies
+   SET aliases = ARRAY['Rooman', 'Rooman Technologies, Bengaluru']
+ WHERE LOWER(name) = 'rooman technologies';
