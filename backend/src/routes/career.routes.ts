@@ -149,10 +149,12 @@ async function buildRoadmapContext(
   // relevant shortlist rather than the entire marketplace.
   const goalTags = GOAL_SERVICE_TYPES[assessment.goalType] ?? []
   const serviceRows = await query<{ id: string; service_type: string; tags: string[] }>(
+    // Never a member's own listings: a mentor following their own roadmap
+    // should not be offered their own services to book.
     `SELECT id, service_type, tags FROM alumni_services
-      WHERE active AND (service_type = ANY($1::text[]) OR tags && $2::text[])
+      WHERE active AND user_id <> $3 AND (service_type = ANY($1::text[]) OR tags && $2::text[])
       LIMIT 20`,
-    [goalTags, row?.expertise ?? []],
+    [goalTags, row?.expertise ?? [], userId],
   )
   const candidateServices = serviceRows.rows.map((s) => ({ id: s.id, type: s.service_type, tags: s.tags ?? [] }))
 
@@ -563,7 +565,8 @@ careerRouter.get(
       `SELECT s.*, u.sessions_conducted, u.name AS provider_name, u.photo AS provider_photo,
               u.designation AS provider_designation, u.company AS provider_company
          FROM alumni_services s JOIN users u ON u.id = s.user_id
-        WHERE s.active`,
+        WHERE s.active AND s.user_id <> $1`,
+      [req.user!.sub],
     )
 
     const wantsFree = supportPreference === 'free_only'
@@ -586,13 +589,14 @@ careerRouter.get(
 careerRouter.get(
   '/services',
   requireAuth,
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
     const r = await query<AlumniServiceRow>(
       `SELECT s.*, u.name AS provider_name, u.photo AS provider_photo,
               u.designation AS provider_designation, u.company AS provider_company
          FROM alumni_services s JOIN users u ON u.id = s.user_id
-        WHERE s.active
+        WHERE s.active AND s.user_id <> $1
         ORDER BY s.created_at DESC`,
+      [req.user!.sub],
     )
     res.json(r.rows.map(mapAlumniService))
   }),
