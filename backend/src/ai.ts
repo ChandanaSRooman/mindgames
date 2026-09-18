@@ -133,7 +133,23 @@ const OPENROUTER_RESUME_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free'
 // data, because both would misrepresent where an answer came from.
 const AI_PROVIDER = process.env.AI_PROVIDER === 'anthropic' ? 'anthropic' : 'openrouter'
 
+// Career Guidance can run on its own OpenRouter key and model, set apart from
+// Ask Roo and resume parsing. Both are optional and fall back to the shared
+// ones. Two reasons this exists:
+//   - Quota: the free tier is capped per key per day, so roadmap generation
+//     competing with resume parsing means one can exhaust the other.
+//   - Reliability: the free NVIDIA endpoints are frequently "temporarily
+//     overloaded" (which the retry logic below absorbs, but not always), so
+//     being able to point this one feature at a different model without a
+//     code change is the difference between a five-second fix and a deploy.
+const careerApiKey = process.env.OPENROUTER_CAREER_API_KEY || openRouterApiKey
+const OPENROUTER_CAREER_MODEL =
+  process.env.OPENROUTER_CAREER_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free'
+
 export const aiEnabled = AI_PROVIDER === 'anthropic' ? !!client : !!openRouterApiKey
+
+/** Career Guidance is available when its own key (or the shared one) is set. */
+export const careerAiEnabled = AI_PROVIDER === 'anthropic' ? !!client : !!careerApiKey
 
 // Must stay in sync with DOMAINS / EMPLOYMENT_TYPES in frontend/src/types.ts.
 // "" means "could not tell from the resume" — the form keeps its own value then.
@@ -364,8 +380,10 @@ async function callOpenRouterOnce(
   reasoningEnabled: boolean | undefined,
   jsonSchema: object | undefined,
   deadline: number,
+  // Defaults to the shared key; Career Guidance may pass its own.
+  apiKey: string | undefined = openRouterApiKey,
 ): Promise<string> {
-  if (!openRouterApiKey) throw new Error('OPENROUTER_API_KEY is not configured.')
+  if (!apiKey) throw new Error('OPENROUTER_API_KEY is not configured.')
 
   const remaining = Math.min(OPENROUTER_ATTEMPT_TIMEOUT_MS, deadline - Date.now())
   if (remaining <= 0) {
@@ -393,7 +411,7 @@ async function callOpenRouterOnce(
       res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${openRouterApiKey}`,
+          Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
@@ -463,13 +481,14 @@ async function callOpenRouter(
   // callOpenRouterJson) pass the same deadline to every one of them, so the
   // whole operation stays inside a single bound instead of multiplying.
   deadline: number = Date.now() + OPENROUTER_TOTAL_BUDGET_MS,
+  apiKey: string | undefined = openRouterApiKey,
 ): Promise<string> {
   const MAX_ATTEMPTS = 3
   let lastTransient: Error | null = null
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (Date.now() >= deadline) break
     try {
-      return await callOpenRouterOnce(model, messages, maxTokens, reasoningEnabled, jsonSchema, deadline)
+      return await callOpenRouterOnce(model, messages, maxTokens, reasoningEnabled, jsonSchema, deadline, apiKey)
     } catch (err) {
       if (!(err instanceof TransientOpenRouterError)) throw err
       lastTransient = err
@@ -522,10 +541,11 @@ async function callOpenRouterJson(
   maxTokens: number,
   jsonSchema?: object,
   reasoningEnabled?: boolean,
+  apiKey: string | undefined = openRouterApiKey,
 ): Promise<unknown> {
   // One budget for the first call and the corrective re-ask together.
   const deadline = Date.now() + OPENROUTER_TOTAL_BUDGET_MS
-  const first = await callOpenRouter(model, messages, maxTokens, reasoningEnabled, jsonSchema, deadline)
+  const first = await callOpenRouter(model, messages, maxTokens, reasoningEnabled, jsonSchema, deadline, apiKey)
   try {
     return JSON.parse(extractJsonObject(first))
   } catch {
@@ -539,7 +559,7 @@ async function callOpenRouterJson(
         content: 'Your entire reply must be ONLY the JSON object — starting with { and ending with }. No words before or after it, no markdown, no code fence. Output the JSON object now.',
       },
     ]
-    const second = await callOpenRouter(model, retryMessages, maxTokens, reasoningEnabled, jsonSchema, deadline)
+    const second = await callOpenRouter(model, retryMessages, maxTokens, reasoningEnabled, jsonSchema, deadline, apiKey)
     return JSON.parse(extractJsonObject(second)) // still invalid → let it throw, caller maps to a clean error
   }
 }
@@ -942,7 +962,7 @@ function validateRoadmapResult(parsed: unknown): CareerRoadmapResult {
  * way parseResume/askRoo do (no silent fallback to canned data) — a member
  * seeing a wrong roadmap is worse than seeing an explicit "try again" error. */
 export async function generateCareerRoadmap(context: CareerRoadmapContext): Promise<CareerRoadmapResult> {
-  if (!aiEnabled) {
+  if (!careerAiEnabled) {
     throw new Error(
       AI_PROVIDER === 'openrouter'
         ? 'Career Guidance is not configured on this server (OPENROUTER_API_KEY missing).'
@@ -957,7 +977,9 @@ export async function generateCareerRoadmap(context: CareerRoadmapContext): Prom
       { role: 'system', content: ROADMAP_SYSTEM },
       { role: 'user', content: prompt },
     ]
-    const parsed = await callOpenRouterJson(OPENROUTER_RESUME_MODEL, messages, 4096, ROADMAP_SCHEMA, false)
+    const parsed = await callOpenRouterJson(
+      OPENROUTER_CAREER_MODEL, messages, 4096, ROADMAP_SCHEMA, false, careerApiKey,
+    )
     return validateRoadmapResult(parsed)
   }
 

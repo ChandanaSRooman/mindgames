@@ -123,7 +123,20 @@ export function CareerGuidance() {
   if (!roadmap) {
     return (
       <div className="flex flex-col gap-4">
-        <PageHeader onBack={() => navigate(-1)} />
+        {/* A mentor manages what they offer from here too. Without this the
+            supply side would be gated behind the demand side: a mentor who
+            never takes the assessment could never list a service. */}
+        <PageHeader
+          onBack={() => navigate(-1)}
+          actions={
+            currentUser.isMentor ? (
+              <Button variant="outline" icon={<Briefcase size={14} />} onClick={() => setManaging((v) => !v)}>
+                My services
+              </Button>
+            ) : undefined
+          }
+        />
+        {managing && <ManageServicesPanel onClose={() => setManaging(false)} />}
         <EmptyState hasDraft={!!draft} onStart={() => setWizard(true)} />
       </div>
     )
