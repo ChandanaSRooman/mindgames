@@ -11,7 +11,9 @@ import { Calendar,
 } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { timeAgo } from '../../lib/format'
-import type { NotificationType } from '../../types'
+import { notificationLink, opensChat } from '../../lib/notificationLink'
+import { useLayout } from './LayoutContext'
+import type { AppNotification, NotificationType } from '../../types'
 
 const ICONS: Record<NotificationType, typeof Bell> = {
   connection: UserPlus,
@@ -22,6 +24,7 @@ const ICONS: Record<NotificationType, typeof Bell> = {
   community: Users,
   announcement: Megaphone,
   event: Calendar,
+  message: MessageCircle,
 }
 
 // Where each notification type takes you when clicked.
@@ -36,19 +39,28 @@ export const NOTIFICATION_ROUTES: Record<NotificationType, string> = {
   community: '/explore',
   announcement: '/home',
   event: '/events',
+  // Only a fallback: a message notification opens the chat panel instead of
+  // navigating (see opensChat), because the chat is a panel, not a route.
+  message: '/home',
 }
 
 export function NotificationsDropdown({ onClose }: { onClose: () => void }) {
   const { notifications, markNotificationsRead, markNotificationRead } = useApp()
+  const { openChatWith } = useLayout()
   const navigate = useNavigate()
 
   // The bell shows only what still needs attention; history lives on /notifications.
   const unread = notifications.filter((n) => !n.read).slice(0, 8)
 
-  function open(id: string, type: NotificationType) {
-    markNotificationRead(id)
+  function open(n: AppNotification) {
+    markNotificationRead(n.id)
     onClose()
-    navigate(NOTIFICATION_ROUTES[type])
+    // A message opens the conversation in place; everything else navigates to
+    // the thing itself, falling back to the per-type page when the
+    // notification carries no target (older rows, and the ones we
+    // deliberately leave untargeted).
+    if (opensChat(n)) openChatWith(n.actorId!)
+    else navigate(notificationLink(n, NOTIFICATION_ROUTES[n.type]))
   }
 
   return (
@@ -67,7 +79,7 @@ export function NotificationsDropdown({ onClose }: { onClose: () => void }) {
           return (
             <button
               key={n.id}
-              onClick={() => open(n.id, n.type)}
+              onClick={() => open(n)}
               className="flex w-full gap-3 bg-orange-50/60 px-4 py-3 text-left hover:bg-orange-50"
             >
               <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-orange-100 text-[#ff4500]">
