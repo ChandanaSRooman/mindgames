@@ -409,17 +409,22 @@ export function gapsCoveredByTopics(gap: CompanyGap, topics: string[]): string[]
 /**
  * Whether a company can be scored at all.
  *
- * With no alumni and no open roles, almost every factor is unjudgeable and the
- * score collapses onto whichever one or two can still be answered — a company
- * nobody has ever worked at can land near 40% purely because its industry
- * matches yours. That number looks like a finding and is built on nothing.
+ * With no alumni, almost every factor is unjudgeable and the score collapses
+ * onto whichever one or two can still be answered — a company nobody has ever
+ * worked at can land near 40% purely because its industry matches yours. That
+ * number looks like a finding and is built on nothing.
+ *
+ * Open Hiring roles are not evidence on their own: they say somebody wants to
+ * hire there, not that a Rooman alumnus could help you get in, which is the
+ * whole point of "for you". A company with roles but zero alumni (past or
+ * present) still has nobody to mentor you and would still open onto the empty
+ * "no alumni here yet" page — the same state excluded from the directory.
  *
  * Rule 3 says confidence is reported, never baked into the score; this is the
  * one case that rule cannot cover, because the problem is not low confidence
  * but no evidence whatsoever. Such companies are excluded from "for you"
- * entirely — they are still in the directory below it, where they belong.
+ * entirely — and from the directory below it too, even a saved one.
  */
 export function hasMatchEvidence(company: CompanyWithSignals): boolean {
-  const s = company.signals
-  return s.sampleSize > 0 || s.hiringRoles.length > 0
+  return company.signals.sampleSize > 0
 }

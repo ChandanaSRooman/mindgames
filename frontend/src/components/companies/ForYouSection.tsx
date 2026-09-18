@@ -74,10 +74,12 @@ export function ForYouSection() {
     }
   }, [load])
 
-  // Only companies there is evidence to judge. A company with no alumni and no
-  // open roles cannot be scored honestly (see hasMatchEvidence) and would sit
-  // here at 0 — or worse, at a confident-looking number earned entirely from an
-  // industry match. Those are still in the directory below.
+  // Only companies with actual alumni to judge — open Hiring roles alone are
+  // not enough (see hasMatchEvidence), since nobody there could actually help
+  // you get in. A company with no alumni cannot be scored honestly and would
+  // sit here at 0 — or worse, at a confident-looking number earned entirely
+  // from an industry match. Zero-alumni companies are excluded from the
+  // directory below too (GET /api/companies), even a saved one.
   const ranked = useMemo(
     () => (companies ? rankCompanies(companies.filter(hasMatchEvidence), currentUser) : []),
     [companies, currentUser],
