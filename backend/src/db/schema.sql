@@ -877,3 +877,129 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS aliases TEXT[] NOT NULL DEFAULT '
 UPDATE companies
    SET aliases = ARRAY['Rooman', 'Rooman Technologies, Bengaluru']
  WHERE LOWER(name) = 'rooman technologies';
+
+-- ---------------------------------------------------------------------------
+-- Career Guidance
+--
+-- career_assessments: one row per submission. A retake or an "Edit Assessment"
+-- INSERTs a new row rather than overwriting the last one, so a member's
+-- answer history is never lost. `status` distinguishes an in-progress draft
+-- (autosaved step-by-step so leaving the wizard halfway doesn't lose answers)
+-- from a completed submission that triggered roadmap generation.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS career_assessments (
+  id                 TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  user_id            TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status             TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted')),
+  current_situation  TEXT NOT NULL DEFAULT '',
+  goal_type          TEXT NOT NULL DEFAULT '',
+  target_role        TEXT NOT NULL DEFAULT '',
+  target_role_unsure BOOLEAN NOT NULL DEFAULT FALSE,
+  hours_per_week     INTEGER,
+  timeline_months    INTEGER,
+  extra_skills_note  TEXT NOT NULL DEFAULT '',
+  learning_prefs     TEXT[] NOT NULL DEFAULT '{}',
+  support_preference TEXT NOT NULL DEFAULT '',
+  help_types         TEXT[] NOT NULL DEFAULT '{}',
+  free_text          TEXT NOT NULL DEFAULT '',
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- One draft per member at a time: re-saving a step UPSERTs the same draft row
+-- instead of piling up abandoned drafts. Submitted rows are never touched by
+-- this constraint, since it's scoped to status = 'draft'.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_career_assessments_one_draft
+  ON career_assessments (user_id) WHERE status = 'draft';
+CREATE INDEX IF NOT EXISTS idx_career_assessments_user
+  ON career_assessments (user_id, created_at DESC);
+
+-- career_roadmaps: the AI-generated plan for one assessment. A new submission
+-- always generates a new version and archives the previous one — nothing is
+-- ever deleted, so a member can look back at how their plan has changed.
+CREATE TABLE IF NOT EXISTS career_roadmaps (
+  id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  assessment_id TEXT NOT NULL REFERENCES career_assessments(id) ON DELETE CASCADE,
+  version       INTEGER NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  -- The structured plan: { goal, timelineMonths, hoursPerWeek, stages: [...] }.
+  -- See backend/src/careerRoadmap.ts for the exact shape and how it is built.
+  data          JSONB NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Only one active roadmap per member — generating a new one flips the old
+-- row to 'archived' in the same transaction that inserts the new one.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_career_roadmaps_one_active
+  ON career_roadmaps (user_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_career_roadmaps_user
+  ON career_roadmaps (user_id, version DESC);
+
+-- career_roadmap_step_state: per-step progress, kept separate from the
+-- roadmap's own JSON so marking a step complete/paused never requires
+-- rewriting (and re-versioning) the whole generated plan.
+CREATE TABLE IF NOT EXISTS career_roadmap_step_state (
+  roadmap_id   TEXT NOT NULL REFERENCES career_roadmaps(id) ON DELETE CASCADE,
+  step_key     TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'upcoming' CHECK (status IN ('upcoming', 'in_progress', 'completed', 'paused')),
+  completed_at TIMESTAMPTZ,
+  PRIMARY KEY (roadmap_id, step_key)
+);
+
+-- career_paths: auto-derived from users.experience — each row is one observed
+-- role transition ("Backend Developer" -> "Cloud Engineer") an alumnus made.
+-- This is what powers "alumni who followed a similar path"; see
+-- backend/src/careerPaths.ts for how rows are derived and kept idempotent.
+-- `source` reserves room for an optional alumni-added-advice layer later
+-- ('alumni_enriched') without changing anything about this table's shape.
+CREATE TABLE IF NOT EXISTS career_paths (
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  from_role  TEXT NOT NULL,
+  to_role    TEXT NOT NULL,
+  source     TEXT NOT NULL DEFAULT 'auto' CHECK (source IN ('auto', 'alumni_enriched')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, from_role, to_role)
+);
+
+CREATE INDEX IF NOT EXISTS idx_career_paths_from ON career_paths (from_role);
+CREATE INDEX IF NOT EXISTS idx_career_paths_to ON career_paths (to_role);
+
+-- alumni_services: things an approved mentor offers to other members. Gated
+-- on is_mentor (enforced in career.routes.ts) — this reuses the existing
+-- mentor-verification trust bar instead of creating a second, unvetted tier
+-- of service providers. Multiple rows per (user_id, service_type) are
+-- allowed on purpose: one mentor can list two differently-scoped offerings
+-- of the same type (e.g. two flavours of "Technical mentoring").
+CREATE TABLE IF NOT EXISTS alumni_services (
+  id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  service_type  TEXT NOT NULL CHECK (service_type IN (
+    'career_guidance', 'resume_review', 'interview_preparation', 'technical_mentoring',
+    'project_guidance', 'industry_guidance', 'career_transition', 'freelance_consulting',
+    'portfolio_review', 'linkedin_review', 'mock_interview', 'code_project_review',
+    'startup_business_guidance', 'domain_specific_advice'
+  )),
+  title         TEXT NOT NULL DEFAULT '',
+  description   TEXT NOT NULL DEFAULT '',
+  -- Matching keywords, same array pattern as users.expertise. Combines what
+  -- would otherwise be separate "skills" and "domains" fields — both are just
+  -- tags ORed together in the matching query (see career.routes.ts).
+  tags          TEXT[] NOT NULL DEFAULT '{}',
+  pricing_mode  TEXT NOT NULL DEFAULT 'free' CHECK (pricing_mode IN ('free', 'paid', 'custom')),
+  -- Set only when pricing_mode = 'paid'. Same display-only-integer pattern as
+  -- mentorship_sessions.price — no payment gateway (deliberately deferred).
+  amount        INTEGER,
+  pricing_unit  TEXT CHECK (pricing_unit IN ('hour', 'session')),
+  active        BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_alumni_services_user ON alumni_services (user_id);
+CREATE INDEX IF NOT EXISTS idx_alumni_services_active ON alumni_services (service_type) WHERE active;
+
+-- Booking bridge: a service booking is just a normal mentorship_sessions row
+-- with this column pointing back at which service it came from. No parallel
+-- booking system — accept/decline/rate/complete all stay exactly as they are.
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS service_id TEXT REFERENCES alumni_services(id) ON DELETE SET NULL;

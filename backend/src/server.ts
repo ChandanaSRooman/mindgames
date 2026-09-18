@@ -22,6 +22,8 @@ import { sseHandler } from './realtime.js'
 import { aiRouter } from './routes/ai.routes.js'
 import { reportsRouter } from './routes/reports.routes.js'
 import { companiesRouter } from './routes/companies.routes.js'
+import { careerRouter } from './routes/career.routes.js'
+import { backfillCareerPaths } from './careerPaths.js'
 import { setAppBaseUrl } from './email.js'
 import { baseUrlSource, resolveAppBaseUrl } from './publicUrl.js'
 
@@ -66,6 +68,7 @@ app.get('/api/stream', sseHandler)
 app.use('/api/ai', aiRouter)
 app.use('/api/reports', reportsRouter)
 app.use('/api/companies', companiesRouter)
+app.use('/api/career', careerRouter)
 
 // --- Terminal error handler -------------------------------------------------
 app.use(errorHandler)
@@ -95,6 +98,13 @@ async function start(): Promise<void> {
       err instanceof Error ? err.message : err,
     )
   }
+
+  // Career Guidance reads alumni role transitions derived from existing
+  // profiles. Idempotent (rows are replaced, not appended), and never fatal:
+  // the rest of the API must still start if this one derivation fails.
+  backfillCareerPaths().catch((err) => {
+    console.error('career_paths backfill failed:', err instanceof Error ? err.message : err)
+  })
 
   app.listen(config.port, () => {
     console.log(`Rooman Alumni API listening on http://localhost:${config.port}`)

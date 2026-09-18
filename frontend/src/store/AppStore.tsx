@@ -127,7 +127,7 @@ interface AppContextValue {
 
   // mentorship + startups
   sessions: MentorshipSession[]
-  bookSession: (mentorId: string, topic: string, date: string, time: string) => void
+  bookSession: (mentorId: string, topic: string, date: string, time: string, serviceId?: string) => void
   acceptSession: (id: string, meetingLink?: string) => void
   rateSession: (id: string, rating: number, review?: string) => void
   declineSession: (id: string) => void
@@ -800,8 +800,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ---- mentorship + startups (RDS-backed) ----------------------------------
   const bookSession = useCallback(
-    (mentorId: string, topic: string, date: string, time: string) => {
-      api.bookSession(mentorId, topic, date, time).then(
+    (mentorId: string, topic: string, date: string, time: string, serviceId?: string) => {
+      api.bookSession(mentorId, topic, date, time, serviceId).then(
         (session) => {
           setSessions((s) => [session, ...s])
           const m = users.find((u) => u.id === mentorId)

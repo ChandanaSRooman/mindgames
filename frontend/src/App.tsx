@@ -31,6 +31,7 @@ import { Mentorship } from './pages/Mentorship'
 import { StartupVarsity } from './pages/StartupVarsity'
 import { News } from './pages/News'
 import { ExploreCommunities } from './pages/ExploreCommunities'
+import { CareerGuidance } from './pages/CareerGuidance'
 import { CommunityPage } from './pages/CommunityPage'
 import { Profile } from './pages/Profile'
 import { Settings } from './pages/Settings'
@@ -127,6 +128,7 @@ export default function App() {
             <Route path="/startupvarsity" element={<StartupVarsity />} />
             <Route path="/news" element={<News />} />
             <Route path="/explore" element={<ExploreCommunities />} />
+            <Route path="/career-guidance" element={<CareerGuidance />} />
             <Route path="/community/:id" element={<CommunityPage />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/profile/:id" element={<Profile />} />

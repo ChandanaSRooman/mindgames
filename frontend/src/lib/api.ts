@@ -1,8 +1,14 @@
 import type {
   Alumni,
+  AlumniHelper,
+  AlumniService,
   AppEvent,
   AppNotification,
   Badge,
+  CareerAssessment,
+  CareerRoadmap,
+  CareerStageStatus,
+  ServiceType,
   Comment,
   Community,
   Company,
@@ -321,10 +327,13 @@ export const api = {
 
   // mentorship
   getSessions: () => http<MentorshipSession[]>('/api/mentorship/sessions'),
-  bookSession: (mentorId: string, topic: string, date: string, time: string) =>
+  // serviceId is set when the booking came from a Career Guidance alumni
+  // service — the session then snapshots that service's own price instead of
+  // the mentee's free-session allowance. Omitted everywhere else, unchanged.
+  bookSession: (mentorId: string, topic: string, date: string, time: string, serviceId?: string) =>
     http<MentorshipSession>('/api/mentorship/sessions', {
       method: 'POST',
-      body: JSON.stringify({ mentorId, topic, date, time }),
+      body: JSON.stringify({ mentorId, topic, date, time, serviceId }),
     }),
   acceptSession: (id: string, meetingLink?: string) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/accept`, {
@@ -563,4 +572,63 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ dataBase64, mediaType }),
     }),
+
+  // Career Guidance
+  // The assessment autosaves per step (submit:false) and regenerates the
+  // roadmap on submit (submit:true) — see backend/src/routes/career.routes.ts.
+  getCareerDraft: () => http<CareerAssessment | null>('/api/career/assessment/draft'),
+  getLastCareerAssessment: () => http<CareerAssessment | null>('/api/career/assessment/last'),
+  saveCareerAssessment: (body: CareerAssessmentInput) =>
+    http<CareerAssessment>('/api/career/assessment', {
+      method: 'POST',
+      body: JSON.stringify({ ...body, submit: false }),
+    }),
+  submitCareerAssessment: (body: CareerAssessmentInput) =>
+    http<CareerRoadmap>('/api/career/assessment', {
+      method: 'POST',
+      body: JSON.stringify({ ...body, submit: true }),
+    }),
+  getCareerRoadmap: () => http<CareerRoadmap | null>('/api/career/roadmap'),
+  setCareerStepStatus: (stepKey: string, status: CareerStageStatus) =>
+    http<CareerRoadmap>(`/api/career/roadmap/steps/${encodeURIComponent(stepKey)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
+  // The member's own edits to their plan (rename/reorder/add/remove/pause).
+  // Applied in place — regeneration is what creates a new version.
+  editCareerRoadmap: (
+    stages: { stepKey: string; title: string; status: CareerStageStatus; durationWeeks: number | null }[],
+  ) => http<CareerRoadmap>('/api/career/roadmap', { method: 'PATCH', body: JSON.stringify({ stages }) }),
+  getCareerAlumniHelp: () => http<AlumniHelper[]>('/api/career/alumni-help'),
+  getMatchedServices: () => http<AlumniService[]>('/api/career/services/matched'),
+  getAllServices: () => http<AlumniService[]>('/api/career/services'),
+  getMyServices: () => http<AlumniService[]>('/api/career/services/mine'),
+  createService: (body: ServiceInput) =>
+    http<AlumniService>('/api/career/services', { method: 'POST', body: JSON.stringify(body) }),
+  updateService: (id: string, body: Partial<ServiceInput> & { active?: boolean }) =>
+    http<AlumniService>(`/api/career/services/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+}
+
+export interface CareerAssessmentInput {
+  currentSituation: string
+  goalType: string
+  targetRole: string
+  targetRoleUnsure: boolean
+  hoursPerWeek?: number
+  timelineMonths?: number
+  extraSkillsNote: string
+  learningPrefs: string[]
+  supportPreference: string
+  helpTypes: string[]
+  freeText: string
+}
+
+export interface ServiceInput {
+  serviceType: ServiceType
+  title: string
+  description: string
+  tags: string[]
+  pricingMode: 'free' | 'paid' | 'custom'
+  amount?: number
+  pricingUnit?: 'hour' | 'session'
 }

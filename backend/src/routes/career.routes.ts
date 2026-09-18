@@ -1,0 +1,646 @@
+import { Router } from 'express'
+import { z } from 'zod'
+import { query, withTransaction } from '../db/pool.js'
+import { requireAuth } from '../auth/middleware.js'
+import { ApiError, asyncHandler } from '../http.js'
+import { generateCareerRoadmap, type CareerRoadmapContext } from '../ai.js'
+import { deriveCareerPathsForUser, findSimilarPathAlumni, normalizeRole } from '../careerPaths.js'
+import {
+  mapCareerAssessment,
+  mapCareerRoadmap,
+  mapAlumniService,
+  type CareerAssessmentRow,
+  type CareerRoadmapRow,
+  type AlumniServiceRow,
+} from '../mappers.js'
+
+export const careerRouter = Router()
+
+// Must match the CHECK constraint on alumni_services.service_type (schema.sql)
+// and SERVICE_TYPES in frontend/src/types.ts.
+export const SERVICE_TYPES = [
+  'career_guidance', 'resume_review', 'interview_preparation', 'technical_mentoring',
+  'project_guidance', 'industry_guidance', 'career_transition', 'freelance_consulting',
+  'portfolio_review', 'linkedin_review', 'mock_interview', 'code_project_review',
+  'startup_business_guidance', 'domain_specific_advice',
+] as const
+
+// Which service types are relevant to a given assessment goal — a fixed,
+// hand-written lookup (not stored data) that drives the deterministic
+// "Services matched to your roadmap" scoring below. See the design
+// discussion (§4) for why this replaces a vector/semantic search.
+const GOAL_SERVICE_TYPES: Record<string, (typeof SERVICE_TYPES)[number][]> = {
+  first_job: ['resume_review', 'interview_preparation', 'mock_interview', 'linkedin_review', 'career_guidance'],
+  switch_career: ['career_transition', 'career_guidance', 'industry_guidance', 'technical_mentoring'],
+  switch_domain: ['career_transition', 'domain_specific_advice', 'technical_mentoring', 'project_guidance'],
+  get_promoted: ['career_guidance', 'industry_guidance', 'technical_mentoring'],
+  become_specialist: ['technical_mentoring', 'project_guidance', 'code_project_review', 'domain_specific_advice'],
+  move_into_management: ['career_guidance', 'industry_guidance'],
+  start_freelancing: ['freelance_consulting', 'portfolio_review', 'career_guidance'],
+  start_business: ['startup_business_guidance', 'career_guidance'],
+  explore_options: ['career_guidance', 'industry_guidance', 'domain_specific_advice'],
+}
+
+// ---------------------------------------------------------------------------
+// Assessment: draft autosave + submit (submit always regenerates the roadmap)
+// ---------------------------------------------------------------------------
+
+const assessmentSchema = z.object({
+  currentSituation: z.string().trim().max(60).optional().default(''),
+  goalType: z.string().trim().max(60).optional().default(''),
+  targetRole: z.string().trim().max(120).optional().default(''),
+  targetRoleUnsure: z.boolean().optional().default(false),
+  hoursPerWeek: z.number().int().min(1).max(80).optional(),
+  timelineMonths: z.number().int().min(1).max(60).optional(),
+  extraSkillsNote: z.string().trim().max(1000).optional().default(''),
+  learningPrefs: z.array(z.string()).optional().default([]),
+  supportPreference: z.string().trim().max(60).optional().default(''),
+  helpTypes: z.array(z.string()).optional().default([]),
+  freeText: z.string().trim().max(2000).optional().default(''),
+  submit: z.boolean().optional().default(false),
+})
+
+// GET /api/career/assessment/draft — the in-progress draft, if any, so the
+// wizard can resume where the member left off.
+careerRouter.get(
+  '/assessment/draft',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const r = await query<CareerAssessmentRow>(
+      `SELECT * FROM career_assessments WHERE user_id = $1 AND status = 'draft'`,
+      [req.user!.sub],
+    )
+    res.json(r.rowCount ? mapCareerAssessment(r.rows[0]) : null)
+  }),
+)
+
+// GET /api/career/assessment/last — the most recent submitted assessment,
+// so "Edit Assessment" can reopen the wizard prefilled instead of blank.
+careerRouter.get(
+  '/assessment/last',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const r = await query<CareerAssessmentRow>(
+      `SELECT * FROM career_assessments WHERE user_id = $1 AND status = 'submitted'
+       ORDER BY created_at DESC LIMIT 1`,
+      [req.user!.sub],
+    )
+    res.json(r.rowCount ? mapCareerAssessment(r.rows[0]) : null)
+  }),
+)
+
+// Builds the small, pre-filtered context packet handed to the AI model — see
+// backend/src/ai.ts (generateCareerRoadmap) for what it does with this.
+// Deliberately NOT a database dump: every list here is already filtered down
+// to what's plausibly relevant before the model ever sees it.
+async function buildRoadmapContext(
+  userId: string,
+  assessment: ReturnType<typeof mapCareerAssessment>,
+): Promise<CareerRoadmapContext> {
+  const me = await query<{
+    expertise: string[]
+    experience: unknown
+    certifications: unknown
+    designation: string
+  }>(`SELECT expertise, experience, certifications, designation FROM users WHERE id = $1`, [userId])
+  const row = me.rows[0]
+  const recentRoles = (Array.isArray(row?.experience) ? row.experience : [])
+    .slice(-3)
+    .map((e) => (e && typeof e === 'object' ? String((e as Record<string, unknown>).role ?? '') : ''))
+    .filter(Boolean)
+  const certNames = (Array.isArray(row?.certifications) ? row.certifications : [])
+    .map((c) => (c && typeof c === 'object' ? String((c as Record<string, unknown>).name ?? '') : ''))
+    .filter(Boolean)
+
+  const currentRole = row?.designation ?? ''
+  const targetRole = assessment.targetRoleUnsure ? '' : assessment.targetRole
+
+  const pathAlumni = await findSimilarPathAlumni(currentRole, targetRole)
+  const pathCounts = new Map<string, number>()
+  for (const p of pathAlumni) {
+    const key = `${p.fromRole} -> ${p.toRole}`
+    pathCounts.set(key, (pathCounts.get(key) ?? 0) + 1)
+  }
+  const candidatePaths = [...pathCounts.entries()].map(([key, alumniCount]) => {
+    const [fromRole, toRole] = key.split(' -> ')
+    return { fromRole, toRole, alumniCount }
+  })
+
+  // Candidate alumni: whoever showed up on a similar path, plus mentors who
+  // share at least one skill/domain word with the member's own profile —
+  // capped to keep the prompt small. Never the whole member directory.
+  const pathAlumniIds = [...new Set(pathAlumni.map((p) => p.userId))]
+  const alumniRows = await query<{ id: string; designation: string; company: string; expertise: string[] }>(
+    `SELECT id, designation, company, expertise FROM users
+      WHERE is_mentor AND id <> $1
+        AND (id = ANY($2::text[]) OR expertise && $3::text[])
+      ORDER BY id = ANY($2::text[]) DESC, sessions_conducted DESC NULLS LAST
+      LIMIT 8`,
+    [userId, pathAlumniIds, row?.expertise ?? []],
+  )
+  const candidateAlumni = alumniRows.rows.map((a) => ({
+    id: a.id,
+    currentRole: [a.designation, a.company].filter(Boolean).join(' @ '),
+    topSkills: (a.expertise ?? []).slice(0, 5),
+  }))
+
+  // Candidate services: active services tagged with something the member's
+  // own profile or goal already mentions, so the model chooses from a
+  // relevant shortlist rather than the entire marketplace.
+  const goalTags = GOAL_SERVICE_TYPES[assessment.goalType] ?? []
+  const serviceRows = await query<{ id: string; service_type: string; tags: string[] }>(
+    `SELECT id, service_type, tags FROM alumni_services
+      WHERE active AND (service_type = ANY($1::text[]) OR tags && $2::text[])
+      LIMIT 20`,
+    [goalTags, row?.expertise ?? []],
+  )
+  const candidateServices = serviceRows.rows.map((s) => ({ id: s.id, type: s.service_type, tags: s.tags ?? [] }))
+
+  return {
+    assessment: {
+      currentSituation: assessment.currentSituation,
+      goalType: assessment.goalType,
+      targetRole: assessment.targetRoleUnsure ? null : assessment.targetRole,
+      hoursPerWeek: assessment.hoursPerWeek ?? 0,
+      timelineMonths: assessment.timelineMonths ?? 0,
+      learningPreferences: assessment.learningPrefs,
+      helpTypesWanted: assessment.helpTypes,
+      freeText: assessment.freeText,
+    },
+    userSkills: { expertise: row?.expertise ?? [], recentRoles, certifications: certNames },
+    candidatePaths,
+    candidateAlumni,
+    candidateServices,
+  }
+}
+
+// POST /api/career/assessment — autosave a draft, or submit (regenerating
+// the roadmap). Submitting always creates a new assessment row and a new
+// roadmap version; nothing is ever overwritten in place.
+careerRouter.post(
+  '/assessment',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = assessmentSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
+    const { submit, ...a } = parsed.data
+    const userId = req.user!.sub
+
+    if (!submit) {
+      const draft = await query<CareerAssessmentRow>(
+        `INSERT INTO career_assessments
+           (user_id, status, current_situation, goal_type, target_role, target_role_unsure,
+            hours_per_week, timeline_months, extra_skills_note, learning_prefs,
+            support_preference, help_types, free_text)
+         VALUES ($1, 'draft', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT (user_id) WHERE status = 'draft' DO UPDATE SET
+           current_situation = $2, goal_type = $3, target_role = $4, target_role_unsure = $5,
+           hours_per_week = $6, timeline_months = $7, extra_skills_note = $8, learning_prefs = $9,
+           support_preference = $10, help_types = $11, free_text = $12, updated_at = now()
+         RETURNING *`,
+        [
+          userId, a.currentSituation, a.goalType, a.targetRole, a.targetRoleUnsure,
+          a.hoursPerWeek ?? null, a.timelineMonths ?? null, a.extraSkillsNote, a.learningPrefs,
+          a.supportPreference, a.helpTypes, a.freeText,
+        ],
+      )
+      return res.json(mapCareerAssessment(draft.rows[0]))
+    }
+
+    // Submitting: insert as 'submitted' and drop the draft — a retake starts
+    // its own fresh draft next time, it doesn't resume this one.
+    const submitted = await withTransaction(async (client) => {
+      await client.query(`DELETE FROM career_assessments WHERE user_id = $1 AND status = 'draft'`, [userId])
+      return client.query<CareerAssessmentRow>(
+        `INSERT INTO career_assessments
+           (user_id, status, current_situation, goal_type, target_role, target_role_unsure,
+            hours_per_week, timeline_months, extra_skills_note, learning_prefs,
+            support_preference, help_types, free_text)
+         VALUES ($1, 'submitted', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         RETURNING *`,
+        [
+          userId, a.currentSituation, a.goalType, a.targetRole, a.targetRoleUnsure,
+          a.hoursPerWeek ?? null, a.timelineMonths ?? null, a.extraSkillsNote, a.learningPrefs,
+          a.supportPreference, a.helpTypes, a.freeText,
+        ],
+      )
+    })
+    const assessment = mapCareerAssessment(submitted.rows[0])
+
+    // Freshen this member's own transitions before retrieval reads them —
+    // guarantees a profile edit made right before submitting is reflected.
+    await deriveCareerPathsForUser(userId)
+
+    const context = await buildRoadmapContext(userId, assessment)
+    let result
+    try {
+      result = await generateCareerRoadmap(context)
+    } catch (err) {
+      throw new ApiError(502, err instanceof Error ? err.message : 'Could not generate a roadmap. Please try again.')
+    }
+
+    // Guardrail: strip any id the model returned that wasn't actually in the
+    // candidate lists it was given — it must never reference an alumnus or
+    // service that doesn't exist or wasn't offered as an option.
+    const validAlumniIds = new Set(context.candidateAlumni.map((a) => a.id))
+    const validServiceIds = new Set(context.candidateServices.map((s) => s.id))
+    const lastIndex = result.stages.length - 1
+    const stages = result.stages.map((s, i) => ({
+      ...s,
+      // Progress is ours to decide, not the model's: left to the model it
+      // marked the target role "completed" on day one and every middle stage
+      // "in progress" at once. Where the member stands is a fact we know —
+      // they start at their current situation, working on the first real
+      // stage, with everything after it still ahead.
+      status:
+        i === 0 ? ('completed' as const)
+        : i === lastIndex ? ('upcoming' as const)
+        : i === 1 ? ('in_progress' as const)
+        : ('upcoming' as const),
+      relevantAlumniIds: s.relevantAlumniIds.filter((id) => validAlumniIds.has(id)),
+      relevantServiceIds: s.relevantServiceIds.filter((id) => validServiceIds.has(id)),
+    }))
+
+    const me = await query<{ designation: string }>(`SELECT designation FROM users WHERE id = $1`, [userId])
+    const data = {
+      goal: { currentRole: me.rows[0]?.designation ?? '', targetRole: assessment.targetRoleUnsure ? null : assessment.targetRole },
+      timelineMonths: assessment.timelineMonths ?? 0,
+      hoursPerWeek: assessment.hoursPerWeek ?? 0,
+      stages,
+    }
+
+    const roadmap = await withTransaction(async (client) => {
+      await client.query(`UPDATE career_roadmaps SET status = 'archived' WHERE user_id = $1 AND status = 'active'`, [userId])
+      const prevVersion = await client.query<{ v: number }>(
+        `SELECT COALESCE(MAX(version), 0)::int AS v FROM career_roadmaps WHERE user_id = $1`,
+        [userId],
+      )
+      const version = (prevVersion.rows[0]?.v ?? 0) + 1
+      const ins = await client.query<CareerRoadmapRow>(
+        `INSERT INTO career_roadmaps (user_id, assessment_id, version, status, data)
+         VALUES ($1, $2, $3, 'active', $4) RETURNING *`,
+        [userId, assessment.id, version, JSON.stringify(data)],
+      )
+      // Seed step state from the model's own initial status per stage.
+      for (const s of stages) {
+        await client.query(
+          `INSERT INTO career_roadmap_step_state (roadmap_id, step_key, status, completed_at)
+           VALUES ($1, $2, $3, $4)`,
+          [
+            ins.rows[0].id,
+            s.stepKey,
+            s.status === 'completed' ? 'completed' : s.status === 'in_progress' ? 'in_progress' : 'upcoming',
+            s.status === 'completed' ? new Date() : null,
+          ],
+        )
+      }
+      return ins.rows[0]
+    })
+
+    res.json(mapCareerRoadmap(roadmap))
+  }),
+)
+
+// ---------------------------------------------------------------------------
+// Roadmap: read the active plan, mark step progress
+// ---------------------------------------------------------------------------
+
+async function loadActiveRoadmap(userId: string) {
+  const r = await query<CareerRoadmapRow>(
+    `SELECT * FROM career_roadmaps WHERE user_id = $1 AND status = 'active'`,
+    [userId],
+  )
+  if (!r.rowCount) return null
+  const mapped = mapCareerRoadmap(r.rows[0])
+  const states = await query<{ step_key: string; status: string }>(
+    `SELECT step_key, status FROM career_roadmap_step_state WHERE roadmap_id = $1`,
+    [r.rows[0].id],
+  )
+  const byKey = new Map(states.rows.map((s) => [s.step_key, s.status]))
+  mapped.stages = mapped.stages.map((s: Record<string, unknown>) => ({
+    ...s,
+    status: byKey.get(String(s.stepKey)) ?? s.status,
+  }))
+  return mapped
+}
+
+// GET /api/career/roadmap — the member's current active roadmap, or null if
+// they haven't completed the assessment yet.
+careerRouter.get(
+  '/roadmap',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    res.json(await loadActiveRoadmap(req.user!.sub))
+  }),
+)
+
+const stepStatusSchema = z.object({
+  status: z.enum(['upcoming', 'in_progress', 'completed', 'paused']),
+})
+
+const roadmapEditSchema = z.object({
+  stages: z
+    .array(
+      z.object({
+        stepKey: z.string().min(1).max(80),
+        title: z.string().trim().min(1).max(160),
+        status: z.enum(['upcoming', 'in_progress', 'completed', 'paused']),
+        durationWeeks: z.number().int().min(1).max(260).nullable(),
+      }),
+    )
+    .min(1)
+    .max(20),
+})
+
+// PATCH /api/career/roadmap — the member's own edits to their plan: rename,
+// reorder, add or remove a stage, pause one. Applied in place rather than as
+// a new version — a version is what a *regenerated* roadmap gets, and losing
+// their hand-edits behind a version bump every time they rename a step would
+// make the plan feel like it isn't theirs to touch.
+//
+// Alumni/service links are carried over from the existing stage rather than
+// accepted from the client, so this route can never be used to attach an
+// arbitrary person or service to a roadmap.
+careerRouter.patch(
+  '/roadmap',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = roadmapEditSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
+
+    const existing = await query<CareerRoadmapRow>(
+      `SELECT * FROM career_roadmaps WHERE user_id = $1 AND status = 'active'`,
+      [req.user!.sub],
+    )
+    if (!existing.rowCount) throw new ApiError(404, 'No active roadmap')
+
+    const current = mapCareerRoadmap(existing.rows[0])
+    const bySavedKey = new Map(
+      (current.stages as { stepKey: string; relevantAlumniIds?: string[]; relevantServiceIds?: string[] }[]).map(
+        (s) => [s.stepKey, s],
+      ),
+    )
+    const stages = parsed.data.stages.map((s) => ({
+      ...s,
+      relevantAlumniIds: bySavedKey.get(s.stepKey)?.relevantAlumniIds ?? [],
+      relevantServiceIds: bySavedKey.get(s.stepKey)?.relevantServiceIds ?? [],
+    }))
+
+    await withTransaction(async (client) => {
+      await client.query(
+        `UPDATE career_roadmaps SET data = jsonb_set(data, '{stages}', $2::jsonb) WHERE id = $1`,
+        [existing.rows[0].id, JSON.stringify(stages)],
+      )
+      // Drop state for stages that no longer exist, and make sure every
+      // remaining stage has a row matching the status just submitted.
+      await client.query(
+        `DELETE FROM career_roadmap_step_state WHERE roadmap_id = $1 AND NOT (step_key = ANY($2::text[]))`,
+        [existing.rows[0].id, stages.map((s) => s.stepKey)],
+      )
+      for (const s of stages) {
+        await client.query(
+          `INSERT INTO career_roadmap_step_state (roadmap_id, step_key, status, completed_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (roadmap_id, step_key) DO UPDATE SET status = $3, completed_at = $4`,
+          [existing.rows[0].id, s.stepKey, s.status, s.status === 'completed' ? new Date() : null],
+        )
+      }
+    })
+
+    res.json(await loadActiveRoadmap(req.user!.sub))
+  }),
+)
+
+// PATCH /api/career/roadmap/steps/:stepKey — mark a step's progress. Kept
+// separate from the roadmap's own JSON so this never requires a new version.
+careerRouter.patch(
+  '/roadmap/steps/:stepKey',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = stepStatusSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
+
+    const active = await query<{ id: string }>(
+      `SELECT id FROM career_roadmaps WHERE user_id = $1 AND status = 'active'`,
+      [req.user!.sub],
+    )
+    if (!active.rowCount) throw new ApiError(404, 'No active roadmap')
+
+    await query(
+      `INSERT INTO career_roadmap_step_state (roadmap_id, step_key, status, completed_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (roadmap_id, step_key) DO UPDATE
+         SET status = $3, completed_at = $4`,
+      [active.rows[0].id, req.params.stepKey, parsed.data.status, parsed.data.status === 'completed' ? new Date() : null],
+    )
+    res.json(await loadActiveRoadmap(req.user!.sub))
+  }),
+)
+
+// ---------------------------------------------------------------------------
+// Alumni services
+// ---------------------------------------------------------------------------
+
+const serviceSchema = z.object({
+  serviceType: z.enum(SERVICE_TYPES),
+  title: z.string().trim().max(120).optional().default(''),
+  description: z.string().trim().max(1000).optional().default(''),
+  tags: z.array(z.string().trim().max(40)).optional().default([]),
+  pricingMode: z.enum(['free', 'paid', 'custom']).optional().default('free'),
+  amount: z.number().int().min(0).max(1_000_000).optional(),
+  pricingUnit: z.enum(['hour', 'session']).optional(),
+})
+
+// GET /api/career/services/mine — the caller's own listed services, for the
+// "manage my services" panel (mentors only, but reading an empty list for a
+// non-mentor is harmless).
+careerRouter.get(
+  '/services/mine',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const r = await query<AlumniServiceRow>(
+      `SELECT * FROM alumni_services WHERE user_id = $1 ORDER BY created_at DESC`,
+      [req.user!.sub],
+    )
+    res.json(r.rows.map(mapAlumniService))
+  }),
+)
+
+// POST /api/career/services — create a service. Gated on is_mentor: this
+// reuses the existing mentor-verification trust bar rather than opening a
+// second, unvetted tier of service providers.
+careerRouter.post(
+  '/services',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const isMentor = await query<{ is_mentor: boolean }>(`SELECT is_mentor FROM users WHERE id = $1`, [req.user!.sub])
+    if (!isMentor.rows[0]?.is_mentor) {
+      throw new ApiError(403, 'Only approved mentors can offer services. Apply to become a mentor from Mentorship first.')
+    }
+    const parsed = serviceSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
+    const s = parsed.data
+    if (s.pricingMode === 'paid' && s.amount === undefined) {
+      throw new ApiError(400, 'A paid service needs an amount')
+    }
+
+    const ins = await query<AlumniServiceRow>(
+      `INSERT INTO alumni_services (user_id, service_type, title, description, tags, pricing_mode, amount, pricing_unit)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [
+        req.user!.sub, s.serviceType, s.title, s.description, s.tags,
+        s.pricingMode, s.pricingMode === 'paid' ? s.amount : null, s.pricingUnit ?? null,
+      ],
+    )
+    res.status(201).json(mapAlumniService(ins.rows[0]))
+  }),
+)
+
+const serviceUpdateSchema = serviceSchema.partial().extend({ active: z.boolean().optional() })
+
+// PATCH /api/career/services/:id — edit or activate/deactivate my own service.
+careerRouter.patch(
+  '/services/:id',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const existing = await query<AlumniServiceRow>(
+      `SELECT * FROM alumni_services WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user!.sub],
+    )
+    if (!existing.rowCount) throw new ApiError(404, 'Service not found')
+
+    const parsed = serviceUpdateSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
+    const cur = existing.rows[0]
+    const next = { ...cur, ...parsed.data }
+
+    const upd = await query<AlumniServiceRow>(
+      `UPDATE alumni_services SET
+         title = $2, description = $3, tags = $4, pricing_mode = $5, amount = $6,
+         pricing_unit = $7, active = $8, updated_at = now()
+       WHERE id = $1 RETURNING *`,
+      [
+        req.params.id,
+        next.title,
+        next.description,
+        next.tags,
+        next.pricing_mode ?? next.pricingMode,
+        (next.pricing_mode ?? next.pricingMode) === 'paid' ? next.amount : null,
+        next.pricing_unit ?? next.pricingUnit ?? null,
+        next.active,
+      ],
+    )
+    res.json(mapAlumniService(upd.rows[0]))
+  }),
+)
+
+// GET /api/career/services/matched — deterministic "services matched to your
+// roadmap": additive point-scoring over active services, same style as the
+// existing lib/matching.ts heuristic, just server-side. No embeddings.
+careerRouter.get(
+  '/services/matched',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const roadmap = await loadActiveRoadmap(req.user!.sub)
+    const assessmentRow = await query<{ support_preference: string }>(
+      `SELECT support_preference FROM career_assessments WHERE user_id = $1 AND status = 'submitted'
+       ORDER BY created_at DESC LIMIT 1`,
+      [req.user!.sub],
+    )
+    const supportPreference = assessmentRow.rows[0]?.support_preference ?? ''
+
+    const currentStage = Array.isArray(roadmap?.stages)
+      ? (roadmap.stages as Record<string, unknown>[]).find((s) => s.status === 'in_progress') ??
+        (roadmap.stages as Record<string, unknown>[]).find((s) => s.status === 'upcoming')
+      : undefined
+    const stageServiceIds = new Set(Array.isArray(currentStage?.relevantServiceIds) ? currentStage.relevantServiceIds as string[] : [])
+    const stageTags: string[] = [] // stage-level tags aren't modeled separately; overlap falls back to the member's own expertise below.
+
+    const me = await query<{ expertise: string[] }>(`SELECT expertise FROM users WHERE id = $1`, [req.user!.sub])
+    const myTags = me.rows[0]?.expertise ?? []
+
+    const services = await query<AlumniServiceRow & { sessions_conducted: number | null }>(
+      `SELECT s.*, u.sessions_conducted, u.name AS provider_name, u.photo AS provider_photo,
+              u.designation AS provider_designation, u.company AS provider_company
+         FROM alumni_services s JOIN users u ON u.id = s.user_id
+        WHERE s.active`,
+    )
+
+    const wantsFree = supportPreference === 'free_only'
+    const scored = services.rows.map((s) => {
+      let score = 0
+      if (stageServiceIds.has(s.id)) score += 40
+      const overlap = (s.tags ?? []).filter((t) => myTags.includes(t) || stageTags.includes(t)).length
+      score += overlap * 10
+      if (!wantsFree || s.pricing_mode === 'free') score += 5
+      score += Math.min(s.sessions_conducted ?? 0, 10) * 0.5
+      return { s, score }
+    })
+    scored.sort((a, b) => b.score - a.score)
+    res.json(scored.slice(0, 6).map((x) => mapAlumniService(x.s)))
+  }),
+)
+
+// GET /api/career/services — the full marketplace ("View all services"),
+// newest first, no scoring.
+careerRouter.get(
+  '/services',
+  requireAuth,
+  asyncHandler(async (_req, res) => {
+    const r = await query<AlumniServiceRow>(
+      `SELECT s.*, u.name AS provider_name, u.photo AS provider_photo,
+              u.designation AS provider_designation, u.company AS provider_company
+         FROM alumni_services s JOIN users u ON u.id = s.user_id
+        WHERE s.active
+        ORDER BY s.created_at DESC`,
+    )
+    res.json(r.rows.map(mapAlumniService))
+  }),
+)
+
+// ---------------------------------------------------------------------------
+// People from Rooman who can help you: resolve the current roadmap's
+// relevant alumni ids into displayable cards with a reason.
+// ---------------------------------------------------------------------------
+
+careerRouter.get(
+  '/alumni-help',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const roadmap = await loadActiveRoadmap(req.user!.sub)
+    if (!roadmap) return res.json([])
+    const stages = roadmap.stages as Record<string, unknown>[]
+    const relevant = new Map<string, { reason: string }>()
+    for (const s of stages) {
+      if (s.status === 'completed') continue
+      const ids = Array.isArray(s.relevantAlumniIds) ? (s.relevantAlumniIds as string[]) : []
+      for (const id of ids) if (!relevant.has(id)) relevant.set(id, { reason: String(s.title ?? '') })
+    }
+    if (relevant.size === 0) return res.json([])
+
+    const me = await query<{ designation: string }>(`SELECT designation FROM users WHERE id = $1`, [req.user!.sub])
+    const similarPaths = await findSimilarPathAlumni(me.rows[0]?.designation ?? '', normalizeRole((roadmap.goal as { targetRole?: string })?.targetRole ?? ''))
+    const similarPathIds = new Set(similarPaths.map((p) => p.userId))
+
+    const rows = await query<{
+      id: string; name: string; photo: string | null; designation: string; company: string
+      expertise: string[]; is_mentor: boolean
+    }>(
+      `SELECT id, name, photo, designation, company, expertise, is_mentor FROM users WHERE id = ANY($1::text[])`,
+      [[...relevant.keys()]],
+    )
+    res.json(
+      rows.rows.map((u) => ({
+        id: u.id,
+        name: u.name,
+        photo: u.photo ?? undefined,
+        designation: u.designation,
+        company: u.company,
+        expertise: (u.expertise ?? []).slice(0, 4),
+        isMentor: u.is_mentor,
+        reason: relevant.get(u.id)?.reason ?? '',
+        similarPath: similarPathIds.has(u.id),
+      })),
+    )
+  }),
+)

@@ -23,6 +23,7 @@ export function AppLayout() {
   const [verifyDismissed, setVerifyDismissed] = useState(false)
   const [resending, setResending] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const isFullWidth = pathname.startsWith('/career-guidance')
   const showVerifyBanner =
     !verifyDismissed && !currentUser.isAdmin && currentUser.emailVerified === false
 
@@ -53,7 +54,9 @@ export function AppLayout() {
     <LayoutContext.Provider value={{ openComposer, toggleChat, openChatWith, sidebarOpen, toggleSidebar }}>
       <Navbar />
       <LeftSidebar />
-      {pathname === '/home' ? <HomeRightSidebar /> : <RightSidebar />}
+      {/* Career Guidance is a full-width workspace: its roadmap runs
+          horizontally across the page, so it renders no right rail at all. */}
+      {isFullWidth ? null : pathname === '/home' ? <HomeRightSidebar /> : <RightSidebar />}
 
       {/*
         Padding tracks the sidebars, which are offset by --shell-gutter so the
@@ -62,7 +65,9 @@ export function AppLayout() {
         gutter even at exactly 1280px, where 260 + 720 + 300 would otherwise
         leave the feed touching both sidebars.
       */}
-      <main className={`min-h-screen pt-14 transition-all duration-200 xl:pr-[calc(316px+var(--shell-gutter))] ${
+      <main className={`min-h-screen pt-14 transition-all duration-200 ${
+        isFullWidth ? 'xl:pr-[var(--shell-gutter)]' : 'xl:pr-[calc(316px+var(--shell-gutter))]'
+      } ${
         sidebarOpen
           ? 'lg:pl-[calc(276px+var(--shell-gutter))]'
           : 'lg:pl-[calc(64px+var(--shell-gutter))]'
@@ -73,7 +78,7 @@ export function AppLayout() {
           more room for the content, not more margin.
         */}
         <div className={`mx-auto w-full px-4 py-5 transition-all duration-200 ${
-          sidebarOpen ? 'max-w-[720px]' : 'max-w-[1100px]'
+          isFullWidth ? 'max-w-[1180px]' : sidebarOpen ? 'max-w-[720px]' : 'max-w-[1100px]'
         }`}>
           {showVerifyBanner && (
             <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">

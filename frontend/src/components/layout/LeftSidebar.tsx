@@ -9,6 +9,7 @@ import {
   Newspaper,
   Plus,
   Rocket,
+  Route,
   ShieldCheck,
   Users,
   Menu,
@@ -26,6 +27,7 @@ const NAV = [
   { to: '/startupvarsity', label: 'StartupVarsity', icon: Rocket },
   { to: '/news', label: 'News & Updates', icon: Newspaper },
   { to: '/explore', label: 'Explore Communities', icon: Compass },
+  { to: '/career-guidance', label: 'Career Guidance', icon: Route },
 ]
 
 export function LeftSidebar() {
