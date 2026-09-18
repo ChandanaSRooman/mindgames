@@ -997,3 +997,144 @@ export const POST_TYPE_STYLES: Record<PostType, { label: string; classes: string
   Article: { label: 'Article', classes: 'bg-sky-100 text-sky-700' },
   Meetup: { label: 'Meetup', classes: 'bg-rose-100 text-rose-700' },
 }
+
+// --- Career Guidance --------------------------------------------------------
+// The assessment → AI roadmap → alumni/services flow. Mirrors what
+// backend/src/mappers.ts emits and what career.routes.ts accepts.
+
+/** Must stay in sync with SERVICE_TYPES in backend/src/routes/career.routes.ts
+ *  and the CHECK constraint on alumni_services.service_type. */
+export const SERVICE_TYPES = [
+  'career_guidance', 'resume_review', 'interview_preparation', 'technical_mentoring',
+  'project_guidance', 'industry_guidance', 'career_transition', 'freelance_consulting',
+  'portfolio_review', 'linkedin_review', 'mock_interview', 'code_project_review',
+  'startup_business_guidance', 'domain_specific_advice',
+] as const
+export type ServiceType = (typeof SERVICE_TYPES)[number]
+
+export const SERVICE_LABELS: Record<ServiceType, string> = {
+  career_guidance: 'Career guidance',
+  resume_review: 'Resume review',
+  interview_preparation: 'Interview preparation',
+  technical_mentoring: 'Technical mentoring',
+  project_guidance: 'Project guidance',
+  industry_guidance: 'Industry guidance',
+  career_transition: 'Career transition',
+  freelance_consulting: 'Freelance consulting',
+  portfolio_review: 'Portfolio review',
+  linkedin_review: 'LinkedIn/profile review',
+  mock_interview: 'Mock interview',
+  code_project_review: 'Code/project review',
+  startup_business_guidance: 'Startup/business guidance',
+  domain_specific_advice: 'Domain-specific advice',
+}
+
+/** The four groupings the assessment presents services under. Derived from
+ *  service_type in code rather than stored per row — the grouping is a fixed
+ *  property of the type, not data about an individual service. */
+export const SERVICE_CATEGORIES: { label: string; types: ServiceType[] }[] = [
+  { label: 'Career & Direction', types: ['career_guidance', 'industry_guidance', 'career_transition'] },
+  { label: 'Getting Hired', types: ['resume_review', 'interview_preparation', 'mock_interview', 'linkedin_review', 'portfolio_review'] },
+  { label: 'Skills & Projects', types: ['technical_mentoring', 'project_guidance', 'code_project_review'] },
+  { label: 'Business & Independent Work', types: ['startup_business_guidance', 'freelance_consulting', 'domain_specific_advice'] },
+]
+
+export const CURRENT_SITUATIONS = [
+  'Student', 'Fresher', 'Working professional', 'Looking for a job',
+  'Career break', 'Freelancer', 'Entrepreneur', 'Other',
+] as const
+
+export const CAREER_GOALS = [
+  { value: 'first_job', label: 'Get my first job' },
+  { value: 'switch_career', label: 'Switch career' },
+  { value: 'switch_domain', label: 'Switch domain' },
+  { value: 'get_promoted', label: 'Get promoted' },
+  { value: 'become_specialist', label: 'Become a specialist' },
+  { value: 'move_into_management', label: 'Move into management' },
+  { value: 'start_freelancing', label: 'Start freelancing' },
+  { value: 'start_business', label: 'Start a business' },
+  { value: 'explore_options', label: 'Explore career options' },
+] as const
+
+export const LEARNING_PREFERENCES = [
+  'Self-learning', 'Courses', 'Hands-on projects', 'Mentorship',
+  'Alumni guidance', 'Community/networking', 'Certifications', 'Real-world experience',
+] as const
+
+export const SUPPORT_PREFERENCES = [
+  { value: 'free_only', label: 'Free help only' },
+  { value: 'free_or_paid', label: 'Free or paid' },
+  { value: 'pay_if_valuable', label: "I'm willing to pay if the value is useful" },
+] as const
+
+export interface CareerAssessment {
+  id: string
+  status: 'draft' | 'submitted'
+  currentSituation: string
+  goalType: string
+  targetRole: string
+  targetRoleUnsure: boolean
+  hoursPerWeek?: number
+  timelineMonths?: number
+  extraSkillsNote: string
+  learningPrefs: string[]
+  supportPreference: string
+  helpTypes: string[]
+  freeText: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type CareerStageStatus = 'upcoming' | 'in_progress' | 'completed' | 'paused'
+
+export interface CareerStage {
+  stepKey: string
+  title: string
+  status: CareerStageStatus
+  durationWeeks: number | null
+  relevantAlumniIds: string[]
+  relevantServiceIds: string[]
+}
+
+export interface CareerRoadmap {
+  roadmapId: string
+  version: number
+  status: 'active' | 'archived'
+  goal: { currentRole: string; targetRole: string | null }
+  timelineMonths: number
+  hoursPerWeek: number
+  stages: CareerStage[]
+  createdAt: string
+}
+
+export interface AlumniService {
+  id: string
+  userId: string
+  serviceType: ServiceType
+  title: string
+  description: string
+  tags: string[]
+  pricingMode: 'free' | 'paid' | 'custom'
+  amount?: number
+  pricingUnit?: 'hour' | 'session'
+  active: boolean
+  createdAt: string
+  updatedAt: string
+  providerName?: string
+  providerPhoto?: string
+  providerDesignation?: string
+  providerCompany?: string
+}
+
+/** A person surfaced by the roadmap, with the stage that made them relevant. */
+export interface AlumniHelper {
+  id: string
+  name: string
+  photo?: string
+  designation: string
+  company: string
+  expertise: string[]
+  isMentor: boolean
+  reason: string
+  similarPath: boolean
+}

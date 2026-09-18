@@ -5,7 +5,7 @@ import { useApp } from '../store/AppStore'
 import { isValidEmail } from '../lib/csv'
 import { landingRoute } from '../lib/landingRoute'
 import { setPendingPassword } from '../lib/pendingPassword'
-import { Button, Card } from '../components/ui'
+import { Button, Card, PasswordInput } from '../components/ui'
 
 // Sign-in for existing members. Authenticates against the backend (JWT) via the
 // store, then lands in the app. Demo account: you@rooman.alumni / roomandemo.
@@ -110,9 +110,8 @@ export function Login() {
               onChange={(e) => setEmail(e.target.value)}
             />
           )}
-          <input
+          <PasswordInput
             className={field}
-            type="password"
             placeholder="Password"
             autoFocus={emailLocked}
             autoComplete="current-password"
