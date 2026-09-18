@@ -347,8 +347,12 @@ function BookModal({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
-      <Card className="w-full max-w-md p-5" >
-        <div onClick={(e) => e.stopPropagation()}>
+      {/* The click guard wraps the whole Card. On an inner div, clicking the
+          Card's own p-5 padding still reached the backdrop handler and closed
+          the modal, discarding whatever had been typed. */}
+      <div className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+        <Card className="w-full p-5">
+          <div>
           <h2 className="text-lg font-bold text-[#1c1c1c]">Request a session with {target.name}</h2>
           <p className="mb-4 text-sm text-[#878a8c]">
             They’ll get your request and confirm a time. Payment, if any, is arranged directly with them.
@@ -393,8 +397,9 @@ function BookModal({
               Send request
             </Button>
           </div>
-        </div>
-      </Card>
+          </div>
+        </Card>
+      </div>
     </div>
   )
 }

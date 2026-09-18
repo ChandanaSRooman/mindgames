@@ -145,10 +145,17 @@ async function main(): Promise<void> {
   }
 
   // Members are picked by account age, never by name or address.
+  // "Real data" means any sign the member filled their profile in — not just
+  // a work-history array. Someone who set a job title and employer but never
+  // added timeline entries is still a real profile, and overwriting it would
+  // put a fabricated employer on a live account.
   const members = (
     await query<Member>(
       `SELECT id, name,
-              (jsonb_typeof(experience)='array' AND jsonb_array_length(experience) > 0) AS has_history
+              ((jsonb_typeof(experience)='array' AND jsonb_array_length(experience) > 0)
+               OR COALESCE(TRIM(designation), '') <> ''
+               OR COALESCE(TRIM(company), '') <> ''
+               OR is_mentor) AS has_history
          FROM users
         WHERE NOT is_admin
         ORDER BY created_at, id`,
@@ -161,16 +168,22 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  // Rollback snapshot of every field this script can modify.
-  const ids = targets.map((t) => t.id)
-  const snapshot = await query(
-    `SELECT id, name, designation, company, experience_years, expertise, experience,
-            is_mentor, willing_to_mentor, mentor_verified_at
-       FROM users WHERE id = ANY($1::text[])`,
-    [ids],
-  )
-  writeFileSync('career-demo-backup.json', JSON.stringify(snapshot.rows, null, 2))
-  console.log(`rollback snapshot -> career-demo-backup.json (${snapshot.rowCount} members)\n`)
+  // Rollback snapshot of every field this script can modify. Not written on a
+  // dry run: the file holds member profile data, and --dry-run promises to
+  // write nothing.
+  if (!DRY) {
+    const ids = targets.map((t) => t.id)
+    const snapshot = await query(
+      `SELECT id, name, designation, company, experience_years, expertise, experience,
+              is_mentor, willing_to_mentor, mentor_verified_at
+         FROM users WHERE id = ANY($1::text[])`,
+      [ids],
+    )
+    writeFileSync('career-demo-backup.json', JSON.stringify(snapshot.rows, null, 2))
+    console.log(`rollback snapshot -> career-demo-backup.json (${snapshot.rowCount} members)\n`)
+  } else {
+    console.log('dry run — no files written, no rows changed\n')
+  }
 
   const proof = Buffer.from('%PDF-1.4 Demo experience letter - evidence for a mentor application.')
 

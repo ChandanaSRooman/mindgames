@@ -867,6 +867,9 @@ export interface CareerRoadmapContext {
   }
   userSkills: { expertise: string[]; recentRoles: string[]; certifications: string[] }
   candidatePaths: { fromRole: string; toRole: string; alumniCount: number }[]
+  /** Whole routes real alumni walked from the member's current role to their
+   *  target, oldest role first. Empty when nobody has walked it. */
+  walkedRoutes: string[][]
   candidateAlumni: { id: string; currentRole: string; topSkills: string[] }[]
   candidateServices: { id: string; type: string; tags: string[] }[]
 }
@@ -995,6 +998,11 @@ export async function generateCareerRoadmap(context: CareerRoadmapContext): Prom
   } as Anthropic.MessageCreateParamsNonStreaming)
   if (res.stop_reason === 'refusal') {
     throw new Error('The AI declined to build a roadmap for this assessment.')
+  }
+  // Without this a truncated reply fell through to JSON.parse and surfaced a
+  // raw SyntaxError as the 502 body, which tells the member nothing.
+  if (res.stop_reason === 'max_tokens') {
+    throw new Error('The roadmap came back truncated. Please try again.')
   }
   const text = res.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text
   if (!text) throw new Error('The AI returned an empty roadmap response.')

@@ -4,7 +4,13 @@ import { query, withTransaction } from '../db/pool.js'
 import { requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { generateCareerRoadmap, type CareerRoadmapContext } from '../ai.js'
-import { deriveCareerPathsForUser, findSimilarPathAlumni, normalizeRole } from '../careerPaths.js'
+import {
+  deriveCareerPathsForUser,
+  findCareerPathChains,
+  findSimilarPathAlumni,
+  normalizeRole,
+} from '../careerPaths.js'
+import { startYearOf } from '../mappers.js'
 import {
   mapCareerAssessment,
   mapCareerRoadmap,
@@ -104,10 +110,22 @@ async function buildRoadmapContext(
     designation: string
   }>(`SELECT expertise, experience, certifications, designation FROM users WHERE id = $1`, [userId])
   const row = me.rows[0]
+  // Sorted, not sliced off the end: profiles are stored newest-first as often
+  // as oldest-first (careerPaths.ts sorts for exactly this reason), so taking
+  // the last three entries could hand the model someone's three oldest roles
+  // and describe a senior engineer by the job they left a decade ago.
   const recentRoles = (Array.isArray(row?.experience) ? row.experience : [])
-    .slice(-3)
-    .map((e) => (e && typeof e === 'object' ? String((e as Record<string, unknown>).role ?? '') : ''))
-    .filter(Boolean)
+    .map((e) => (e && typeof e === 'object' ? (e as Record<string, unknown>) : {}))
+    .map((e, i) => ({ role: String(e.role ?? ''), year: startYearOf(e.period), i }))
+    .filter((e) => e.role !== '')
+    .sort((a, b) => {
+      if (a.year === null && b.year === null) return a.i - b.i
+      if (a.year === null) return 1
+      if (b.year === null) return -1
+      return b.year - a.year
+    })
+    .slice(0, 3)
+    .map((e) => e.role)
   const certNames = (Array.isArray(row?.certifications) ? row.certifications : [])
     .map((c) => (c && typeof c === 'object' ? String((c as Record<string, unknown>).name ?? '') : ''))
     .filter(Boolean)
@@ -125,6 +143,13 @@ async function buildRoadmapContext(
     const [fromRole, toRole] = key.split(' -> ')
     return { fromRole, toRole, alumniCount }
   })
+
+  // Full journeys, not just single hops: the recursive walk over career_paths
+  // reconstructs routes real alumni took from where this member stands to
+  // where they want to be (e.g. backend developer -> cloud engineer -> AI
+  // engineer), which is far more useful to the model than a set of unlinked
+  // role pairs. Empty when nobody has walked it, which is the honest answer.
+  const walkedRoutes = (await findCareerPathChains(currentRole, targetRole)).map((c) => c.roles)
 
   // Candidate alumni: whoever showed up on a similar path, plus mentors who
   // share at least one skill/domain word with the member's own profile —
@@ -171,6 +196,7 @@ async function buildRoadmapContext(
     },
     userSkills: { expertise: row?.expertise ?? [], recentRoles, certifications: certNames },
     candidatePaths,
+    walkedRoutes,
     candidateAlumni,
     candidateServices,
   }
@@ -247,8 +273,18 @@ careerRouter.post(
     const validAlumniIds = new Set(context.candidateAlumni.map((a) => a.id))
     const validServiceIds = new Set(context.candidateServices.map((s) => s.id))
     const lastIndex = result.stages.length - 1
+    // stepKey is the primary key of the step-state table, and the model has
+    // been seen to reuse a slug across stages. Deduped here so a repeat can't
+    // abort the insert transaction after the (slow, paid) AI call succeeded.
+    const seenKeys = new Set<string>()
     const stages = result.stages.map((s, i) => ({
       ...s,
+      stepKey: (() => {
+        let key = s.stepKey || `step-${i + 1}`
+        while (seenKeys.has(key)) key = `${key}-${i + 1}`
+        seenKeys.add(key)
+        return key
+      })(),
       // Progress is ours to decide, not the model's: left to the model it
       // marked the target role "completed" on day one and every middle stage
       // "in progress" at once. Where the member stands is a fact we know —
@@ -287,7 +323,8 @@ careerRouter.post(
       for (const s of stages) {
         await client.query(
           `INSERT INTO career_roadmap_step_state (roadmap_id, step_key, status, completed_at)
-           VALUES ($1, $2, $3, $4)`,
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (roadmap_id, step_key) DO UPDATE SET status = EXCLUDED.status`,
           [
             ins.rows[0].id,
             s.stepKey,
@@ -401,10 +438,20 @@ careerRouter.patch(
       )
       for (const s of stages) {
         await client.query(
+          // completed_at is preserved when a stage was already complete —
+          // renaming one stage used to stamp every completed stage with the
+          // current time, erasing when the member actually finished them.
+          // It is only set when a stage becomes complete, and cleared when it
+          // is reopened.
           `INSERT INTO career_roadmap_step_state (roadmap_id, step_key, status, completed_at)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (roadmap_id, step_key) DO UPDATE SET status = $3, completed_at = $4`,
-          [existing.rows[0].id, s.stepKey, s.status, s.status === 'completed' ? new Date() : null],
+           VALUES ($1, $2, $3, CASE WHEN $3 = 'completed' THEN now() ELSE NULL END)
+           ON CONFLICT (roadmap_id, step_key) DO UPDATE
+             SET status = $3,
+                 completed_at = CASE
+                   WHEN $3 <> 'completed' THEN NULL
+                   ELSE COALESCE(career_roadmap_step_state.completed_at, now())
+                 END`,
+          [existing.rows[0].id, s.stepKey, s.status],
         )
       }
     })
@@ -422,18 +469,29 @@ careerRouter.patch(
     const parsed = stepStatusSchema.safeParse(req.body)
     if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
 
-    const active = await query<{ id: string }>(
-      `SELECT id FROM career_roadmaps WHERE user_id = $1 AND status = 'active'`,
+    const active = await query<{ id: string; data: unknown }>(
+      `SELECT id, data FROM career_roadmaps WHERE user_id = $1 AND status = 'active'`,
       [req.user!.sub],
     )
     if (!active.rowCount) throw new ApiError(404, 'No active roadmap')
 
+    // The step must be one this roadmap actually has. Without the check any
+    // string in the URL created a row, so a typo (or a loop) could fill the
+    // table with state for steps that don't exist.
+    const roadmapData = (active.rows[0].data ?? {}) as { stages?: { stepKey?: string }[] }
+    const known = (roadmapData.stages ?? []).some((s) => s.stepKey === req.params.stepKey)
+    if (!known) throw new ApiError(404, 'No such step in your roadmap')
+
     await query(
       `INSERT INTO career_roadmap_step_state (roadmap_id, step_key, status, completed_at)
-       VALUES ($1, $2, $3, $4)
+       VALUES ($1, $2, $3, CASE WHEN $3 = 'completed' THEN now() ELSE NULL END)
        ON CONFLICT (roadmap_id, step_key) DO UPDATE
-         SET status = $3, completed_at = $4`,
-      [active.rows[0].id, req.params.stepKey, parsed.data.status, parsed.data.status === 'completed' ? new Date() : null],
+         SET status = $3,
+             completed_at = CASE
+               WHEN $3 <> 'completed' THEN NULL
+               ELSE COALESCE(career_roadmap_step_state.completed_at, now())
+             END`,
+      [active.rows[0].id, req.params.stepKey, parsed.data.status],
     )
     res.json(await loadActiveRoadmap(req.user!.sub))
   }),
@@ -514,7 +572,18 @@ careerRouter.patch(
     const parsed = serviceUpdateSchema.safeParse(req.body)
     if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
     const cur = existing.rows[0]
-    const next = { ...cur, ...parsed.data }
+    const body = parsed.data
+
+    // Each field is resolved explicitly rather than by spreading the body over
+    // the row: the row is snake_case and the body camelCase, so a merged object
+    // always found the row's `pricing_mode` first and silently ignored an
+    // incoming `pricingMode` — switching a service free -> paid did nothing.
+    const pricingMode = body.pricingMode ?? cur.pricing_mode
+    const amount = body.amount ?? cur.amount
+    const pricingUnit = body.pricingUnit ?? cur.pricing_unit
+    if (pricingMode === 'paid' && (amount === null || amount === undefined)) {
+      throw new ApiError(400, 'A paid service needs an amount')
+    }
 
     const upd = await query<AlumniServiceRow>(
       `UPDATE alumni_services SET
@@ -523,13 +592,13 @@ careerRouter.patch(
        WHERE id = $1 RETURNING *`,
       [
         req.params.id,
-        next.title,
-        next.description,
-        next.tags,
-        next.pricing_mode ?? next.pricingMode,
-        (next.pricing_mode ?? next.pricingMode) === 'paid' ? next.amount : null,
-        next.pricing_unit ?? next.pricingUnit ?? null,
-        next.active,
+        body.title ?? cur.title,
+        body.description ?? cur.description,
+        body.tags ?? cur.tags,
+        pricingMode,
+        pricingMode === 'paid' ? amount : null,
+        pricingMode === 'free' ? null : pricingUnit,
+        body.active ?? cur.active,
       ],
     )
     res.json(mapAlumniService(upd.rows[0]))
@@ -556,10 +625,18 @@ careerRouter.get(
         (roadmap.stages as Record<string, unknown>[]).find((s) => s.status === 'upcoming')
       : undefined
     const stageServiceIds = new Set(Array.isArray(currentStage?.relevantServiceIds) ? currentStage.relevantServiceIds as string[] : [])
-    const stageTags: string[] = [] // stage-level tags aren't modeled separately; overlap falls back to the member's own expertise below.
+
+    // What the member is working on right now, as matchable words. Stages
+    // carry no tag field of their own, so the title is the only signal —
+    // "Learn LLMs and RAG" should favour a service tagged llm or rag over one
+    // tagged with a skill they already have.
+    const stageTags = String(currentStage?.title ?? '')
+      .toLowerCase()
+      .split(/[^a-z0-9+#.]+/)
+      .filter((w) => w.length > 2)
 
     const me = await query<{ expertise: string[] }>(`SELECT expertise FROM users WHERE id = $1`, [req.user!.sub])
-    const myTags = me.rows[0]?.expertise ?? []
+    const myTags = (me.rows[0]?.expertise ?? []).map((t) => t.toLowerCase())
 
     const services = await query<AlumniServiceRow & { sessions_conducted: number | null }>(
       `SELECT s.*, u.sessions_conducted, u.name AS provider_name, u.photo AS provider_photo,
@@ -569,13 +646,19 @@ careerRouter.get(
       [req.user!.sub],
     )
 
+    // "Free help only" is an answer, not a preference to be outweighed: a paid
+    // service is excluded outright rather than docked a few points, which had
+    // let paid listings still top the list.
     const wantsFree = supportPreference === 'free_only'
-    const scored = services.rows.map((s) => {
+    const eligible = wantsFree ? services.rows.filter((s) => s.pricing_mode === 'free') : services.rows
+
+    const scored = eligible.map((s) => {
       let score = 0
       if (stageServiceIds.has(s.id)) score += 40
-      const overlap = (s.tags ?? []).filter((t) => myTags.includes(t) || stageTags.includes(t)).length
-      score += overlap * 10
-      if (!wantsFree || s.pricing_mode === 'free') score += 5
+      const tags = (s.tags ?? []).map((t) => t.toLowerCase())
+      score += tags.filter((t) => stageTags.includes(t)).length * 15
+      score += tags.filter((t) => myTags.includes(t)).length * 10
+      if (s.pricing_mode === 'free') score += 5
       score += Math.min(s.sessions_conducted ?? 0, 10) * 0.5
       return { s, score }
     })
