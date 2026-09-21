@@ -165,6 +165,7 @@ eventsRouter.post(
         'event',
         `${creator.rows[0].name} is hosting "${e.title}" on ${when} — RSVP on the Events page.`,
         me,
+        { type: 'event', id: inserted.rows[0].id },
       )
     } else {
       // Ask the admins to review a member-created event.
@@ -175,6 +176,7 @@ eventsRouter.post(
           'event',
           `${creator.rows[0].name} submitted an event for review: "${e.title}".`,
           me,
+          { type: 'event', id: inserted.rows[0].id },
         )
       }
     }
@@ -204,8 +206,9 @@ eventsRouter.post(
       'event',
       `${creator.rows[0]?.name ?? 'A member'} is hosting "${title}" on ${when} — RSVP on the Events page.`,
       creator_id,
+      { type: 'event', id: req.params.id },
     )
-    void pushNotification(creator_id, 'event', `Your event "${title}" was approved and is now live! 🎉`, req.user!.sub)
+    void pushNotification(creator_id, 'event', `Your event "${title}" was approved and is now live! 🎉`, req.user!.sub, { type: 'event', id: req.params.id })
     res.json({ ok: true })
   }),
 )
@@ -228,6 +231,7 @@ eventsRouter.post(
       'event',
       `Your event "${title}" was declined. Reach out to the Rooman team for details.`,
       req.user!.sub,
+      { type: 'event', id: req.params.id },
     )
     res.json({ ok: true })
   }),
@@ -282,6 +286,7 @@ eventsRouter.post(
           ? `${who.rows[0].name} joined the waitlist for your event "${joined.title}".`
           : `${who.rows[0].name} is attending your event "${joined.title}".`,
         me,
+        { type: 'event', id: req.params.id },
       )
     }
     const full = await query<EventRow>(`${EVENT_SELECT} WHERE e.id = $2`, [me, req.params.id])
@@ -324,6 +329,8 @@ eventsRouter.delete(
         promoted.user_id,
         'event',
         `A spot opened up — you're off the waitlist and confirmed for "${promoted.title}"!`,
+        undefined,
+        { type: 'event', id: req.params.id },
       )
     }
     const full = await query<EventRow>(`${EVENT_SELECT} WHERE e.id = $2`, [me, req.params.id])
@@ -351,7 +358,7 @@ eventsRouter.delete(
     )
     await query(`DELETE FROM events WHERE id = $1`, [req.params.id])
     for (const a of attendees.rows) {
-      void pushNotification(a.user_id, 'event', `The event "${ev.rows[0].title}" was cancelled.`, req.user!.sub)
+      void pushNotification(a.user_id, 'event', `The event "${ev.rows[0].title}" was cancelled.`, req.user!.sub, { type: 'event', id: req.params.id })
     }
     res.json({ ok: true })
   }),
@@ -397,6 +404,7 @@ eventsRouter.post(
         'event',
         `${who.rows[0].name} commented on your event "${ev.rows[0].title}".`,
         req.user!.sub,
+        { type: 'event', id: req.params.id },
       )
     }
     res.status(201).json(mapComment(result.rows[0]))
@@ -613,7 +621,7 @@ export function startEventReminderScheduler(): void {
           [e.id],
         )
         for (const a of attendees.rows) {
-          void pushNotification(a.user_id, 'event', `Reminder: "${e.title}" starts ${when}${e.location ? ` at ${e.location}` : ''}.`)
+          void pushNotification(a.user_id, 'event', `Reminder: "${e.title}" starts ${when}${e.location ? ` at ${e.location}` : ''}.`, undefined, { type: 'event', id: e.id })
           void sendEmail(
             a.email,
             `Reminder: ${e.title} — ${when}`,

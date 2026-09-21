@@ -112,6 +112,7 @@ startupsRouter.post(
         'community',
         `New StartupVarsity application: "${s.name}" (${s.stage}, ${s.domain}) by ${founder.rows[0].name}.`,
         req.user!.sub,
+        { type: 'startup', id: result.rows[0].id },
       )
     }
 

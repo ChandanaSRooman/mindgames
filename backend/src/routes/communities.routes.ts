@@ -114,6 +114,7 @@ communitiesRouter.post(
           'community',
           `${me.rows[0].name} requested a new community: "${c.name}" (${c.category}).`,
           req.user!.sub,
+          { type: 'community', id: created },
         )
       }
     }
@@ -142,6 +143,7 @@ communitiesRouter.post(
         'community',
         `Your community "${name}" was approved and is now live! 🎉`,
         req.user!.sub,
+        { type: 'community', id: req.params.id },
       )
     }
     res.json({ ok: true })
@@ -167,6 +169,7 @@ communitiesRouter.post(
         'community',
         `Your community request "${name}" was declined. Reach out to the Rooman team for details.`,
         req.user!.sub,
+        { type: 'community', id: req.params.id },
       )
     }
     res.json({ ok: true })
