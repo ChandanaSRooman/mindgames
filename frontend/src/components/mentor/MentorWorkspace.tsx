@@ -60,8 +60,7 @@ export function MentorWorkspace({
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
           <Crown size={18} className="shrink-0 text-amber-600" />
           <p className="flex-1 text-sm text-amber-900">
-            <strong>Dude, you need a subscription.</strong>{' '}
-            {subscription?.blockedReason ?? 'A plan is needed before you can accept sessions.'}
+            <strong>{subscription?.blockedReason ?? 'Dude, you need a subscription to accept sessions.'}</strong>
           </p>
           <Button className="!py-1.5" icon={<Crown size={14} />} onClick={() => setShowPlans(true)}>
             See plans
