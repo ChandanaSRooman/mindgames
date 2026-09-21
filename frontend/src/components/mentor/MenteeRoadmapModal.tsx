@@ -36,6 +36,22 @@ export function MenteeRoadmapModal({ menteeId, onClose }: { menteeId: string; on
 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/50 p-4 py-8 print:static print:bg-white print:p-0" onClick={onClose}>
+      {/* Tailwind's print: variant only styles this element and its own
+          children — it does nothing about everything ELSE on the page (the
+          navbar, sidebar, the cards behind the modal), so "Save as PDF"
+          printed the whole app with the report shrunk into a corner of it.
+          This is real print isolation: hide every element, then re-reveal
+          only the report and its descendants. */}
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #mentee-roadmap-print, #mentee-roadmap-print * { visibility: visible; }
+          #mentee-roadmap-print {
+            position: absolute; inset: 0; width: 100%; max-width: none;
+            box-shadow: none; border-radius: 0;
+          }
+        }
+      `}</style>
       <div
         id="mentee-roadmap-print"
         className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl print:max-w-none print:shadow-none"
