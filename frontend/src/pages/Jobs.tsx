@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { BadgeCheck, Briefcase, Check, ChevronDown, ChevronUp, CirclePause, CirclePlay, ClipboardList, Download, FileText, MapPin, MessageSquare, Paperclip, Pencil, Plus, Send, Trash2, Users, X } from 'lucide-react'
+import { BadgeCheck, Briefcase, Check, ChevronDown, ChevronUp, CirclePause, CirclePlay, ClipboardList, Download, FileText, MapPin, MessageSquare, Paperclip, Pencil, Plus, Send, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { useLayout } from '../components/layout/LayoutContext'
 import { api } from '../lib/api'
@@ -208,7 +208,7 @@ function HiringCard({
   onApply: (answers?: string[], resume?: ResumeAttachment) => void
 }) {
   const { openChatWith } = useLayout()
-  const { notify, updatePost } = useApp()
+  const { notify, updatePost, connectionState, sendConnect } = useApp()
   const [applicants, setApplicants] = useState<JobApplicant[] | null>(null)
   const [showApplicants, setShowApplicants] = useState(false)
   const [showApplyForm, setShowApplyForm] = useState(false)
@@ -363,9 +363,23 @@ function HiringCard({
                         <Download size={14} /> Resume
                       </Button>
                     )}
-                    <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => openChatWith(a.id)}>
-                      <MessageSquare size={14} /> Message
-                    </Button>
+                    {/* Only once connected — the backend refuses a new DM
+                        otherwise. A recruiter reaching a stranger who applied
+                        connects first, same as anywhere else in the app. */}
+                    {connectionState(a.id) === 'connected' ? (
+                      <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => openChatWith(a.id)}>
+                        <MessageSquare size={14} /> Message
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        className="!px-3 !py-1.5 text-xs"
+                        disabled={connectionState(a.id) === 'pending'}
+                        onClick={() => sendConnect(a.id)}
+                      >
+                        <UserPlus size={14} /> {connectionState(a.id) === 'pending' ? 'Request sent' : 'Connect'}
+                      </Button>
+                    )}
                   </div>
                   {/* Answers snapshotted at apply time (survive later edits) */}
                   {a.answers.length > 0 && (

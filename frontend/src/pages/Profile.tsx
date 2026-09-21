@@ -219,13 +219,19 @@ export function Profile() {
                       ? 'Request sent'
                       : 'Send Note'}
                 </Button>
-                <Button
-                  variant="outline"
-                  icon={<MessageSquare size={15} />}
-                  onClick={() => openChatWith(user.id)}
-                >
-                  Message
-                </Button>
+                {/* Only shown once connected — the backend refuses to open a
+                    new DM otherwise, so an unconnected visitor gets "Send
+                    Note" as the actionable button instead of one that would
+                    just error when clicked. */}
+                {conn === 'connected' && (
+                  <Button
+                    variant="outline"
+                    icon={<MessageSquare size={15} />}
+                    onClick={() => openChatWith(user.id)}
+                  >
+                    Message
+                  </Button>
+                )}
                 {user.company && (
                   <Button
                     variant="subtle"

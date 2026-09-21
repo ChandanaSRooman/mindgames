@@ -24,7 +24,7 @@ export function ReachOutModal({
   extended?: boolean
   defaultMode?: Mode
 }) {
-  const { messageUser, sendMessage, notify } = useApp()
+  const { messageUser, sendMessage, sendConnect, connectionState, notify } = useApp()
   const { openChatWith } = useLayout()
   const [mode, setMode] = useState<Mode>(defaultMode)
   const [role, setRole] = useState('')
@@ -53,10 +53,22 @@ export function ReachOutModal({
             (note ? `\n\n${note}` : '') +
             `\n\n(Sent via Ask Guidance on Root Connect)`
 
-      const threadId = await messageUser(user.id)
-      sendMessage(threadId, text)
-      notify(`${activeMode === 'referral' ? 'Referral request' : 'Message'} sent to ${user.name} — check your chat for replies.`)
-      openChatWith(user.id)
+      // A referral/guidance ask is exactly what "send a connection request
+      // with a note" was designed for: a purposeful one-time outreach to
+      // someone you are not yet talking to. Only a member already connected
+      // gets it delivered as an instant chat message — for anyone else this
+      // sends the same text as the connection request's note, so it is
+      // waiting for them the moment they accept rather than requiring a
+      // second message afterwards.
+      if (connectionState(user.id) === 'connected') {
+        const threadId = await messageUser(user.id)
+        sendMessage(threadId, text)
+        notify(`${activeMode === 'referral' ? 'Referral request' : 'Message'} sent to ${user.name} — check your chat for replies.`)
+        openChatWith(user.id)
+      } else {
+        sendConnect(user.id, text)
+        notify(`Connection request with your ${activeMode === 'referral' ? 'referral ask' : 'note'} sent to ${user.name}.`)
+      }
       onClose()
     } finally {
       setSending(false)
