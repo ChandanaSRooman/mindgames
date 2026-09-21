@@ -22,8 +22,9 @@ import type {
   Startup,
   User,
   Visibility,
+  SubscriptionState,
 } from '../types'
-import { api, getToken, setToken } from '../lib/api'
+import { api, getToken, isPaymentRequired, setToken } from '../lib/api'
 import { googleSignIn } from '../lib/google'
 import { rankByMatch } from '../lib/matching'
 
@@ -109,6 +110,10 @@ interface AppContextValue {
   ignoreRequest: (id: string) => void
   cancelSentRequest: (id: string) => void
   refreshNetwork: () => Promise<void>
+  /** The signed-in member's mentor plan, or null for non-mentors and before
+   *  it has loaded. Drives the crown in the navbar and the session paywall. */
+  subscription: SubscriptionState | null
+  refreshSubscription: () => Promise<void>
 
   // posts
   posts: Post[]
@@ -128,7 +133,7 @@ interface AppContextValue {
   // mentorship + startups
   sessions: MentorshipSession[]
   bookSession: (mentorId: string, topic: string, date: string, time: string, serviceId?: string) => void
-  acceptSession: (id: string, meetingLink?: string) => void
+  acceptSession: (id: string, meetingLink?: string) => Promise<'ok' | 'payment-required'>
   rateSession: (id: string, rating: number, review?: string) => void
   declineSession: (id: string) => void
   completeSession: (id: string) => void
@@ -289,6 +294,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (me.isAdmin) {
       api.getMentorApplications().then(setPendingMentorIds, () => {})
     }
+    // Only mentors have a plan, so this is not worth a request for everyone
+    // else — the crown falls back to its call-to-action state without it.
+    if (me.isMentor) {
+      api.getMySubscription().then(setSubscription, () => setSubscription(null))
+    }
     setBootstrapped(true)
   }, [])
 
@@ -383,6 +393,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const userById = useCallback((id: string) => users.find((u) => u.id === id), [users])
+
+  // Mentor plan. Kept in the store rather than fetched per-component because
+  // the navbar crown, the session paywall and the mentor workspace all need
+  // the same answer, and they must agree the moment a plan is activated.
+  const [subscription, setSubscription] = useState<SubscriptionState | null>(null)
+  const refreshSubscription = useCallback(async () => {
+    if (!getToken()) return
+    try {
+      setSubscription(await api.getMySubscription())
+    } catch {
+      // A member who is not a mentor has nothing to show here; the crown
+      // falls back to its call-to-action state rather than erroring.
+      setSubscription(null)
+    }
+  }, [])
 
   // Re-pull the social state (connection graph, notifications, directory) so
   // requests sent by OTHER users show up without a full reload. Called when
@@ -828,10 +853,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [notify],
   )
 
+  // Returns the outcome rather than swallowing it: a 402 here means the
+  // mentor needs a plan, and the caller opens the pricing page instead of
+  // showing a toast the member cannot act on.
   const acceptSession = useCallback(
-    (id: string, meetingLink?: string) =>
-      sessionAction(api.acceptSession(id, meetingLink), 'Session confirmed. The mentee has been notified.'),
-    [sessionAction],
+    async (id: string, meetingLink?: string): Promise<'ok' | 'payment-required'> => {
+      try {
+        const updated = await api.acceptSession(id, meetingLink)
+        setSessions((list) => list.map((s) => (s.id === updated.id ? updated : s)))
+        notify('Session confirmed. The mentee has been notified.')
+        return 'ok'
+      } catch (err) {
+        if (isPaymentRequired(err)) return 'payment-required'
+        notify(err instanceof Error ? err.message : 'Could not update the session.', 'error')
+        return 'ok'
+      }
+    },
+    [notify],
   )
   const rateSession = useCallback(
     (id: string, rating: number, review?: string) =>
@@ -1174,6 +1212,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ignoreRequest,
     cancelSentRequest,
     refreshNetwork,
+    subscription,
+    refreshSubscription,
     posts,
     createPost,
     updatePost,

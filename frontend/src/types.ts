@@ -1129,6 +1129,64 @@ export interface AlumniService {
   providerCompany?: string
 }
 
+// --- Mentor subscriptions ---------------------------------------------------
+// Mirrors backend/src/subscription.ts. A mentor needs an active plan to
+// ACCEPT a session; a mentee's free-session allowance is unrelated to this.
+
+export const PLAN_IDS = ['free', 'mentor', 'pro', 'institute'] as const
+export type PlanId = (typeof PLAN_IDS)[number]
+
+export interface Plan {
+  id: PlanId
+  name: string
+  price: number
+  tagline: string
+  sessionsPerMonth: number | null
+  serviceLimit: number | null
+  invitesPerMonth: number
+  platformFeePct: number
+  paidEvents: boolean
+  features: string[]
+  highlighted?: boolean
+}
+
+export interface SubscriptionState {
+  plan: PlanId
+  status: 'inactive' | 'pending' | 'active' | 'expired' | 'cancelled'
+  source: 'none' | 'grandfathered' | 'admin' | 'gateway'
+  expiresAt: string | null
+  canAcceptSessions: boolean
+  sessionsThisMonth: number
+  sessionsPerMonth: number | null
+  blockedReason?: string
+}
+
+export interface CheckoutSession {
+  reference: string
+  provider: string
+  amount: number
+  currency: string
+  redirectUrl: string
+  /** True when no money moved — the UI must say so rather than imply a charge. */
+  simulated: boolean
+  clientPayload?: { signature?: string }
+}
+
+export interface AdminSubscriptionRow {
+  userId: string
+  name: string
+  email: string
+  photo?: string
+  designation: string
+  company: string
+  plan: PlanId
+  status: string
+  source: string
+  expiresAt: string | null
+  sessionsThisMonth: number
+  subscribed: boolean
+}
+
 /** A person surfaced by the roadmap, with the stage that made them relevant. */
 export interface AlumniHelper {
   id: string

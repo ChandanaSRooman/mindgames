@@ -5,10 +5,15 @@ import type {
   AppEvent,
   AppNotification,
   Badge,
+  AdminSubscriptionRow,
   CareerAssessment,
   CareerRoadmap,
   CareerStageStatus,
+  CheckoutSession,
+  Plan,
+  PlanId,
   ServiceType,
+  SubscriptionState,
   Comment,
   Community,
   Company,
@@ -59,6 +64,23 @@ export function setToken(token: string | null): void {
   }
 }
 
+/** An HTTP failure that keeps its status code. `status === 402` means the
+ *  action needs a paid plan, which the UI answers by opening the plans. */
+export class HttpError extends Error {
+  // Declared rather than a constructor parameter property: this project
+  // compiles with erasableSyntaxOnly, which disallows those.
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'HttpError'
+    this.status = status
+  }
+}
+
+/** True when the server said this action needs a subscription. */
+export const isPaymentRequired = (err: unknown): err is HttpError =>
+  err instanceof HttpError && err.status === 402
+
 // ---- Low-level fetch --------------------------------------------------------
 async function http<T>(url: string, options?: RequestInit): Promise<T> {
   const token = getToken()
@@ -72,7 +94,11 @@ async function http<T>(url: string, options?: RequestInit): Promise<T> {
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || `Request failed (${res.status})`)
+    // The status is carried on the error, not just folded into the message:
+    // callers need to tell a payment-required 402 (open the plans) from an
+    // ordinary failure (show a toast), and a message string cannot express
+    // that without matching on wording.
+    throw new HttpError(body.error || `Request failed (${res.status})`, res.status)
   }
   // 204 / empty bodies
   if (res.status === 204) return undefined as T
@@ -600,6 +626,37 @@ export const api = {
     stages: { stepKey: string; title: string; status: CareerStageStatus; durationWeeks: number | null }[],
   ) => http<CareerRoadmap>('/api/career/roadmap', { method: 'PATCH', body: JSON.stringify({ stages }) }),
   getCareerAlumniHelp: () => http<AlumniHelper[]>('/api/career/alumni-help'),
+
+  // Mentor subscriptions
+  getPlans: () =>
+    http<{ plans: Plan[]; payments: { provider: string; live: boolean } }>('/api/subscription/plans'),
+  getMySubscription: () => http<SubscriptionState>('/api/subscription/me'),
+  startCheckout: (plan: PlanId, months = 1) =>
+    http<CheckoutSession>('/api/subscription/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ plan, months }),
+    }),
+  // Confirms a payment. With the stub provider this is what "completes" a
+  // simulated purchase; with a real gateway the same route verifies its
+  // signed callback.
+  confirmCheckout: (reference: string, signature?: string) =>
+    http<SubscriptionState>('/api/subscription/callback', {
+      method: 'POST',
+      body: JSON.stringify({ reference, signature }),
+    }),
+  cancelSubscription: () =>
+    http<SubscriptionState>('/api/subscription/cancel', { method: 'POST' }),
+  getAdminSubscriptions: () => http<AdminSubscriptionRow[]>('/api/subscription/admin'),
+  grantSubscription: (userId: string, plan: PlanId, months = 1, note?: string) =>
+    http<SubscriptionState>('/api/subscription/admin/grant', {
+      method: 'POST',
+      body: JSON.stringify({ userId, plan, months, note }),
+    }),
+  revokeSubscription: (userId: string) =>
+    http<SubscriptionState>('/api/subscription/admin/revoke', {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    }),
   getMatchedServices: () => http<AlumniService[]>('/api/career/services/matched'),
   getAllServices: () => http<AlumniService[]>('/api/career/services'),
   getMyServices: () => http<AlumniService[]>('/api/career/services/mine'),

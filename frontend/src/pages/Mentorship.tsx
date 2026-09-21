@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ExternalLink, Video, Award, Calendar, GraduationCap, Star, X } from 'lucide-react'
 import { useApp } from '../store/AppStore'
+import { SubscriptionPlans } from '../components/subscription/SubscriptionPlans'
 import { api } from '../lib/api'
 import { roleLine } from '../lib/format'
 import { Avatar, Button, Card } from '../components/ui'
@@ -21,10 +22,13 @@ export function Mentorship() {
     declineSession,
     completeSession,
     becomeMentor,
+    refreshSubscription,
     query,
   } = useApp()
   const [tab, setTab] = useState<Tab>('Find a Mentor')
   const [accepting, setAccepting] = useState<string | null>(null)
+  // Session the mentor was accepting when the paywall interrupted.
+  const [payFor, setPayFor] = useState<{ id: string; link?: string } | null>(null)
   const [rating, setRating] = useState<MentorshipSession | null>(null)
   const [ratings, setRatings] = useState<Map<string, { avg: number; count: number }>>(new Map())
 
@@ -268,9 +272,29 @@ export function Mentorship() {
       {accepting && (
         <AcceptModal
           onClose={() => setAccepting(null)}
-          onAccept={(link) => {
-            acceptSession(accepting, link || undefined)
+          onAccept={async (link) => {
+            const id = accepting
             setAccepting(null)
+            // A mentor without an active plan cannot accept. Open the plans
+            // rather than showing an error they have no way to act on, and
+            // remember the session so accepting resumes once they've paid.
+            const result = await acceptSession(id, link || undefined)
+            if (result === 'payment-required') setPayFor({ id, link: link || undefined })
+          }}
+        />
+      )}
+
+      {payFor && (
+        <SubscriptionPlans
+          reason="Accepting a mentorship session needs an active plan"
+          onClose={() => setPayFor(null)}
+          onActivated={async () => {
+            // Pick up exactly where they left off: the session they were
+            // accepting when the paywall interrupted is accepted now.
+            const pending = payFor
+            setPayFor(null)
+            await refreshSubscription()
+            if (pending) await acceptSession(pending.id, pending.link)
           }}
         />
       )}
