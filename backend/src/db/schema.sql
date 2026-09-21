@@ -1105,3 +1105,57 @@ CREATE TABLE IF NOT EXISTS profile_badges (
 );
 
 CREATE INDEX IF NOT EXISTS idx_profile_badges_user ON profile_badges (user_id, earned_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Group sessions
+--
+-- A separate table rather than reusing mentorship_sessions: that table's
+-- whole shape is one mentor + one mentee (composite lookups, FREE_SESSIONS
+-- counting, the mentor_id/mentee_id pair everywhere) and a session with a
+-- capacity and a roster of attendees doesn't fit it without turning every
+-- 1:1 query into "and also handle the group case". Attendees get their own
+-- table for the same reason events already separate event_rsvps out.
+--
+-- Gated on the same subscription as 1:1 sessions, but requires the plan's
+-- groupSessions flag (Pro/Institute) — see subscription.ts.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS group_sessions (
+  id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  mentor_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  topic             TEXT NOT NULL,
+  description       TEXT NOT NULL DEFAULT '',
+  domain            TEXT NOT NULL DEFAULT '',
+  -- Real timestamp, not a free-text label — a group session needs a genuine
+  -- capacity/roster query, which date_label on mentorship_sessions can't do.
+  scheduled_at      TIMESTAMPTZ NOT NULL,
+  duration_minutes  INTEGER NOT NULL DEFAULT 60,
+  capacity          INTEGER NOT NULL DEFAULT 10 CHECK (capacity > 0),
+  meeting_link      TEXT,
+  pricing_mode      TEXT NOT NULL DEFAULT 'free' CHECK (pricing_mode IN ('free', 'paid')),
+  -- Per seat, not per session — what one attendee sees and pays.
+  price_per_seat    INTEGER NOT NULL DEFAULT 0,
+  status            TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'completed', 'cancelled')),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_sessions_mentor ON group_sessions (mentor_id, scheduled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_group_sessions_upcoming ON group_sessions (scheduled_at) WHERE status = 'scheduled';
+
+-- One row per attendee. mentor_confirmed lives on group_sessions (the mentor
+-- confirms the whole session ran once); mentee_confirmed is per attendee,
+-- because who actually showed up is a per-person fact a shared session
+-- status cannot express. Mirrors mentorship_sessions' mutual-confirmation
+-- rule: a seat counts toward either profile only once both sides agree it
+-- happened — see sessionStats.ts.
+CREATE TABLE IF NOT EXISTS group_session_attendees (
+  session_id       TEXT NOT NULL REFERENCES group_sessions(id) ON DELETE CASCADE,
+  mentee_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  joined_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  mentee_confirmed BOOLEAN NOT NULL DEFAULT FALSE,
+  confirmed_at     TIMESTAMPTZ,
+  PRIMARY KEY (session_id, mentee_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_attendees_mentee ON group_session_attendees (mentee_id);
+
+ALTER TABLE group_sessions ADD COLUMN IF NOT EXISTS mentor_confirmed BOOLEAN NOT NULL DEFAULT FALSE;

@@ -35,6 +35,10 @@ export interface Plan {
   /** May charge for an event or webinar they host. Free community events are
    *  open to every member and are not affected by any plan. */
   paidEvents: boolean
+  /** May host a group session (many mentees, one booking). Free/Mentor stay
+   *  1:1 — group sessions are a Pro/Institute capability, same tier that
+   *  unlocks unlimited 1:1 sessions in the first place. */
+  groupSessions: boolean
   features: string[]
   /** Drawn as the highlighted column, as on a pricing page. */
   highlighted?: boolean
@@ -52,6 +56,7 @@ export const PLAN_DETAILS: Record<PlanId, Plan> = {
     invitesPerMonth: 0,
     platformFeePct: 15,
     paidEvents: false,
+    groupSessions: false,
     features: [
       'Appear in the alumni directory',
       'List 1 service',
@@ -70,6 +75,7 @@ export const PLAN_DETAILS: Record<PlanId, Plan> = {
     invitesPerMonth: 5,
     platformFeePct: 10,
     paidEvents: true,
+    groupSessions: false,
     features: [
       'Accept up to 10 sessions a month',
       'Host paid events and webinars',
@@ -90,9 +96,11 @@ export const PLAN_DETAILS: Record<PlanId, Plan> = {
     invitesPerMonth: 25,
     platformFeePct: 5,
     paidEvents: true,
+    groupSessions: true,
     highlighted: true,
     features: [
       'Unlimited sessions',
+      'Host group sessions',
       'Host paid events and webinars',
       'Unlimited services',
       'View your mentee’s career roadmap',
@@ -112,6 +120,7 @@ export const PLAN_DETAILS: Record<PlanId, Plan> = {
     invitesPerMonth: 1000,
     platformFeePct: 0,
     paidEvents: true,
+    groupSessions: true,
     features: [
       'Everything in Pro',
       'Up to 10 mentors on one account',
@@ -210,6 +219,23 @@ export async function canHostPaidEvents(userId: string): Promise<{ allowed: bool
   }
   if (!PLAN_DETAILS[s.plan]?.paidEvents) {
     return { allowed: false, reason: `The ${PLAN_DETAILS[s.plan].name} plan cannot charge for events. Upgrade to host paid events.` }
+  }
+  return { allowed: true }
+}
+
+/** Whether this member may host a group session right now. Same shape as
+ *  canHostPaidEvents: an active plan is necessary but not sufficient — the
+ *  plan itself has to include the capability. */
+export async function canHostGroupSessions(userId: string): Promise<{ allowed: boolean; reason?: string }> {
+  const s = await getSubscription(userId)
+  if (s.status !== 'active') {
+    return { allowed: false, reason: 'Dude, you need a subscription to host group sessions.' }
+  }
+  if (!PLAN_DETAILS[s.plan]?.groupSessions) {
+    return {
+      allowed: false,
+      reason: `The ${PLAN_DETAILS[s.plan].name} plan doesn't include group sessions. Upgrade to Pro to host one.`,
+    }
   }
   return { allowed: true }
 }

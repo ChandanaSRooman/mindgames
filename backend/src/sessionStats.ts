@@ -55,18 +55,35 @@ export interface ProfileStats {
   badges: { id: string; name: string; description: string; side: string; earnedAt: string }[]
 }
 
-/** Consecutive ISO weeks with at least one confirmed session, counting back
- *  from the current week. The current week not having one yet does not break
- *  a streak — otherwise every streak would read zero until someone booked
- *  again on a Monday. */
-async function streakWeeks(userId: string, column: 'mentor_id' | 'mentee_id'): Promise<number> {
-  const rows = await query<{ wk: string }>(
-    `SELECT DISTINCT date_trunc('week', confirmed_at) AS wk
-       FROM mentorship_sessions
-      WHERE ${column} = $1 AND confirmed_at IS NOT NULL
-      ORDER BY wk DESC LIMIT 52`,
-    [userId],
-  )
+/** Consecutive ISO weeks with at least one confirmed session — 1:1 or group
+ *  — counting back from the current week. The current week not having one
+ *  yet does not break a streak — otherwise every streak would read zero
+ *  until someone booked again on a Monday. */
+async function streakWeeks(userId: string, role: 'mentor' | 'mentee'): Promise<number> {
+  const rows =
+    role === 'mentor'
+      ? await query<{ wk: string }>(
+          `SELECT wk FROM (
+             SELECT date_trunc('week', confirmed_at) AS wk FROM mentorship_sessions
+              WHERE mentor_id = $1 AND confirmed_at IS NOT NULL
+             UNION
+             SELECT date_trunc('week', g.scheduled_at) AS wk
+               FROM group_sessions g
+              WHERE g.mentor_id = $1 AND g.mentor_confirmed
+           ) w ORDER BY wk DESC LIMIT 52`,
+          [userId],
+        )
+      : await query<{ wk: string }>(
+          `SELECT wk FROM (
+             SELECT date_trunc('week', confirmed_at) AS wk FROM mentorship_sessions
+              WHERE mentee_id = $1 AND confirmed_at IS NOT NULL
+             UNION
+             SELECT date_trunc('week', g.scheduled_at) AS wk
+               FROM group_session_attendees a JOIN group_sessions g ON g.id = a.session_id
+              WHERE a.mentee_id = $1 AND a.mentee_confirmed AND g.mentor_confirmed
+           ) w ORDER BY wk DESC LIMIT 52`,
+          [userId],
+        )
   if (!rows.rowCount) return 0
 
   const weeks = rows.rows.map((r) => new Date(r.wk).getTime())
@@ -102,6 +119,24 @@ export async function getProfileStats(userId: string): Promise<ProfileStats> {
   )
   const t = totals.rows[0]
 
+  // Group sessions counted separately and merged in below: a mentor's
+  // "given" count is one per confirmed attendee (matching how a 1:1 session
+  // counts once per mentee), while a mentee's is one per session they
+  // attended. mentor_confirmed lives on the session; mentee_confirmed is
+  // per attendee — both have to be true for a seat to count.
+  const groupGiven = await query<{ given: number; mins: number | null }>(
+    `SELECT count(*)::int AS given, COALESCE(sum(g.duration_minutes), 0)::int AS mins
+       FROM group_session_attendees a JOIN group_sessions g ON g.id = a.session_id
+      WHERE g.mentor_id = $1 AND g.mentor_confirmed AND a.mentee_confirmed`,
+    [userId],
+  )
+  const groupTaken = await query<{ taken: number; mins: number | null }>(
+    `SELECT count(*)::int AS taken, COALESCE(sum(g.duration_minutes), 0)::int AS mins
+       FROM group_session_attendees a JOIN group_sessions g ON g.id = a.session_id
+      WHERE a.mentee_id = $1 AND a.mentee_confirmed AND g.mentor_confirmed`,
+    [userId],
+  )
+
   const rating = await query<{ avg: string | null; n: number }>(
     `SELECT round(avg(rating)::numeric, 1)::text AS avg, count(*)::int AS n
        FROM mentorship_sessions WHERE mentor_id = $1 AND rating IS NOT NULL`,
@@ -129,15 +164,18 @@ export async function getProfileStats(userId: string): Promise<ProfileStats> {
     [userId],
   )
 
+  const gGiven = groupGiven.rows[0]
+  const gTaken = groupTaken.rows[0]
+
   return {
-    sessionsGiven: t?.given ?? 0,
-    sessionsTaken: t?.taken ?? 0,
-    hoursGiven: Math.round(((t?.mins_given ?? 0) / 60) * 10) / 10,
-    hoursTaken: Math.round(((t?.mins_taken ?? 0) / 60) * 10) / 10,
+    sessionsGiven: (t?.given ?? 0) + (gGiven?.given ?? 0),
+    sessionsTaken: (t?.taken ?? 0) + (gTaken?.taken ?? 0),
+    hoursGiven: Math.round((((t?.mins_given ?? 0) + (gGiven?.mins ?? 0)) / 60) * 10) / 10,
+    hoursTaken: Math.round((((t?.mins_taken ?? 0) + (gTaken?.mins ?? 0)) / 60) * 10) / 10,
     avgRating: rating.rows[0]?.avg ? Number(rating.rows[0].avg) : null,
     ratingCount: rating.rows[0]?.n ?? 0,
-    mentorStreakWeeks: await streakWeeks(userId, 'mentor_id'),
-    learnerStreakWeeks: await streakWeeks(userId, 'mentee_id'),
+    mentorStreakWeeks: await streakWeeks(userId, 'mentor'),
+    learnerStreakWeeks: await streakWeeks(userId, 'mentee'),
     roadmapProgress,
     badges: badgeRows.rows.map((b) => ({
       id: b.badge,
@@ -205,4 +243,19 @@ export async function recordConfirmedSession(sessionId: string): Promise<void> {
   if (!r.rowCount) return
   await refreshBadges(r.rows[0].mentor_id)
   await refreshBadges(r.rows[0].mentee_id)
+}
+
+/** The group-session equivalent: called once one attendee confirms. Unlike
+ *  the 1:1 case there is nothing to "stamp" per attendee beyond what the
+ *  route already set (confirmed_at on the attendee row) — this just
+ *  refreshes both profiles so the new totals and any newly-earned badge
+ *  show up immediately rather than on next load. */
+export async function recordConfirmedGroupAttendance(sessionId: string, menteeId: string): Promise<void> {
+  const g = await query<{ mentor_id: string; mentor_confirmed: boolean }>(
+    `SELECT mentor_id, mentor_confirmed FROM group_sessions WHERE id = $1`,
+    [sessionId],
+  )
+  if (!g.rowCount || !g.rows[0].mentor_confirmed) return
+  await refreshBadges(g.rows[0].mentor_id)
+  await refreshBadges(menteeId)
 }
