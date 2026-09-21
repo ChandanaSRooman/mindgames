@@ -497,6 +497,104 @@ careerRouter.patch(
   }),
 )
 
+// GET /api/career/roadmap/of/:userId — a mentor reading their mentee's plan.
+//
+// The gate is an accepted session between the two. Booking someone is what
+// makes sharing your goals with them reasonable, so no separate consent step
+// is needed — but a mentor cannot browse the roadmaps of students who never
+// approached them, which is what makes this safe to expose at all. A roadmap
+// holds someone's goals, skill gaps and dissatisfaction with their job.
+careerRouter.get(
+  '/roadmap/of/:userId',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const menteeId = req.params.userId
+    if (menteeId === req.user!.sub) {
+      return res.json(await loadActiveRoadmap(req.user!.sub))
+    }
+
+    const allowed = await query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM mentorship_sessions
+        WHERE mentor_id = $1 AND mentee_id = $2 AND status IN ('upcoming', 'past')`,
+      [req.user!.sub, menteeId],
+    )
+    if (!allowed.rows[0].n) {
+      throw new ApiError(403, 'You can view a roadmap once you have an accepted session with that member.')
+    }
+
+    const roadmap = await loadActiveRoadmap(menteeId)
+    if (!roadmap) throw new ApiError(404, 'That member has not built a roadmap yet.')
+
+    const who = await query<{ name: string; designation: string; company: string; photo: string | null }>(
+      `SELECT name, designation, company, photo FROM users WHERE id = $1`,
+      [menteeId],
+    )
+    const assessment = await query<{ support_preference: string; free_text: string; help_types: string[] }>(
+      `SELECT support_preference, free_text, help_types FROM career_assessments
+        WHERE user_id = $1 AND status = 'submitted' ORDER BY created_at DESC LIMIT 1`,
+      [menteeId],
+    )
+
+    res.json({
+      ...roadmap,
+      member: {
+        id: menteeId,
+        name: who.rows[0]?.name ?? '',
+        designation: who.rows[0]?.designation ?? '',
+        company: who.rows[0]?.company ?? '',
+        photo: who.rows[0]?.photo ?? undefined,
+      },
+      // What they asked for in their own words — the most useful thing a
+      // mentor can read before a session, and not derivable from the stages.
+      context: {
+        supportPreference: assessment.rows[0]?.support_preference ?? '',
+        note: assessment.rows[0]?.free_text ?? '',
+        helpTypes: assessment.rows[0]?.help_types ?? [],
+      },
+    })
+  }),
+)
+
+// GET /api/career/mentees — everyone this mentor has an accepted session
+// with, plus where each one is on their roadmap. The mentor workspace list.
+careerRouter.get(
+  '/mentees',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const rows = await query<{
+      id: string; name: string; photo: string | null; designation: string; company: string
+      sessions: number; last_session: Date | string | null; has_roadmap: boolean
+      goal: unknown
+    }>(
+      `SELECT u.id, u.name, u.photo, u.designation, u.company,
+              count(s.id)::int AS sessions,
+              max(s.created_at) AS last_session,
+              (r.id IS NOT NULL) AS has_roadmap,
+              r.data -> 'goal' AS goal
+         FROM mentorship_sessions s
+         JOIN users u ON u.id = s.mentee_id
+         LEFT JOIN career_roadmaps r ON r.user_id = u.id AND r.status = 'active'
+        WHERE s.mentor_id = $1 AND s.status IN ('upcoming', 'past')
+        GROUP BY u.id, u.name, u.photo, u.designation, u.company, r.id, r.data
+        ORDER BY max(s.created_at) DESC`,
+      [req.user!.sub],
+    )
+    res.json(
+      rows.rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        photo: r.photo ?? undefined,
+        designation: r.designation,
+        company: r.company,
+        sessions: r.sessions,
+        lastSessionAt: r.last_session ? new Date(r.last_session).toISOString() : null,
+        hasRoadmap: r.has_roadmap,
+        goal: (r.goal as { currentRole?: string; targetRole?: string } | null) ?? null,
+      })),
+    )
+  }),
+)
+
 // ---------------------------------------------------------------------------
 // Alumni services
 // ---------------------------------------------------------------------------

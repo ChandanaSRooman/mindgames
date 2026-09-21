@@ -23,6 +23,7 @@ import { aiRouter } from './routes/ai.routes.js'
 import { reportsRouter } from './routes/reports.routes.js'
 import { companiesRouter } from './routes/companies.routes.js'
 import { careerRouter } from './routes/career.routes.js'
+import { subscriptionRouter } from './routes/subscription.routes.js'
 import { backfillCareerPaths } from './careerPaths.js'
 import { setAppBaseUrl } from './email.js'
 import { baseUrlSource, resolveAppBaseUrl } from './publicUrl.js'
@@ -69,6 +70,7 @@ app.use('/api/ai', aiRouter)
 app.use('/api/reports', reportsRouter)
 app.use('/api/companies', companiesRouter)
 app.use('/api/career', careerRouter)
+app.use('/api/subscription', subscriptionRouter)
 
 // --- Terminal error handler -------------------------------------------------
 app.use(errorHandler)

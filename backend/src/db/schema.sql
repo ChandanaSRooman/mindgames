@@ -1003,3 +1003,105 @@ CREATE INDEX IF NOT EXISTS idx_alumni_services_active ON alumni_services (servic
 -- with this column pointing back at which service it came from. No parallel
 -- booking system — accept/decline/rate/complete all stay exactly as they are.
 ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS service_id TEXT REFERENCES alumni_services(id) ON DELETE SET NULL;
+
+-- ---------------------------------------------------------------------------
+-- Mentor subscriptions
+--
+-- A mentor needs an active subscription to ACCEPT a session. This is the
+-- supply side only: a mentee's first few sessions stay free (see
+-- FREE_MENTORSHIP_SESSIONS), which is a separate, unrelated allowance.
+--
+-- Deliberately provider-agnostic. `provider` and `provider_ref` are the only
+-- columns a payment gateway needs, so wiring one up later sets those two
+-- rather than reshaping the table. Until then a subscription is granted by an
+-- admin or by the grandfathering rule below — the same "arranged offline"
+-- posture the rest of this app's pricing already takes.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mentor_subscriptions (
+  user_id      TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  plan         TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'mentor', 'pro', 'institute')),
+  status       TEXT NOT NULL DEFAULT 'inactive' CHECK (status IN ('inactive', 'pending', 'active', 'expired', 'cancelled')),
+  -- How this subscription came to be, so support can tell a comped account
+  -- from a paid one without reading payment history.
+  source       TEXT NOT NULL DEFAULT 'none' CHECK (source IN ('none', 'grandfathered', 'admin', 'gateway')),
+  provider     TEXT,
+  provider_ref TEXT,
+  started_at   TIMESTAMPTZ,
+  -- NULL means "no end date" (an admin grant). A grandfathered or paid period
+  -- sets this, and the gate treats a past date as expired.
+  expires_at   TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mentor_subs_status ON mentor_subscriptions (status, expires_at);
+
+-- Every payment-ish event, whoever produced it. Exists so a gateway webhook
+-- has somewhere idempotent to land: a provider re-sending the same event id
+-- must not grant a second month. Also the audit trail for admin grants.
+CREATE TABLE IF NOT EXISTS subscription_events (
+  id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind         TEXT NOT NULL CHECK (kind IN ('requested', 'activated', 'renewed', 'cancelled', 'expired', 'payment_failed')),
+  plan         TEXT NOT NULL DEFAULT 'free',
+  amount       INTEGER,
+  provider     TEXT,
+  -- The provider's own event id. Unique so a replayed webhook is a no-op.
+  provider_ref TEXT,
+  note         TEXT NOT NULL DEFAULT '',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sub_events_provider_ref
+  ON subscription_events (provider, provider_ref) WHERE provider_ref IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sub_events_user ON subscription_events (user_id, created_at DESC);
+
+-- Grandfathering: mentors approved before subscriptions existed keep working.
+-- 90 days of 'pro' so nobody is cut off the day the gate ships. Inserted once
+-- per mentor — ON CONFLICT DO NOTHING means re-running the migration never
+-- extends the window, and never overwrites a real subscription bought later.
+INSERT INTO mentor_subscriptions (user_id, plan, status, source, started_at, expires_at)
+SELECT id, 'pro', 'active', 'grandfathered', now(), now() + INTERVAL '90 days'
+  FROM users WHERE is_mentor
+ON CONFLICT (user_id) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- Session tracking
+--
+-- date_label/time_label are free text a human typed ("Mon, 30 Jun", "6:00 PM
+-- IST"). They stay exactly as they are and keep driving the existing UI — but
+-- you cannot compute hours, streaks or "sessions this month" from them, so
+-- these columns record the same facts in a form that can be queried.
+--
+-- mentee_confirmed/mentor_confirmed are the load-bearing pair: a session only
+-- counts toward anybody's profile once BOTH sides say it happened. That makes
+-- the numbers on a profile evidence rather than a self-reported claim, and it
+-- is what makes an empty duration on a "completed" session visible.
+-- ---------------------------------------------------------------------------
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS duration_minutes INTEGER;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT '';
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS mentee_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS mentor_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_sessions_mentor_confirmed
+  ON mentorship_sessions (mentor_id, confirmed_at DESC) WHERE confirmed_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sessions_mentee_confirmed
+  ON mentorship_sessions (mentee_id, confirmed_at DESC) WHERE confirmed_at IS NOT NULL;
+
+-- Badges earned from confirmed activity. Stored rather than derived on every
+-- read so "when did you earn this" is answerable, and so awarding one can
+-- raise a notification exactly once.
+CREATE TABLE IF NOT EXISTS profile_badges (
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  badge      TEXT NOT NULL,
+  -- 'mentor' badges describe help given, 'learner' badges help received.
+  side       TEXT NOT NULL DEFAULT 'learner' CHECK (side IN ('mentor', 'learner')),
+  earned_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, badge)
+);
+
+CREATE INDEX IF NOT EXISTS idx_profile_badges_user ON profile_badges (user_id, earned_at DESC);
