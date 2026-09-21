@@ -1165,6 +1165,17 @@ export interface ProfileStats {
   badges: { id: string; name: string; description: string; side: string; earnedAt: string }[]
 }
 
+/** AI briefing a mentor reads before a session — the substance of the
+ *  printable report. Generated from the student's plan and own words. */
+export interface MenteeBrief {
+  summary: string
+  strengths: string[]
+  gaps: string[]
+  focusThisSession: string[]
+  questionsToAsk: string[]
+  watchOuts: string[]
+}
+
 // --- Mentor subscriptions ---------------------------------------------------
 // Mirrors backend/src/subscription.ts. A mentor needs an active plan to
 // ACCEPT a session; a mentee's free-session allowance is unrelated to this.

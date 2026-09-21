@@ -11,6 +11,7 @@ import type {
   CareerStageStatus,
   CheckoutSession,
   Mentee,
+  MenteeBrief,
   MenteeRoadmap,
   Plan,
   PlanId,
@@ -640,6 +641,9 @@ export const api = {
   /** A mentee's roadmap. Allowed only where an accepted session exists. */
   getMenteeRoadmap: (userId: string) => http<MenteeRoadmap>(`/api/career/roadmap/of/${userId}`),
   getProfileStats: (userId: string) => http<ProfileStats>(`/api/mentorship/stats/${userId}`),
+  /** AI briefing on a mentee. Same access rule as their roadmap. */
+  getMenteeBrief: (userId: string) =>
+    http<{ brief: MenteeBrief; generatedAt: string }>(`/api/career/mentee-brief/${userId}`),
   confirmSession: (id: string, durationMinutes?: number) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/confirm`, {
       method: 'POST',

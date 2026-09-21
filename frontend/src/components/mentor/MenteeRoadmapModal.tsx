@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Flag, Loader2, Printer, Target, X } from 'lucide-react'
+import { AlertTriangle, Flag, HelpCircle, Loader2, Printer, Sparkles, Target, TrendingUp, X } from 'lucide-react'
 import { Avatar, Button } from '../ui'
 import { api } from '../../lib/api'
-import { SERVICE_LABELS, type MenteeRoadmap, type ServiceType } from '../../types'
+import { SERVICE_LABELS, type MenteeBrief, type MenteeRoadmap, type ServiceType } from '../../types'
 
 /**
  * A mentee's roadmap, read-only, for the mentor about to meet them.
@@ -17,6 +17,10 @@ export function MenteeRoadmapModal({ menteeId, onClose }: { menteeId: string; on
   const [data, setData] = useState<MenteeRoadmap | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // The briefing is generated, so it loads separately and the roadmap never
+  // waits on it — a slow or unavailable model must not block the plan.
+  const [brief, setBrief] = useState<MenteeBrief | null>(null)
+  const [briefState, setBriefState] = useState<'loading' | 'ready' | 'failed'>('loading')
 
   useEffect(() => {
     api
@@ -24,6 +28,10 @@ export function MenteeRoadmapModal({ menteeId, onClose }: { menteeId: string; on
       .then(setData)
       .catch((err) => setError(err instanceof Error ? err.message : 'Could not load that roadmap.'))
       .finally(() => setLoading(false))
+    api
+      .getMenteeBrief(menteeId)
+      .then((r) => { setBrief(r.brief); setBriefState('ready') })
+      .catch(() => setBriefState('failed'))
   }, [menteeId])
 
   return createPortal(
@@ -94,6 +102,39 @@ export function MenteeRoadmapModal({ menteeId, onClose }: { menteeId: string; on
               </div>
             )}
 
+            {/* Generated briefing. Sits above the plan because it is what a
+                mentor actually reads in the minutes before a session. */}
+            <div className="mb-5">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-bold tracking-wide text-[#878a8c] uppercase">
+                <Sparkles size={12} className="text-[#ff4500]" />
+                Mentor briefing
+              </p>
+              {briefState === 'loading' ? (
+                <p className="rounded-xl border border-[#edeff1] px-4 py-3 text-sm text-[#878a8c]">
+                  Preparing insights…
+                </p>
+              ) : briefState === 'failed' || !brief ? (
+                <p className="rounded-xl border border-[#edeff1] px-4 py-3 text-sm text-[#878a8c]">
+                  Insights couldn't be generated right now — the plan below is still complete.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <p className="rounded-xl border border-orange-100 bg-[#fff6f0] px-4 py-3 text-sm text-[#1c1c1c]">
+                    {brief.summary}
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <BriefList icon={<TrendingUp size={13} />} title="Strengths" items={brief.strengths} tone="green" />
+                    <BriefList icon={<Target size={13} />} title="Gaps to close" items={brief.gaps} tone="orange" />
+                    <BriefList icon={<Flag size={13} />} title="Focus this session" items={brief.focusThisSession} tone="blue" />
+                    <BriefList icon={<HelpCircle size={13} />} title="Questions to ask" items={brief.questionsToAsk} tone="grey" />
+                  </div>
+                  {brief.watchOuts.length > 0 && (
+                    <BriefList icon={<AlertTriangle size={13} />} title="Watch out for" items={brief.watchOuts} tone="amber" />
+                  )}
+                </div>
+              )}
+            </div>
+
             <p className="mb-2 text-xs font-bold tracking-wide text-[#878a8c] uppercase">Their plan</p>
             <ol className="flex flex-col gap-2">
               {data.stages.map((s, i) => (
@@ -138,5 +179,43 @@ export function MenteeRoadmapModal({ menteeId, onClose }: { menteeId: string; on
       </div>
     </div>,
     document.body,
+  )
+}
+
+const TONES: Record<string, string> = {
+  green: 'border-green-200 bg-green-50/60 text-green-900',
+  orange: 'border-orange-200 bg-orange-50/60 text-orange-900',
+  blue: 'border-blue-200 bg-blue-50/60 text-blue-900',
+  amber: 'border-amber-200 bg-amber-50/60 text-amber-900',
+  grey: 'border-[#edeff1] bg-gray-50/60 text-[#1c1c1c]',
+}
+
+function BriefList({
+  icon,
+  title,
+  items,
+  tone,
+}: {
+  icon: React.ReactNode
+  title: string
+  items: string[]
+  tone: keyof typeof TONES
+}) {
+  if (items.length === 0) return null
+  return (
+    <div className={`rounded-xl border px-3.5 py-3 ${TONES[tone]}`}>
+      <p className="mb-1.5 flex items-center gap-1.5 text-xs font-bold">
+        {icon}
+        {title}
+      </p>
+      <ul className="flex flex-col gap-1">
+        {items.map((t) => (
+          <li key={t} className="flex gap-1.5 text-xs leading-snug">
+            <span aria-hidden>•</span>
+            <span>{t}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }

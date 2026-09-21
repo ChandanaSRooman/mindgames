@@ -164,7 +164,7 @@ export async function getSubscription(userId: string): Promise<SubscriptionState
     return {
       plan: 'free', status: 'inactive', source: 'none', expiresAt: null,
       canAcceptSessions: false, sessionsThisMonth, sessionsPerMonth: 0,
-      blockedReason: 'Accepting a session needs an active plan.',
+      blockedReason: 'Dude, you need a subscription to accept sessions.',
     }
   }
 
@@ -176,12 +176,12 @@ export async function getSubscription(userId: string): Promise<SubscriptionState
 
   let canAccept = status === 'active'
   let blockedReason: string | undefined
-  if (status === 'expired') blockedReason = 'Your plan has expired. Renew to keep accepting sessions.'
-  else if (status === 'cancelled') blockedReason = 'Your plan was cancelled. Choose a plan to start again.'
-  else if (status !== 'active') blockedReason = 'Accepting a session needs an active plan.'
+  if (status === 'expired') blockedReason = 'Dude, your plan expired. Renew to keep accepting sessions.'
+  else if (status === 'cancelled') blockedReason = 'Dude, your plan was cancelled. Pick one to start again.'
+  else if (status !== 'active') blockedReason = 'Dude, you need a subscription to accept sessions.'
   else if (cap !== null && sessionsThisMonth >= cap) {
     canAccept = false
-    blockedReason = `You've used all ${cap} sessions on the ${details.name} plan this month. Upgrade for more.`
+    blockedReason = `Dude, you've used all ${cap} sessions on the ${details.name} plan this month. Upgrade for more.`
   }
 
   return {

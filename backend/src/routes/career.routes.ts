@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { query, withTransaction } from '../db/pool.js'
 import { requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
-import { generateCareerRoadmap, type CareerRoadmapContext } from '../ai.js'
+import { generateCareerRoadmap, generateMenteeBrief, type CareerRoadmapContext } from '../ai.js'
 import {
   deriveCareerPathsForUser,
   findCareerPathChains,
@@ -552,6 +552,81 @@ careerRouter.get(
         helpTypes: assessment.rows[0]?.help_types ?? [],
       },
     })
+  }),
+)
+
+// GET /api/career/mentee-brief/:userId — the AI briefing a mentor reads
+// before a session, and what the printed report is built from.
+//
+// Same gate as the roadmap: an accepted session between the two. The model
+// is given the student's plan, skills, own words and session history, and
+// returns structured insight — never free prose we would have to trust.
+careerRouter.get(
+  '/mentee-brief/:userId',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const menteeId = req.params.userId
+    const allowed = await query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM mentorship_sessions
+        WHERE mentor_id = $1 AND mentee_id = $2 AND status IN ('upcoming', 'past')`,
+      [req.user!.sub, menteeId],
+    )
+    if (!allowed.rows[0].n) {
+      throw new ApiError(403, 'You can view a briefing once you have an accepted session with that member.')
+    }
+
+    const roadmap = await loadActiveRoadmap(menteeId)
+    const who = await query<{
+      name: string; designation: string; company: string; experience_years: number; expertise: string[]
+    }>(
+      `SELECT name, designation, company, experience_years, expertise FROM users WHERE id = $1`,
+      [menteeId],
+    )
+    if (!who.rowCount) throw new ApiError(404, 'Member not found')
+
+    const assessment = await query<{ free_text: string; help_types: string[] }>(
+      `SELECT free_text, help_types FROM career_assessments
+        WHERE user_id = $1 AND status = 'submitted' ORDER BY created_at DESC LIMIT 1`,
+      [menteeId],
+    )
+    const past = await query<{ topic: string }>(
+      `SELECT topic FROM mentorship_sessions
+        WHERE mentor_id = $1 AND mentee_id = $2 AND status = 'past' ORDER BY created_at DESC LIMIT 5`,
+      [req.user!.sub, menteeId],
+    )
+
+    const u = who.rows[0]
+    const goal = (roadmap?.goal ?? { currentRole: '', targetRole: null }) as {
+      currentRole: string; targetRole: string | null
+    }
+    const stages = ((roadmap?.stages ?? []) as Record<string, unknown>[]).map((s) => ({
+      title: String(s.title ?? ''),
+      status: String(s.status ?? 'upcoming'),
+      durationWeeks: typeof s.durationWeeks === 'number' ? s.durationWeeks : null,
+    }))
+
+    try {
+      const brief = await generateMenteeBrief({
+        name: u.name,
+        currentRole: u.designation,
+        company: u.company,
+        experienceYears: u.experience_years,
+        skills: u.expertise ?? [],
+        goal,
+        timelineMonths: Number(roadmap?.timelineMonths ?? 0),
+        hoursPerWeek: Number(roadmap?.hoursPerWeek ?? 0),
+        stages,
+        askedFor: assessment.rows[0]?.help_types ?? [],
+        ownWords: assessment.rows[0]?.free_text ?? '',
+        sessionsTogether: allowed.rows[0].n,
+        pastTopics: past.rows.map((p) => p.topic),
+      })
+      res.json({ brief, generatedAt: new Date().toISOString() })
+    } catch (err) {
+      // A briefing is an extra, not the point of the page — the roadmap still
+      // renders without it, so this reports the reason rather than 500ing.
+      throw new ApiError(502, err instanceof Error ? err.message : 'Could not generate the briefing.')
+    }
   }),
 )
 
