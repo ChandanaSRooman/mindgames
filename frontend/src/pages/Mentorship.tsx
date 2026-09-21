@@ -286,7 +286,7 @@ export function Mentorship() {
 
       {payFor && (
         <SubscriptionPlans
-          reason="Accepting a mentorship session needs an active plan"
+          reason="Dude! You need a subscription to accept this session."
           onClose={() => setPayFor(null)}
           onActivated={async () => {
             // Pick up exactly where they left off: the session they were
