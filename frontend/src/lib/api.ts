@@ -10,8 +10,11 @@ import type {
   CareerRoadmap,
   CareerStageStatus,
   CheckoutSession,
+  Mentee,
+  MenteeRoadmap,
   Plan,
   PlanId,
+  ProfileStats,
   ServiceType,
   SubscriptionState,
   Comment,
@@ -375,8 +378,13 @@ export const api = {
     http<Array<{ mentorId: string; avg: number; count: number }>>('/api/mentorship/ratings'),
   declineSession: (id: string) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/decline`, { method: 'POST' }),
-  completeSession: (id: string) =>
-    http<MentorshipSession>(`/api/mentorship/sessions/${id}/complete`, { method: 'POST' }),
+  // durationMinutes/domain are what the profile record is built from; both
+  // optional so the plain one-click complete still works.
+  completeSession: (id: string, durationMinutes?: number, domain?: string) =>
+    http<MentorshipSession>(`/api/mentorship/sessions/${id}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ durationMinutes, domain }),
+    }),
   getMentorApplications: () => http<string[]>('/api/mentorship/applications'),
   approveMentor: (id: string) =>
     http<{ ok: boolean }>(`/api/mentorship/applications/${id}/approve`, { method: 'POST' }),
@@ -626,6 +634,17 @@ export const api = {
     stages: { stepKey: string; title: string; status: CareerStageStatus; durationWeeks: number | null }[],
   ) => http<CareerRoadmap>('/api/career/roadmap', { method: 'PATCH', body: JSON.stringify({ stages }) }),
   getCareerAlumniHelp: () => http<AlumniHelper[]>('/api/career/alumni-help'),
+
+  // Mentor workspace
+  getMentees: () => http<Mentee[]>('/api/career/mentees'),
+  /** A mentee's roadmap. Allowed only where an accepted session exists. */
+  getMenteeRoadmap: (userId: string) => http<MenteeRoadmap>(`/api/career/roadmap/of/${userId}`),
+  getProfileStats: (userId: string) => http<ProfileStats>(`/api/mentorship/stats/${userId}`),
+  confirmSession: (id: string, durationMinutes?: number) =>
+    http<MentorshipSession>(`/api/mentorship/sessions/${id}/confirm`, {
+      method: 'POST',
+      body: JSON.stringify({ durationMinutes }),
+    }),
 
   // Mentor subscriptions
   getPlans: () =>

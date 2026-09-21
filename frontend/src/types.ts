@@ -1129,6 +1129,42 @@ export interface AlumniService {
   providerCompany?: string
 }
 
+// --- Mentor workspace -------------------------------------------------------
+
+/** Someone this mentor has an accepted session with. */
+export interface Mentee {
+  id: string
+  name: string
+  photo?: string
+  designation: string
+  company: string
+  sessions: number
+  lastSessionAt: string | null
+  hasRoadmap: boolean
+  goal: { currentRole?: string; targetRole?: string } | null
+}
+
+/** A mentee's roadmap as a mentor sees it — the plan plus what they asked
+ *  for in their own words, which is the most useful part before a session. */
+export interface MenteeRoadmap extends CareerRoadmap {
+  member: { id: string; name: string; designation: string; company: string; photo?: string }
+  context: { supportPreference: string; note: string; helpTypes: string[] }
+}
+
+/** Public profile record, built only from sessions both sides confirmed. */
+export interface ProfileStats {
+  sessionsGiven: number
+  sessionsTaken: number
+  hoursGiven: number
+  hoursTaken: number
+  avgRating: number | null
+  ratingCount: number
+  mentorStreakWeeks: number
+  learnerStreakWeeks: number
+  roadmapProgress: { total: number; completed: number } | null
+  badges: { id: string; name: string; description: string; side: string; earnedAt: string }[]
+}
+
 // --- Mentor subscriptions ---------------------------------------------------
 // Mirrors backend/src/subscription.ts. A mentor needs an active plan to
 // ACCEPT a session; a mentee's free-session allowance is unrelated to this.

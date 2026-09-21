@@ -136,7 +136,7 @@ interface AppContextValue {
   acceptSession: (id: string, meetingLink?: string) => Promise<'ok' | 'payment-required'>
   rateSession: (id: string, rating: number, review?: string) => void
   declineSession: (id: string) => void
-  completeSession: (id: string) => void
+  completeSession: (id: string, durationMinutes?: number, domain?: string) => void
   becomeMentor: (rate: number) => void
   startups: Startup[]
   submitStartup: (
@@ -881,8 +881,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [sessionAction],
   )
   const completeSession = useCallback(
-    (id: string) => {
-      sessionAction(api.completeSession(id), 'Session marked completed. 🎓')
+    (id: string, durationMinutes?: number, domain?: string) => {
+      sessionAction(
+        api.completeSession(id, durationMinutes, domain),
+        'Session marked completed — waiting for your mentee to confirm it. 🎓',
+      )
       // reflect the mentor's new session count locally
       setUsers((list) =>
         list.map((u) =>
