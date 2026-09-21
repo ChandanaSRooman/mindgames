@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, Crown, Loader2, ShieldCheck, Sparkles, X } from 'lucide-react'
 import { Button } from '../ui'
 import { api } from '../../lib/api'
@@ -68,8 +69,12 @@ export function SubscriptionPlans({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 py-8" onClick={onClose}>
+  // Portalled to <body>. Opened from the navbar, this rendered inside
+  // <header>, which is fixed with z-40 and therefore its own stacking
+  // context — so z-50 here was trapped under it and the left sidebar (also
+  // z-40, later in the DOM) painted straight over the pricing table.
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/60 p-4 py-8" onClick={onClose}>
       <div
         className="w-full max-w-5xl overflow-hidden rounded-2xl bg-white shadow-2xl"
         onClick={(e) => e.stopPropagation()}
@@ -151,7 +156,8 @@ export function SubscriptionPlans({
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

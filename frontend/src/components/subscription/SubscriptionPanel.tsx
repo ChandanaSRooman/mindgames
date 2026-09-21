@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { AlertTriangle, CalendarClock, Check, Crown, Gauge, Loader2, X } from 'lucide-react'
 import { Button } from '../ui'
 import { api } from '../../lib/api'
@@ -60,8 +61,11 @@ export function SubscriptionPanel({ onClose }: { onClose: () => void }) {
   const expires = sub?.expiresAt ? new Date(sub.expiresAt) : null
   const daysLeft = expires ? Math.ceil((expires.getTime() - Date.now()) / 86_400_000) : null
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 py-16" onClick={onClose}>
+  // Portalled for the same reason as SubscriptionPlans: opened from the
+  // navbar it would otherwise render inside the fixed z-40 <header> and be
+  // painted over by the sidebar.
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-start justify-center bg-black/50 p-4 py-16" onClick={onClose}>
       <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div
           className={`relative px-6 py-6 text-center ${
@@ -128,10 +132,14 @@ export function SubscriptionPanel({ onClose }: { onClose: () => void }) {
               <Fact
                 icon={<Gauge size={15} />}
                 label="Sessions this month"
+                // A cap of 0 is the Free plan, where accepting isn't included
+                // at all — "1 of 0" was both nonsense and alarming.
                 value={
-                  sub?.sessionsPerMonth == null
-                    ? `${sub?.sessionsThisMonth ?? 0} · unlimited`
-                    : `${sub?.sessionsThisMonth ?? 0} of ${sub.sessionsPerMonth}`
+                  sub?.sessionsPerMonth === 0
+                    ? `${sub?.sessionsThisMonth ?? 0} · not included`
+                    : sub?.sessionsPerMonth == null
+                      ? `${sub?.sessionsThisMonth ?? 0} · unlimited`
+                      : `${sub?.sessionsThisMonth ?? 0} of ${sub.sessionsPerMonth}`
                 }
               />
               {expires && (
@@ -161,7 +169,8 @@ export function SubscriptionPanel({ onClose }: { onClose: () => void }) {
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
