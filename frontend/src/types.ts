@@ -1061,10 +1061,13 @@ export const LEARNING_PREFERENCES = [
   'Alumni guidance', 'Community/networking', 'Certifications', 'Real-world experience',
 ] as const
 
+// `short` is what the roadmap's summary banner shows — the full label is a
+// sentence, and a sentence in a three-column fact strip squeezes the rest of
+// the row until the goal wraps one word per line.
 export const SUPPORT_PREFERENCES = [
-  { value: 'free_only', label: 'Free help only' },
-  { value: 'free_or_paid', label: 'Free or paid' },
-  { value: 'pay_if_valuable', label: "I'm willing to pay if the value is useful" },
+  { value: 'free_only', label: 'Free help only', short: 'Free help only' },
+  { value: 'free_or_paid', label: 'Free or paid', short: 'Free or paid' },
+  { value: 'pay_if_valuable', label: "I'm willing to pay if the value is useful", short: 'Open to paid help' },
 ] as const
 
 export interface CareerAssessment {

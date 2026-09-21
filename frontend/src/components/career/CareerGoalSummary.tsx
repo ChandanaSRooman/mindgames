@@ -11,22 +11,27 @@ export function CareerGoalSummary({
   roadmap: CareerRoadmap
   supportPreference: string
 }) {
-  const supportLabel =
-    SUPPORT_PREFERENCES.find((s) => s.value === supportPreference)?.label ?? 'Alumni help'
+  const support = SUPPORT_PREFERENCES.find((s) => s.value === supportPreference)
 
   return (
     <div className="rounded-xl border border-orange-100 bg-[#fff6f0] p-5">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-center">
-        <div className="flex min-w-0 flex-1 items-start gap-3">
+      {/* The facts strip is fixed-width and does not shrink; the goal column
+          takes the rest and has a floor. Previously both sides were free to
+          size themselves, so a long support label grew the strip until the
+          goal had a few pixels left and wrapped one word per line. */}
+      {/* Row layout only from xl. At lg the left sidebar still takes 276px,
+          so a row here left the goal column too narrow to fit a job title. */}
+      <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:gap-6">
+        <div className="flex min-w-0 flex-1 items-start gap-3 xl:basis-[320px]">
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white text-[#ff4500] shadow-sm">
             <Target size={20} />
           </span>
           <div className="min-w-0">
             <p className="text-xs font-semibold text-[#878a8c]">Your goal</p>
-            <p className="flex flex-wrap items-center gap-2 text-lg font-bold text-[#1c1c1c]">
-              {roadmap.goal.currentRole || 'Your current role'}
-              <ArrowRight size={16} className="text-[#ff4500]" />
-              {roadmap.goal.targetRole || 'Still exploring'}
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-lg leading-snug font-bold text-[#1c1c1c]">
+              <span>{roadmap.goal.currentRole || 'Your current role'}</span>
+              <ArrowRight size={16} className="shrink-0 text-[#ff4500]" />
+              <span>{roadmap.goal.targetRole || 'Still exploring'}</span>
             </p>
             <p className="mt-0.5 text-sm text-[#878a8c]">
               A plan built from your profile, skills and the time you have.
@@ -34,23 +39,39 @@ export function CareerGoalSummary({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-3 lg:border-l lg:border-orange-100 lg:pl-6">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 xl:shrink-0 xl:gap-6 xl:border-l xl:border-orange-100 xl:pl-6">
           <Fact icon={<CalendarDays size={16} />} label="Target" value={`${roadmap.timelineMonths} months`} />
           <Fact icon={<Clock size={16} />} label="Weekly time" value={`${roadmap.hoursPerWeek} hours/week`} />
-          <Fact icon={<Users size={16} />} label="Support preference" value={supportLabel} />
+          <Fact
+            icon={<Users size={16} />}
+            label="Support preference"
+            value={support?.short ?? 'Alumni help'}
+            title={support?.label}
+          />
         </div>
       </div>
     </div>
   )
 }
 
-function Fact({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+function Fact({
+  icon,
+  label,
+  value,
+  title,
+}: {
+  icon: React.ReactNode
+  label: string
+  value: string
+  /** Full text when `value` is an abbreviated form, shown on hover. */
+  title?: string
+}) {
   return (
-    <div className="flex items-start gap-2">
-      <span className="mt-0.5 text-[#ff4500]">{icon}</span>
-      <div>
-        <p className="text-xs font-medium text-[#878a8c]">{label}</p>
-        <p className="text-sm font-bold text-[#1c1c1c]">{value}</p>
+    <div className="flex items-start gap-2 xl:w-[150px]" title={title}>
+      <span className="mt-0.5 shrink-0 text-[#ff4500]">{icon}</span>
+      <div className="min-w-0">
+        <p className="text-xs font-medium whitespace-nowrap text-[#878a8c]">{label}</p>
+        <p className="text-sm leading-snug font-bold text-[#1c1c1c]">{value}</p>
       </div>
     </div>
   )
