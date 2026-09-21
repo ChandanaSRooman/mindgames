@@ -4,6 +4,7 @@ import { ExternalLink, Video, Award, Calendar, GraduationCap, Star, X } from 'lu
 import { useApp } from '../store/AppStore'
 import { SubscriptionPlans } from '../components/subscription/SubscriptionPlans'
 import { MentorWorkspace } from '../components/mentor/MentorWorkspace'
+import { GroupSessionsTab } from '../components/mentor/GroupSessionsTab'
 import { CompleteSessionModal } from '../components/mentor/CompleteSessionModal'
 import { api } from '../lib/api'
 import { roleLine } from '../lib/format'
@@ -11,7 +12,7 @@ import { isBookableMentor } from '../lib/profileCompleteness'
 import { Avatar, Button, Card } from '../components/ui'
 import { FREE_MENTORSHIP_SESSIONS, type MentorshipSession, type User } from '../types'
 
-type Tab = 'Find a Mentor' | 'My Sessions' | 'Mentor Space'
+type Tab = 'Find a Mentor' | 'My Sessions' | 'Mentor Space' | 'Group Sessions'
 
 export function Mentorship() {
   const {
@@ -94,7 +95,7 @@ export function Mentorship() {
 
       {/* Tabs */}
       <div className="flex gap-1 rounded-xl border border-[#edeff1] bg-white p-1 shadow-sm">
-        {(['Find a Mentor', 'My Sessions', 'Mentor Space'] as Tab[]).map((t) => (
+        {(['Find a Mentor', 'My Sessions', 'Mentor Space', 'Group Sessions'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -286,7 +287,7 @@ export function Mentorship() {
             </div>
           </section>
         </div>
-      ) : (
+      ) : tab === 'Mentor Space' ? (
         <MentorWorkspace
           requests={mentorRequests}
           upcoming={mentorUpcoming}
@@ -294,11 +295,14 @@ export function Mentorship() {
           onDecline={declineSession}
           onComplete={(session) => setCompleting(session)}
         />
+      ) : (
+        <GroupSessionsTab />
       )}
 
       {completing && (
         <CompleteSessionModal
-          session={completing}
+          topic={completing.topic}
+          who={completing.menteeName}
           onClose={() => setCompleting(null)}
           onConfirm={(minutes, domain) => {
             completeSession(completing.id, minutes, domain)

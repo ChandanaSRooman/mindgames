@@ -1234,6 +1234,53 @@ export interface AdminSubscriptionRow {
   subscribed: boolean
 }
 
+// --- Group sessions ----------------------------------------------------------
+// Mirrors backend/src/routes/groupSessions.routes.ts. A mentor hosting many
+// mentees at once rather than one — a separate table and flow from a 1:1
+// mentorship_sessions row, because capacity/roster don't fit that shape.
+// Gated on the plan's groupSessions flag (Pro/Institute), checked at creation.
+
+export interface GroupSession {
+  id: string
+  mentorId: string
+  mentorName: string
+  mentorPhoto?: string
+  topic: string
+  description: string
+  domain: string
+  scheduledAt: string
+  durationMinutes: number
+  capacity: number
+  attendeeCount: number
+  seatsLeft: number
+  meetingLink?: string
+  pricingMode: 'free' | 'paid'
+  pricePerSeat: number
+  status: 'scheduled' | 'completed' | 'cancelled'
+  joinedByMe: boolean
+  mentorConfirmed: boolean
+}
+
+export interface GroupSessionAttendee {
+  id: string
+  name: string
+  photo?: string
+  joinedAt: string
+  confirmed: boolean
+}
+
+export interface GroupSessionInput {
+  topic: string
+  description?: string
+  domain?: string
+  scheduledAt: string
+  durationMinutes?: number
+  capacity?: number
+  meetingLink?: string
+  pricingMode?: 'free' | 'paid'
+  pricePerSeat?: number
+}
+
 /** A person surfaced by the roadmap, with the stage that made them relevant. */
 export interface AlumniHelper {
   id: string

@@ -11,6 +11,9 @@ import type {
   CareerStageStatus,
   CheckoutSession,
   Mentee,
+  GroupSession,
+  GroupSessionAttendee,
+  GroupSessionInput,
   MenteeBrief,
   MenteeRoadmap,
   Plan,
@@ -638,6 +641,27 @@ export const api = {
 
   // Mentor workspace
   getMentees: () => http<Mentee[]>('/api/career/mentees'),
+
+  // Group sessions
+  getGroupSessions: () => http<GroupSession[]>('/api/group-sessions'),
+  getMyGroupSessions: () => http<GroupSession[]>('/api/group-sessions/mine'),
+  createGroupSession: (input: GroupSessionInput) =>
+    http<GroupSession>('/api/group-sessions', { method: 'POST', body: JSON.stringify(input) }),
+  joinGroupSession: (id: string) =>
+    http<GroupSession>(`/api/group-sessions/${id}/join`, { method: 'POST' }),
+  leaveGroupSession: (id: string) =>
+    http<GroupSession>(`/api/group-sessions/${id}/leave`, { method: 'POST' }),
+  getGroupSessionAttendees: (id: string) =>
+    http<GroupSessionAttendee[]>(`/api/group-sessions/${id}/attendees`),
+  completeGroupSession: (id: string, durationMinutes?: number, domain?: string) =>
+    http<GroupSession>(`/api/group-sessions/${id}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ durationMinutes, domain }),
+    }),
+  confirmGroupSession: (id: string) =>
+    http<GroupSession>(`/api/group-sessions/${id}/confirm`, { method: 'POST' }),
+  cancelGroupSession: (id: string) =>
+    http<{ ok: boolean }>(`/api/group-sessions/${id}/cancel`, { method: 'POST' }),
   /** A mentee's roadmap. Allowed only where an accepted session exists. */
   getMenteeRoadmap: (userId: string) => http<MenteeRoadmap>(`/api/career/roadmap/of/${userId}`),
   getProfileStats: (userId: string) => http<ProfileStats>(`/api/mentorship/stats/${userId}`),

@@ -2,22 +2,26 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Clock, X } from 'lucide-react'
 import { Button } from '../ui'
-import { DOMAINS, type MentorshipSession } from '../../types'
+import { DOMAINS } from '../../types'
 
 /**
  * Captures how long a session actually ran, and what it covered.
  *
  * The duration is the point: profile hours, streaks and badges are all built
  * from it, and a "completed" session with no duration is exactly the shape a
- * session that happened somewhere else leaves behind. The mentee confirms
- * separately before any of it counts.
+ * session that happened somewhere else leaves behind. Confirmation happens
+ * separately (mentee, or each attendee for a group session) before any of it
+ * counts — `who` describes that in each case rather than assuming a single
+ * mentee, since this modal now serves both a 1:1 session and a group one.
  */
 export function CompleteSessionModal({
-  session,
+  topic,
+  who,
   onClose,
   onConfirm,
 }: {
-  session: MentorshipSession
+  topic: string
+  who: string
   onClose: () => void
   onConfirm: (durationMinutes: number, domain: string) => void
 }) {
@@ -36,7 +40,7 @@ export function CompleteSessionModal({
           </button>
         </div>
         <p className="mb-4 text-sm text-[#878a8c]">
-          “{session.topic}” with {session.menteeName}. They'll be asked to confirm it — once they do,
+          “{topic}” with {who}. They'll be asked to confirm it — once they do,
           it counts towards both your records.
         </p>
 
@@ -84,7 +88,7 @@ export function CompleteSessionModal({
 
         <p className="mb-4 flex items-center gap-1.5 rounded-lg bg-gray-50 px-3 py-2 text-xs text-[#878a8c]">
           <Clock size={13} className="shrink-0" />
-          {minutes} minutes will be added to your mentoring hours once {session.menteeName.split(' ')[0]} confirms.
+          {minutes} minutes will be added to your mentoring hours once {who} confirms.
         </p>
 
         <div className="flex justify-end gap-2">
