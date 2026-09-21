@@ -5,6 +5,7 @@ import { optionalAuth, requireAdmin, requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { mapComment, mapPost, type CommentRow, type PostRow } from '../mappers.js'
 import { pushNotification, pushNotificationToAll } from '../notify.js'
+import { refreshBadges } from '../sessionStats.js'
 
 export const postsRouter = Router()
 
@@ -409,6 +410,11 @@ postsRouter.post(
       const { author_id, name } = meta.rows[0]
       if (author_id !== req.user!.sub) {
         void pushNotification(author_id, 'like', `${name} reacted ${parsed.data.emoji} to your post.`, req.user!.sub)
+        // A like is a complete, real action the moment it happens — unlike a
+        // mentorship session there is nothing to wait for or confirm, so both
+        // sides' engagement badges are checked right here rather than lazily.
+        void refreshBadges(req.user!.sub)
+        void refreshBadges(author_id)
       }
     }
     res.json(await reactionSummary(req.params.id, req.user!.sub))

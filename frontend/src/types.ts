@@ -1162,6 +1162,9 @@ export interface ProfileStats {
   mentorStreakWeeks: number
   learnerStreakWeeks: number
   roadmapProgress: { total: number; completed: number } | null
+  eventsAttended: number
+  likesGiven: number
+  likesReceived: number
   badges: { id: string; name: string; description: string; side: string; earnedAt: string }[]
 }
 

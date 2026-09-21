@@ -37,6 +37,15 @@ export const BADGES: BadgeDef[] = [
   { id: 'roadmap_halfway', side: 'learner', name: 'Halfway There', description: 'Completed half your roadmap' },
   { id: 'goal_reached', side: 'learner', name: 'Goal Reached', description: 'Completed every stage of your roadmap' },
   { id: 'consistent_learner', side: 'learner', name: 'On A Streak', description: 'Learned in 4 consecutive weeks' },
+
+  // Community involvement — not mentorship, but the same "earned from real
+  // activity, not self-reported" rule: an RSVP only counts once the event
+  // has actually happened, and likes are counted both ways so the badge
+  // rewards participating, not just being popular.
+  { id: 'event_regular', side: 'learner', name: 'Community Regular', description: 'Attended 5 events' },
+  { id: 'event_veteran', side: 'learner', name: 'Community Veteran', description: 'Attended 15 events' },
+  { id: 'engaged_member', side: 'learner', name: 'Engaged Member', description: 'Liked 25 posts from others' },
+  { id: 'well_liked', side: 'learner', name: 'Well Liked', description: 'Received 50 likes on your posts' },
 ]
 
 const BADGE_BY_ID = new Map(BADGES.map((b) => [b.id, b]))
@@ -52,6 +61,14 @@ export interface ProfileStats {
   mentorStreakWeeks: number
   learnerStreakWeeks: number
   roadmapProgress: { total: number; completed: number } | null
+  /** Events actually attended — an RSVP only counts once the event's own
+   *  start time has passed, same "real activity, not intent" rule as a
+   *  mentorship session needing both sides to confirm it happened. */
+  eventsAttended: number
+  /** Likes given to other members' posts — participation, not popularity. */
+  likesGiven: number
+  /** Likes received on this member's own posts — the other direction. */
+  likesReceived: number
   badges: { id: string; name: string; description: string; side: string; earnedAt: string }[]
 }
 
@@ -164,6 +181,25 @@ export async function getProfileStats(userId: string): Promise<ProfileStats> {
     [userId],
   )
 
+  // Events actually attended — the RSVP has to be for an event whose own
+  // start time has passed, not waitlisted. Someone who RSVP'd to next
+  // month's meetup hasn't attended anything yet.
+  const events = await query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM event_rsvps r JOIN events e ON e.id = r.event_id
+      WHERE r.user_id = $1 AND NOT r.waitlisted AND e.starts_at < now()`,
+    [userId],
+  )
+  const likesGiven = await query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM post_reactions r JOIN posts p ON p.id = r.post_id
+      WHERE r.user_id = $1 AND p.author_id <> $1`,
+    [userId],
+  )
+  const likesReceived = await query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM post_reactions r JOIN posts p ON p.id = r.post_id
+      WHERE p.author_id = $1 AND r.user_id <> $1`,
+    [userId],
+  )
+
   const gGiven = groupGiven.rows[0]
   const gTaken = groupTaken.rows[0]
 
@@ -177,6 +213,9 @@ export async function getProfileStats(userId: string): Promise<ProfileStats> {
     mentorStreakWeeks: await streakWeeks(userId, 'mentor'),
     learnerStreakWeeks: await streakWeeks(userId, 'mentee'),
     roadmapProgress,
+    eventsAttended: events.rows[0]?.n ?? 0,
+    likesGiven: likesGiven.rows[0]?.n ?? 0,
+    likesReceived: likesReceived.rows[0]?.n ?? 0,
     badges: badgeRows.rows.map((b) => ({
       id: b.badge,
       name: BADGE_BY_ID.get(b.badge)?.name ?? b.badge,
@@ -211,6 +250,10 @@ export async function refreshBadges(userId: string): Promise<string[]> {
     ['goal_reached', !!s.roadmapProgress && s.roadmapProgress.total > 0 &&
       s.roadmapProgress.completed >= s.roadmapProgress.total],
     ['consistent_learner', s.learnerStreakWeeks >= 4],
+    ['event_regular', s.eventsAttended >= 5],
+    ['event_veteran', s.eventsAttended >= 15],
+    ['engaged_member', s.likesGiven >= 25],
+    ['well_liked', s.likesReceived >= 50],
   ]
 
   for (const [id, qualified] of want) {

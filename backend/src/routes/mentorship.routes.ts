@@ -5,7 +5,7 @@ import { requireAdmin, requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { pushNotification } from '../notify.js'
 import { getSubscription } from '../subscription.js'
-import { getProfileStats, recordConfirmedSession } from '../sessionStats.js'
+import { getProfileStats, recordConfirmedSession, refreshBadges } from '../sessionStats.js'
 
 export const mentorshipRouter = Router()
 
@@ -324,6 +324,12 @@ mentorshipRouter.get(
   '/stats/:userId',
   requireAuth,
   asyncHandler(async (req, res) => {
+    // Event-attendance badges have nothing that "completes" them the way a
+    // session confirmation does — an RSVP just quietly becomes "attended"
+    // once the event's start time passes. Rechecking on every self-view
+    // catches that without a cron job; nothing changes for the common case
+    // of viewing someone else's profile.
+    if (req.params.userId === req.user!.sub) void refreshBadges(req.params.userId)
     res.json(await getProfileStats(req.params.userId))
   }),
 )
