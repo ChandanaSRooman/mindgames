@@ -32,6 +32,9 @@ export interface Plan {
   invitesPerMonth: number
   /** Percentage the platform keeps on a paid service. Display-only today. */
   platformFeePct: number
+  /** May charge for an event or webinar they host. Free community events are
+   *  open to every member and are not affected by any plan. */
+  paidEvents: boolean
   features: string[]
   /** Drawn as the highlighted column, as on a pricing page. */
   highlighted?: boolean
@@ -48,10 +51,12 @@ export const PLAN_DETAILS: Record<PlanId, Plan> = {
     serviceLimit: 1,
     invitesPerMonth: 0,
     platformFeePct: 15,
+    paidEvents: false,
     features: [
       'Appear in the alumni directory',
       'List 1 service',
       'Receive session requests',
+      'Host free community events',
       'Accepting a session needs a paid plan',
     ],
   },
@@ -64,8 +69,10 @@ export const PLAN_DETAILS: Record<PlanId, Plan> = {
     serviceLimit: 3,
     invitesPerMonth: 5,
     platformFeePct: 10,
+    paidEvents: true,
     features: [
       'Accept up to 10 sessions a month',
+      'Host paid events and webinars',
       'List 3 services',
       'View your mentee’s career roadmap',
       'Invite 5 students a month',
@@ -82,9 +89,11 @@ export const PLAN_DETAILS: Record<PlanId, Plan> = {
     serviceLimit: null,
     invitesPerMonth: 25,
     platformFeePct: 5,
+    paidEvents: true,
     highlighted: true,
     features: [
       'Unlimited sessions',
+      'Host paid events and webinars',
       'Unlimited services',
       'View your mentee’s career roadmap',
       'Invite 25 students a month',
@@ -102,6 +111,7 @@ export const PLAN_DETAILS: Record<PlanId, Plan> = {
     serviceLimit: null,
     invitesPerMonth: 1000,
     platformFeePct: 0,
+    paidEvents: true,
     features: [
       'Everything in Pro',
       'Up to 10 mentors on one account',
@@ -184,6 +194,24 @@ export async function getSubscription(userId: string): Promise<SubscriptionState
     sessionsPerMonth: cap,
     blockedReason,
   }
+}
+
+/** Whether this member may charge for an event or webinar they host.
+ *
+ * Only paid events are gated. A free community event stays open to every
+ * member, mentor or not — the rule is "monetising through the platform needs
+ * a plan", the same rule that gates accepting a paid mentorship session, not
+ * "hosting anything needs a plan". Gating all events would have taken an
+ * ability students already have. */
+export async function canHostPaidEvents(userId: string): Promise<{ allowed: boolean; reason?: string }> {
+  const s = await getSubscription(userId)
+  if (s.status !== 'active') {
+    return { allowed: false, reason: 'Charging for an event needs an active plan. Free events are open to everyone.' }
+  }
+  if (!PLAN_DETAILS[s.plan]?.paidEvents) {
+    return { allowed: false, reason: `The ${PLAN_DETAILS[s.plan].name} plan cannot charge for events. Upgrade to host paid events.` }
+  }
+  return { allowed: true }
 }
 
 /** Grant or extend a subscription. One path for every source — an admin

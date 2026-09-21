@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { query, withTransaction } from '../db/pool.js'
 import { requireAdmin, requireAuth } from '../auth/middleware.js'
+import { canHostPaidEvents } from '../subscription.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { pushNotification, pushNotificationToAll } from '../notify.js'
 import { sendEmail } from '../email.js'
@@ -147,6 +148,15 @@ eventsRouter.post(
     const price = isPaid ? e.price : 0
 
     const me = req.user!.sub
+    // Charging for an event is monetising through the platform, so it needs
+    // a plan — the same rule as accepting a paid mentorship session. Free
+    // community events stay open to every member, which is why this checks
+    // isPaid rather than gating event creation outright.
+    // 402 so the client can open the plans instead of showing an error.
+    if (isPaid && !req.user!.isAdmin) {
+      const allowed = await canHostPaidEvents(me)
+      if (!allowed.allowed) throw new ApiError(402, allowed.reason ?? 'A plan is needed to charge for an event.')
+    }
     const status = req.user!.isAdmin ? 'approved' : 'pending'
     const inserted = await query<{ id: string }>(
       `INSERT INTO events (creator_id, title, description, location, meeting_link, starts_at, status, is_paid, price, capacity, speakers)
