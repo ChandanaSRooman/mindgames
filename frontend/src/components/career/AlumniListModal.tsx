@@ -17,10 +17,18 @@ import type { AlumniHelper } from '../../types'
  */
 export function AlumniListModal({
   people,
+  title = 'People from Rooman who can help you',
+  subtitle,
   onClose,
   onBook,
 }: {
   people: AlumniHelper[]
+  /** Defaults to the roadmap-wide heading; a stage-scoped open passes its
+   *  own so "matched to your roadmap" doesn't imply a broader list than
+   *  what's actually shown. */
+  title?: string
+  /** Defaults to "N matched to your roadmap" when omitted. */
+  subtitle?: string
   onClose: () => void
   onBook: (person: AlumniHelper) => void
 }) {
@@ -62,9 +70,10 @@ export function AlumniListModal({
                 <Users size={20} />
               </span>
               <div>
-                <h2 className="text-lg font-bold text-[#1c1c1c]">People from Rooman who can help you</h2>
+                <h2 className="text-lg font-bold text-[#1c1c1c]">{title}</h2>
                 <p className="text-sm text-[#878a8c]">
-                  {people.length} {people.length === 1 ? 'person' : 'people'} matched to your roadmap
+                  {subtitle ??
+                    `${people.length} ${people.length === 1 ? 'person' : 'people'} matched to your roadmap`}
                 </p>
               </div>
             </div>
