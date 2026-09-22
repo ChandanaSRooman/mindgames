@@ -641,17 +641,37 @@ CREATE TABLE IF NOT EXISTS notifications (
   type       TEXT NOT NULL,
   text       TEXT NOT NULL,
   actor_id   TEXT REFERENCES users(id) ON DELETE SET NULL,
+  -- What the notification is ABOUT, so the UI can link to the thing itself
+  -- rather than to a page of that kind. Both nullable: older rows, and
+  -- notifications that are genuinely about nothing but you ("you passed the
+  -- mentor assessment"), fall back to the per-type route.
+  target_type TEXT,
+  target_id   TEXT,
   read       BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, created_at DESC);
 
+-- Upgrade path for databases created before notifications carried a target.
+-- No foreign key: target_id points at one of several tables depending on
+-- target_type, so there is no single table to reference. A deleted target
+-- therefore leaves a dead id, which the frontend treats as "no target" and
+-- falls back to the type route — a stale link, never a crash.
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_type TEXT;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_id   TEXT;
+
+ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_target_type_check;
+ALTER TABLE notifications
+  ADD CONSTRAINT notifications_target_type_check
+  CHECK (target_type IS NULL OR target_type IN
+    ('post','event','community','user','company','startup','session','conversation'));
+
 -- Notification types are re-checked here so upgrades pick up new ones.
 ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_type_check;
 ALTER TABLE notifications
   ADD CONSTRAINT notifications_type_check
-  CHECK (type IN ('connection','like','comment','job','mentorship','community','announcement','event'));
+  CHECK (type IN ('connection','like','comment','job','mentorship','community','announcement','event','message'));
 
 -- ---------------------------------------------------------------------------
 -- Rich profile detail (additive). Every column is nullable or defaulted, so

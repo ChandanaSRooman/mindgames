@@ -715,6 +715,7 @@ companiesRouter.post(
         'mentorship',
         `${askerName} asked how you got into ${company.name}. Share your roadmap to help them in.`,
         me,
+        { type: 'company', id: company.id },
       )
     }
 

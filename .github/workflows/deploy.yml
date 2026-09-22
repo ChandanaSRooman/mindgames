@@ -198,11 +198,22 @@ jobs:
           # instead of localhost — the health check only ever talks to
           # localhost, so such a failure would otherwise ship green.
           echo "Ensuring APP_URL=\$APP_URL_VALUE in .env…"
-          # Create .env when absent AND keep it owner-only. `sudo touch` alone
+          # Create .env when absent AND keep it owner-only. \`sudo touch\` alone
           # left a missing .env root-owned 0644 on a rebuilt instance, and the
           # cp below preserves the destination's mode, so the secrets would
           # have stayed world-readable for the life of that box.
+          #
+          # chown as well as chmod, because 600 on its own locks the app OUT.
+          # sudo touch creates the file owned by root, but neither the migrate
+          # below nor the systemd service runs as root — both run as this same
+          # deploy user — and dotenv swallows the resulting EACCES silently
+          # (env.ts now reports it). The box then starts with no DATABASE_URL
+          # and no NODE_ENV and fails against the dev Postgres default, which
+          # names a port that does not exist in prod rather than the real
+          # cause. id -un is used rather than a literal name so the owner is
+          # by construction the account that reads the file.
           sudo touch .env
+          sudo chown "\$(id -un):\$(id -gn)" .env
           sudo chmod 600 .env
           # Staged through mktemp rather than a fixed /tmp name. The redirect
           # runs as the unprivileged deploy user at umask 022, so a predictable
@@ -220,7 +231,7 @@ jobs:
           sudo cp -p .env .env.bak
           sudo chmod 600 .env.bak
           # grep exits 1 when it legitimately matched every line, and 2 on a
-          # real read error. `|| true` masked both, and the copy at the end was
+          # real read error. \`|| true\` masked both, and the copy at the end was
           # unconditional, so any read failure replaced .env with just the one
           # line printf appended — destroying every secret on the box.
           set +e
@@ -264,7 +275,12 @@ jobs:
             echo "Refusing to install .env: \$kept_before non-APP_URL lines before, \$kept_after after." >&2
             exit 1
           fi
+          # cp onto an existing file keeps that file's owner, so this repeats
+          # the chown rather than relying on it: the one case that matters is
+          # a .env this step had to create from nothing, and re-stating it
+          # costs nothing and cannot regress.
           sudo cp "\$ENV_TMP" .env
+          sudo chown "\$(id -un):\$(id -gn)" .env
           sudo chmod 600 .env
           echo "Installing prod deps + migrating…"
           npm ci --omit=dev --no-audit --no-fund
