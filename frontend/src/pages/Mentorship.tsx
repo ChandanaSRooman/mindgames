@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { ExternalLink, Video, Award, Calendar, GraduationCap, Star, X } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { api } from '../lib/api'
-import { roleLine } from '../lib/format'
+import { roleLine, sessionPriceLabel } from '../lib/format'
 import { Avatar, Button, Card } from '../components/ui'
 import { FREE_MENTORSHIP_SESSIONS, type MentorshipSession, type User } from '../types'
 
@@ -159,7 +159,7 @@ export function Mentorship() {
                         <p className="font-semibold text-[#1c1c1c]">{s.topic}</p>
                         <p className="text-xs text-[#878a8c]">
                           {iAmMentor ? `${other} requested this session` : `with ${other}`} · {s.date} · {s.time}
-                          {s.isPaid && <span className="font-semibold text-[#ff4500]"> · Paid ₹{(s.price ?? 0).toLocaleString('en-IN')}</span>}
+                          {sessionPriceLabel(s) && <span className="font-semibold text-[#ff4500]"> · {sessionPriceLabel(s)}</span>}
                         </p>
                       </div>
                       {iAmMentor ? (
@@ -198,7 +198,7 @@ export function Mentorship() {
                       <p className="font-semibold text-[#1c1c1c]">{s.topic}</p>
                       <p className="text-xs text-[#878a8c]">
                         {iAmMentor ? 'mentoring' : 'with'} {other} · {s.date} · {s.time}
-                        {s.isPaid && <span className="font-semibold text-[#ff4500]"> · Paid ₹{(s.price ?? 0).toLocaleString('en-IN')}</span>}
+                        {sessionPriceLabel(s) && <span className="font-semibold text-[#ff4500]"> · {sessionPriceLabel(s)}</span>}
                       </p>
                     </div>
                     {s.meetingLink && (
@@ -240,7 +240,7 @@ export function Mentorship() {
                       <p className="font-semibold text-[#1c1c1c]">{s.topic}</p>
                       <p className="text-xs text-[#878a8c]">
                         {iAmMentor ? 'mentored' : 'with'} {other} · {s.date}
-                        {s.isPaid && <span className="font-semibold text-[#ff4500]"> · Paid ₹{(s.price ?? 0).toLocaleString('en-IN')}</span>}
+                        {sessionPriceLabel(s) && <span className="font-semibold text-[#ff4500]"> · {sessionPriceLabel(s)}</span>}
                       </p>
                     </div>
                     {!declined && s.rating && (
