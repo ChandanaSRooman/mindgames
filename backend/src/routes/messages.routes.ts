@@ -1,9 +1,10 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { query } from '../db/pool.js'
+import { query, withTransaction } from '../db/pool.js'
 import { requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { emitTo } from '../realtime.js'
+import { pushNotificationOncePerTarget } from '../notify.js'
 import { formatMsgTime } from '../mappers.js'
 
 export const messagesRouter = Router()
@@ -142,12 +143,26 @@ messagesRouter.post(
   requireAuth,
   asyncHandler(async (req, res) => {
     const me = req.user!.sub
-    await query(
-      `INSERT INTO conversation_reads (conversation_id, user_id, last_read_at)
-       VALUES ($1, $2, now())
-       ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = now()`,
-      [req.params.conversationId, me],
-    )
+    // Two statements, so a transaction: the read marker and the bell entry
+    // describe the same fact, and leaving one applied without the other is
+    // what makes the chat badge and the bell disagree.
+    await withTransaction(async (client) => {
+      await client.query(
+        `INSERT INTO conversation_reads (conversation_id, user_id, last_read_at)
+         VALUES ($1, $2, now())
+         ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = now()`,
+        [req.params.conversationId, me],
+      )
+      await client.query(
+        `UPDATE notifications SET read = TRUE
+          WHERE user_id = $2 AND type = 'message'
+            AND target_type = 'conversation' AND target_id = $1
+            AND NOT read`,
+        [req.params.conversationId, me],
+      )
+    })
+    // Drop the bell count the moment the thread is opened, without a refresh.
+    emitTo(me, 'notification')
     res.json({ ok: true })
   }),
 )
@@ -207,6 +222,21 @@ messagesRouter.post(
     if (conv.rowCount) {
       const other = conv.rows[0].user_lo === me ? conv.rows[0].user_hi : conv.rows[0].user_lo
       emitTo(other, 'message')
+      // A bell entry as well as the realtime poke: the poke only reaches a tab
+      // that is open right now, so without this a message sent while the
+      // recipient is away leaves no trace until they happen to open the chat
+      // panel. `OncePerTarget` keeps a twenty-message exchange to one entry.
+      //
+      // The body is deliberately NOT in the text — notification text is stored
+      // in plain rows and shown in the bell; the preview belongs in the chat.
+      const sender = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [me])
+      void pushNotificationOncePerTarget(
+        other,
+        'message',
+        `${sender.rows[0]?.name ?? 'Someone'} sent you a message.`,
+        me,
+        { type: 'conversation', id: convId },
+      )
     }
 
     res.status(201).json({

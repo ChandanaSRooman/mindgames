@@ -674,6 +674,41 @@ export function mapCareerRoadmap(r: CareerRoadmapRow) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Notifications.
+//
+// This mapping used to live inline in notifications.routes.ts. It belongs here
+// with every other row-to-JSON translation: that is the one place the frontend
+// contract is defined, and a route that formats its own rows is exactly the
+// shape §3 exists to prevent.
+// ---------------------------------------------------------------------------
+export interface NotificationRow {
+  id: string
+  type: string
+  text: string
+  actor_id: string | null
+  target_type: string | null
+  target_id: string | null
+  read: boolean
+  created_at: Date | string
+}
+
+export function mapNotification(r: NotificationRow) {
+  return {
+    id: r.id,
+    type: r.type,
+    text: r.text,
+    actorId: r.actor_id ?? undefined,
+    // What this notification is about, when it is about something. The frontend
+    // turns the pair into a link and falls back to the per-type route when
+    // either is missing — see lib/notificationLink.ts.
+    targetType: r.target_type ?? undefined,
+    targetId: r.target_id ?? undefined,
+    read: r.read,
+    createdAt: new Date(r.created_at).toISOString(),
+  }
+}
+
 export interface AlumniServiceRow {
   id: string
   user_id: string

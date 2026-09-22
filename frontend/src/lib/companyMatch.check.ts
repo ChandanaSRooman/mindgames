@@ -261,11 +261,12 @@ const hollowMatch = scoreCompanyMatch(hollow, perfect)
 assert.ok(hollowMatch.score > 0, 'the misleading score is real — this is what we are guarding against')
 assert.equal(hasMatchEvidence(hollow), false, 'no alumni and no open roles means nothing to score')
 
-// An open role is evidence even with no alumni: somebody is actually hiring.
+// An open role alone is not evidence: nobody there could actually help you
+// get in, so it isn't enough on its own to be worth showing.
 assert.equal(
   hasMatchEvidence(company('Hiring Co', { sampleSize: 0, hiringRoles: [{ role: 'SDE', count: 1 }] })),
-  true,
-  'an open role is enough to be worth showing',
+  false,
+  'an open role with no alumni is still nothing to score',
 )
 assert.equal(hasMatchEvidence(company('Real', { sampleSize: 3 })), true)
 

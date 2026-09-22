@@ -154,6 +154,7 @@ mentorshipRouter.post(
       'mentorship',
       `${me.rows[0].name} requested a mentorship session: "${topic}" on ${date} at ${time}.`,
       req.user!.sub,
+      { type: 'session', id: ins.rows[0].id },
     )
 
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [ins.rows[0].id])
@@ -190,6 +191,7 @@ mentorshipRouter.post(
       `${me.rows[0].name} confirmed your session "${s.topic}" — ${s.date_label} at ${s.time_label}.` +
         (link ? ' Meeting link attached — see My Sessions.' : ''),
       req.user!.sub,
+      { type: 'session', id: req.params.id },
     )
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
     res.json(mapSession(full.rows[0]))
@@ -210,6 +212,7 @@ mentorshipRouter.post(
       'mentorship',
       `${me.rows[0].name} declined your session request "${s.topic}". You can request another slot.`,
       req.user!.sub,
+      { type: 'session', id: req.params.id },
     )
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
     res.json(mapSession(full.rows[0]))
@@ -235,6 +238,7 @@ mentorshipRouter.post(
       'mentorship',
       `Your session "${s.topic}" with ${me.rows[0].name} is marked completed. Hope it helped! 🎓`,
       req.user!.sub,
+      { type: 'session', id: req.params.id },
     )
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
     res.json(mapSession(full.rows[0]))
@@ -285,6 +289,7 @@ mentorshipRouter.post(
       'mentorship',
       'Your mentor application was approved. You are now listed as a mentor! 🎉',
       req.user!.sub,
+      { type: 'user', id: req.params.id },
     )
     res.json({ ok: true })
   }),
@@ -317,6 +322,7 @@ mentorshipRouter.post(
         'mentorship',
         `Your mentor application needs another look${note ? `: ${note}` : '. Please resubmit with clearer proof.'}`,
         req.user!.sub,
+        { type: 'user', id: req.params.id },
       )
     }
     res.json({ ok: true })
@@ -352,6 +358,7 @@ mentorshipRouter.post(
       'mentorship',
       `${me.rows[0].name} rated your session "${s.rows[0].topic}" ${rating}★${review ? ` — "${review.slice(0, 60)}"` : ''}`,
       req.user!.sub,
+      { type: 'session', id: req.params.id },
     )
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
     res.json(mapSession(full.rows[0]))
