@@ -127,7 +127,7 @@ function ageFrom(dob: Date | string | null): number | undefined {
 }
 
 /** JSONB defaults to '[]' but a hand-edited row could hold anything. */
-const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
+export const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
 const opt = (v: string | null | undefined) => (v && v.length > 0 ? v : undefined)
 
 /**
@@ -500,7 +500,7 @@ export function mapCompanyAlumnus(r: CompanyAlumnusRow) {
  * "Jun 2021 - Present". Returns null when there is no year to find, which
  * sorts those entries to the end rather than to 1970.
  */
-function startYearOf(period: unknown): number | null {
+export function startYearOf(period: unknown): number | null {
   if (typeof period !== 'string') return null
   const m = period.match(/\b(19|20)\d{2}\b/)
   return m ? Number(m[0]) : null
@@ -608,6 +608,73 @@ export function mapCompanyRoadmap(
 }
 
 // ---------------------------------------------------------------------------
+// Career Guidance
+// ---------------------------------------------------------------------------
+
+export interface CareerAssessmentRow {
+  id: string
+  status: 'draft' | 'submitted'
+  current_situation: string
+  goal_type: string
+  target_role: string
+  target_role_unsure: boolean
+  hours_per_week: number | null
+  timeline_months: number | null
+  extra_skills_note: string
+  learning_prefs: string[]
+  support_preference: string
+  help_types: string[]
+  free_text: string
+  created_at: Date | string
+  updated_at: Date | string
+}
+
+export function mapCareerAssessment(r: CareerAssessmentRow) {
+  return {
+    id: r.id,
+    status: r.status,
+    currentSituation: r.current_situation,
+    goalType: r.goal_type,
+    targetRole: r.target_role,
+    targetRoleUnsure: r.target_role_unsure,
+    hoursPerWeek: r.hours_per_week ?? undefined,
+    timelineMonths: r.timeline_months ?? undefined,
+    extraSkillsNote: r.extra_skills_note,
+    learningPrefs: r.learning_prefs ?? [],
+    supportPreference: r.support_preference,
+    helpTypes: r.help_types ?? [],
+    freeText: r.free_text,
+    createdAt: new Date(r.created_at).toISOString(),
+    updatedAt: new Date(r.updated_at).toISOString(),
+  }
+}
+
+export interface CareerRoadmapRow {
+  id: string
+  version: number
+  status: 'active' | 'archived'
+  data: unknown
+  created_at: Date | string
+}
+
+/** `data` already holds { goal, timelineMonths, hoursPerWeek, stages } — see
+ * careerRoadmap.ts for what writes it. The row's own id/version/status are
+ * merged on top so the frontend gets one flat, self-contained object. */
+export function mapCareerRoadmap(r: CareerRoadmapRow) {
+  const data = (r.data && typeof r.data === 'object' ? r.data : {}) as Record<string, unknown>
+  return {
+    roadmapId: r.id,
+    version: r.version,
+    status: r.status,
+    goal: data.goal ?? { currentRole: '', targetRole: '' },
+    timelineMonths: data.timelineMonths ?? 0,
+    hoursPerWeek: data.hoursPerWeek ?? 0,
+    stages: Array.isArray(data.stages) ? data.stages : [],
+    createdAt: new Date(r.created_at).toISOString(),
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Notifications.
 //
 // This mapping used to live inline in notifications.routes.ts. It belongs here
@@ -639,6 +706,48 @@ export function mapNotification(r: NotificationRow) {
     targetId: r.target_id ?? undefined,
     read: r.read,
     createdAt: new Date(r.created_at).toISOString(),
+  }
+}
+
+export interface AlumniServiceRow {
+  id: string
+  user_id: string
+  service_type: string
+  title: string
+  description: string
+  tags: string[]
+  pricing_mode: 'free' | 'paid' | 'custom'
+  amount: number | null
+  pricing_unit: 'hour' | 'session' | null
+  active: boolean
+  created_at: Date | string
+  updated_at: Date | string
+  // Present only when the query joins users for card display; absent on the
+  // provider's own "manage my services" list, which already knows who it is.
+  provider_name?: string
+  provider_photo?: string | null
+  provider_designation?: string
+  provider_company?: string
+}
+
+export function mapAlumniService(r: AlumniServiceRow) {
+  return {
+    id: r.id,
+    userId: r.user_id,
+    serviceType: r.service_type,
+    title: r.title,
+    description: r.description,
+    tags: r.tags ?? [],
+    pricingMode: r.pricing_mode,
+    amount: r.amount ?? undefined,
+    pricingUnit: r.pricing_unit ?? undefined,
+    active: r.active,
+    createdAt: new Date(r.created_at).toISOString(),
+    updatedAt: new Date(r.updated_at).toISOString(),
+    providerName: r.provider_name,
+    providerPhoto: r.provider_photo ?? undefined,
+    providerDesignation: r.provider_designation,
+    providerCompany: r.provider_company,
   }
 }
 

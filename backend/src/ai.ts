@@ -133,7 +133,23 @@ const OPENROUTER_RESUME_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free'
 // data, because both would misrepresent where an answer came from.
 const AI_PROVIDER = process.env.AI_PROVIDER === 'anthropic' ? 'anthropic' : 'openrouter'
 
+// Career Guidance can run on its own OpenRouter key and model, set apart from
+// Ask Roo and resume parsing. Both are optional and fall back to the shared
+// ones. Two reasons this exists:
+//   - Quota: the free tier is capped per key per day, so roadmap generation
+//     competing with resume parsing means one can exhaust the other.
+//   - Reliability: the free NVIDIA endpoints are frequently "temporarily
+//     overloaded" (which the retry logic below absorbs, but not always), so
+//     being able to point this one feature at a different model without a
+//     code change is the difference between a five-second fix and a deploy.
+const careerApiKey = process.env.OPENROUTER_CAREER_API_KEY || openRouterApiKey
+const OPENROUTER_CAREER_MODEL =
+  process.env.OPENROUTER_CAREER_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free'
+
 export const aiEnabled = AI_PROVIDER === 'anthropic' ? !!client : !!openRouterApiKey
+
+/** Career Guidance is available when its own key (or the shared one) is set. */
+export const careerAiEnabled = AI_PROVIDER === 'anthropic' ? !!client : !!careerApiKey
 
 // Must stay in sync with DOMAINS / EMPLOYMENT_TYPES in frontend/src/types.ts.
 // "" means "could not tell from the resume" — the form keeps its own value then.
@@ -364,8 +380,10 @@ async function callOpenRouterOnce(
   reasoningEnabled: boolean | undefined,
   jsonSchema: object | undefined,
   deadline: number,
+  // Defaults to the shared key; Career Guidance may pass its own.
+  apiKey: string | undefined = openRouterApiKey,
 ): Promise<string> {
-  if (!openRouterApiKey) throw new Error('OPENROUTER_API_KEY is not configured.')
+  if (!apiKey) throw new Error('OPENROUTER_API_KEY is not configured.')
 
   const remaining = Math.min(OPENROUTER_ATTEMPT_TIMEOUT_MS, deadline - Date.now())
   if (remaining <= 0) {
@@ -393,7 +411,7 @@ async function callOpenRouterOnce(
       res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${openRouterApiKey}`,
+          Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
@@ -463,13 +481,14 @@ async function callOpenRouter(
   // callOpenRouterJson) pass the same deadline to every one of them, so the
   // whole operation stays inside a single bound instead of multiplying.
   deadline: number = Date.now() + OPENROUTER_TOTAL_BUDGET_MS,
+  apiKey: string | undefined = openRouterApiKey,
 ): Promise<string> {
   const MAX_ATTEMPTS = 3
   let lastTransient: Error | null = null
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (Date.now() >= deadline) break
     try {
-      return await callOpenRouterOnce(model, messages, maxTokens, reasoningEnabled, jsonSchema, deadline)
+      return await callOpenRouterOnce(model, messages, maxTokens, reasoningEnabled, jsonSchema, deadline, apiKey)
     } catch (err) {
       if (!(err instanceof TransientOpenRouterError)) throw err
       lastTransient = err
@@ -522,10 +541,11 @@ async function callOpenRouterJson(
   maxTokens: number,
   jsonSchema?: object,
   reasoningEnabled?: boolean,
+  apiKey: string | undefined = openRouterApiKey,
 ): Promise<unknown> {
   // One budget for the first call and the corrective re-ask together.
   const deadline = Date.now() + OPENROUTER_TOTAL_BUDGET_MS
-  const first = await callOpenRouter(model, messages, maxTokens, reasoningEnabled, jsonSchema, deadline)
+  const first = await callOpenRouter(model, messages, maxTokens, reasoningEnabled, jsonSchema, deadline, apiKey)
   try {
     return JSON.parse(extractJsonObject(first))
   } catch {
@@ -539,7 +559,7 @@ async function callOpenRouterJson(
         content: 'Your entire reply must be ONLY the JSON object — starting with { and ending with }. No words before or after it, no markdown, no code fence. Output the JSON object now.',
       },
     ]
-    const second = await callOpenRouter(model, retryMessages, maxTokens, reasoningEnabled, jsonSchema, deadline)
+    const second = await callOpenRouter(model, retryMessages, maxTokens, reasoningEnabled, jsonSchema, deadline, apiKey)
     return JSON.parse(extractJsonObject(second)) // still invalid → let it throw, caller maps to a clean error
   }
 }
@@ -813,6 +833,180 @@ export async function parseResume(
     console.error('Resume parse failed:', err instanceof Error ? err.message : err)
     throw new ResumeParseError(502, 'Resume parsing failed. Please try again, or fill in your details manually.')
   }
+}
+
+// ---------------------------------------------------------------------------
+// Career Guidance: roadmap generation.
+//
+// Reuses OPENROUTER_RESUME_MODEL (Nemotron 3 Super) rather than introducing a
+// new model — it's the one model in this codebase already proven to fill a
+// strict JSON schema reliably (see the comment on OPENROUTER_RESUME_MODEL
+// above). If quality needs improving later, that's a model swap here, not a
+// new integration.
+//
+// What the backend sends is a small, pre-filtered packet (assessment answers
+// + already-retrieved candidate alumni/services/paths — see careerRoadmap.ts),
+// never a database dump. Claude/Nemotron only sequences stages and picks
+// which of the GIVEN candidate ids are relevant to each stage; it cannot
+// introduce an id that wasn't in the packet it was handed. The caller
+// (careerRoadmap.ts) is responsible for stripping any id that slips through
+// anyway that isn't in the candidate set — this function only guarantees the
+// *shape* is well-formed, not that every id is real.
+// ---------------------------------------------------------------------------
+
+export interface CareerRoadmapContext {
+  assessment: {
+    currentSituation: string
+    goalType: string
+    targetRole: string | null
+    hoursPerWeek: number
+    timelineMonths: number
+    learningPreferences: string[]
+    helpTypesWanted: string[]
+    freeText: string
+  }
+  userSkills: { expertise: string[]; recentRoles: string[]; certifications: string[] }
+  candidatePaths: { fromRole: string; toRole: string; alumniCount: number }[]
+  /** Whole routes real alumni walked from the member's current role to their
+   *  target, oldest role first. Empty when nobody has walked it. */
+  walkedRoutes: string[][]
+  candidateAlumni: { id: string; currentRole: string; topSkills: string[] }[]
+  candidateServices: { id: string; type: string; tags: string[] }[]
+}
+
+export interface CareerRoadmapStageResult {
+  stepKey: string
+  title: string
+  status: 'completed' | 'in_progress' | 'upcoming'
+  durationWeeks: number | null
+  relevantAlumniIds: string[]
+  relevantServiceIds: string[]
+}
+
+export interface CareerRoadmapResult {
+  stages: CareerRoadmapStageResult[]
+}
+
+const ROADMAP_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    stages: {
+      type: 'array',
+      description: 'Ordered roadmap stages, current role first, target role last.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          stepKey: { type: 'string', description: 'Short unique slug, e.g. "step-2".' },
+          title: { type: 'string' },
+          status: { type: 'string', enum: ['completed', 'in_progress', 'upcoming'] },
+          durationWeeks: { type: ['integer', 'null'], description: 'Null for the current/target bookend stages.' },
+          relevantAlumniIds: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Only ids copied from the candidateAlumni list given below — never invent one.',
+          },
+          relevantServiceIds: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Only ids copied from the candidateServices list given below — never invent one.',
+          },
+        },
+        required: ['stepKey', 'title', 'status', 'durationWeeks', 'relevantAlumniIds', 'relevantServiceIds'],
+      },
+    },
+  },
+  required: ['stages'],
+}
+
+const ROADMAP_SYSTEM =
+  'You build a personalized career roadmap for a Rooman Technologies alumni-network member. ' +
+  'Use ONLY the information given below — never invent people, services, employers or facts not present. ' +
+  'The first stage is always their current situation (status "completed" or "in_progress", durationWeeks null); ' +
+  'the last stage is always their target role (durationWeeks null). Between them, break the gap between their ' +
+  'current skills and target role into realistic, ordered stages whose durationWeeks roughly sum to the given ' +
+  'timelineMonths at the given hoursPerWeek pace. For each middle stage, list only the ids of candidateAlumni ' +
+  'and candidateServices (given below) that are genuinely relevant to that specific stage — an empty list is ' +
+  'fine and better than a forced, irrelevant match. If targetRole is null (member is unsure), build an ' +
+  'exploration-oriented roadmap (self-assessment, alumni conversations, trial projects) instead of a skill-gap one.'
+
+function buildRoadmapPrompt(context: CareerRoadmapContext): string {
+  return `Member's assessment and retrieved context (JSON):\n${JSON.stringify(context, null, 2)}\n\nReturn the roadmap JSON now.`
+}
+
+/** Structural validation only — every id really existing in the candidate
+ * lists is checked by the caller, which is the one that knows those lists. */
+function validateRoadmapResult(parsed: unknown): CareerRoadmapResult {
+  const reject = (): never => {
+    throw new Error('The AI returned an unexpected roadmap shape.')
+  }
+  if (typeof parsed !== 'object' || parsed === null) reject()
+  const raw = parsed as Record<string, unknown>
+  if (!Array.isArray(raw.stages)) reject()
+
+  const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [])
+  const stages: CareerRoadmapStageResult[] = (raw.stages as unknown[])
+    .map((s) => (s && typeof s === 'object' ? (s as Record<string, unknown>) : {}))
+    .filter((s) => typeof s.stepKey === 'string' && typeof s.title === 'string')
+    .map((s) => ({
+      stepKey: String(s.stepKey),
+      title: String(s.title),
+      status: s.status === 'completed' || s.status === 'in_progress' ? s.status : 'upcoming',
+      durationWeeks: typeof s.durationWeeks === 'number' ? s.durationWeeks : null,
+      relevantAlumniIds: strings(s.relevantAlumniIds),
+      relevantServiceIds: strings(s.relevantServiceIds),
+    }))
+  if (stages.length === 0) reject()
+  return { stages }
+}
+
+/** Generate a career roadmap from a pre-built context packet. Throws the same
+ * way parseResume/askRoo do (no silent fallback to canned data) — a member
+ * seeing a wrong roadmap is worse than seeing an explicit "try again" error. */
+export async function generateCareerRoadmap(context: CareerRoadmapContext): Promise<CareerRoadmapResult> {
+  if (!careerAiEnabled) {
+    throw new Error(
+      AI_PROVIDER === 'openrouter'
+        ? 'Career Guidance is not configured on this server (OPENROUTER_API_KEY missing).'
+        : 'Career Guidance is not configured on this server (ANT_KEY missing).',
+    )
+  }
+
+  const prompt = buildRoadmapPrompt(context)
+
+  if (AI_PROVIDER === 'openrouter') {
+    const messages: ChatMessage[] = [
+      { role: 'system', content: ROADMAP_SYSTEM },
+      { role: 'user', content: prompt },
+    ]
+    const parsed = await callOpenRouterJson(
+      OPENROUTER_CAREER_MODEL, messages, 4096, ROADMAP_SCHEMA, false, careerApiKey,
+    )
+    return validateRoadmapResult(parsed)
+  }
+
+  if (!client) {
+    throw new Error('Career Guidance is not configured on this server (ANT_KEY missing).')
+  }
+  const res = await client.messages.create({
+    model: 'claude-opus-4-8',
+    max_tokens: 4096,
+    system: ROADMAP_SYSTEM,
+    output_config: { format: { type: 'json_schema', schema: ROADMAP_SCHEMA } },
+    messages: [{ role: 'user', content: prompt }],
+  } as Anthropic.MessageCreateParamsNonStreaming)
+  if (res.stop_reason === 'refusal') {
+    throw new Error('The AI declined to build a roadmap for this assessment.')
+  }
+  // Without this a truncated reply fell through to JSON.parse and surfaced a
+  // raw SyntaxError as the 502 body, which tells the member nothing.
+  if (res.stop_reason === 'max_tokens') {
+    throw new Error('The roadmap came back truncated. Please try again.')
+  }
+  const text = res.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text
+  if (!text) throw new Error('The AI returned an empty roadmap response.')
+  return validateRoadmapResult(JSON.parse(text))
 }
 
 const ROO_SYSTEM =

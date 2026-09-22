@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { BadgeCheck, Loader2 } from 'lucide-react'
+import { BadgeCheck, Eye, EyeOff, Loader2 } from 'lucide-react'
 import { avatarGradient, initials } from '../../lib/format'
 import type { PostType, StatusTag } from '../../types'
 import { POST_TYPE_STYLES, STATUS_STYLES } from '../../types'
@@ -156,6 +156,28 @@ export function Button({
       {loading ? <Loader2 size={16} className="animate-spin" /> : icon}
       {children}
     </button>
+  )
+}
+
+// ---- Password input (adds a show/hide eye toggle) -------------------------
+export function PasswordInput({
+  className = '',
+  ...rest
+}: { className?: string } & Omit<InputHTMLAttributes<HTMLInputElement>, 'type'>) {
+  const [visible, setVisible] = useState(false)
+  return (
+    <div className="relative">
+      <input type={visible ? 'text' : 'password'} className={`pr-10 ${className}`} {...rest} />
+      <button
+        type="button"
+        onClick={() => setVisible((v) => !v)}
+        tabIndex={-1}
+        aria-label={visible ? 'Hide password' : 'Show password'}
+        className="absolute inset-y-0 right-0 flex items-center px-3 text-[#878a8c] hover:text-[#1c1c1c]"
+      >
+        {visible ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
   )
 }
 

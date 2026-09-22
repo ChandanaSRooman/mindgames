@@ -24,10 +24,11 @@ interface SessionRow {
   rating: number | null
   is_paid: boolean
   price: number
+  service_id: string | null
 }
 
 const SESSION_SELECT = `
-  SELECT s.id, s.mentor_id, s.mentee_id, u.name AS mentee_name, s.topic, s.date_label, s.time_label, s.status, s.meeting_link, s.rating, s.is_paid, s.price
+  SELECT s.id, s.mentor_id, s.mentee_id, u.name AS mentee_name, s.topic, s.date_label, s.time_label, s.status, s.meeting_link, s.rating, s.is_paid, s.price, s.service_id
   FROM mentorship_sessions s
   JOIN users u ON u.id = s.mentee_id`
 
@@ -45,6 +46,7 @@ function mapSession(r: SessionRow) {
     rating: r.rating ?? undefined,
     isPaid: r.is_paid,
     price: r.price,
+    serviceId: r.service_id ?? undefined,
   }
 }
 
@@ -67,6 +69,10 @@ const bookSchema = z.object({
   topic: z.string().trim().min(1, 'topic is required'),
   date: z.string().trim().min(1, 'date is required'),
   time: z.string().trim().min(1, 'time is required'),
+  // Set when booking a Career Guidance alumni_service rather than a plain
+  // mentorship session — see career.routes.ts. Optional, and when absent the
+  // booking behaves exactly as it always has (free-allowance pricing below).
+  serviceId: z.string().optional(),
 })
 
 // POST /api/mentorship/sessions — book a session with a mentor.
@@ -76,7 +82,7 @@ mentorshipRouter.post(
   asyncHandler(async (req, res) => {
     const parsed = bookSchema.safeParse(req.body)
     if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
-    const { mentorId, topic, date, time } = parsed.data
+    const { mentorId, topic, date, time, serviceId } = parsed.data
     if (mentorId === req.user!.sub) throw new ApiError(400, 'Cannot book a session with yourself')
 
     const mentor = await query<{ name: string; is_mentor: boolean; mentor_rate: number | null }>(
@@ -85,6 +91,19 @@ mentorshipRouter.post(
     )
     if (!mentor.rowCount) throw new ApiError(404, 'Mentor not found')
     if (!mentor.rows[0].is_mentor) throw new ApiError(400, 'This member is not a mentor')
+
+    // A service booking snapshots that service's own pricing instead of the
+    // mentee's generic free-allowance count — the service's price is what was
+    // shown on the card the member clicked "Book" on.
+    let service: { pricing_mode: string; amount: number | null } | null = null
+    if (serviceId) {
+      const s = await query<{ pricing_mode: string; amount: number | null }>(
+        `SELECT pricing_mode, amount FROM alumni_services WHERE id = $1 AND user_id = $2 AND active`,
+        [serviceId, mentorId],
+      )
+      if (!s.rowCount) throw new ApiError(404, 'That service is no longer available')
+      service = s.rows[0]
+    }
 
     const mentorRate = mentor.rows[0].mentor_rate ?? 0
     // Duplicate check + free-allowance count + insert run in one transaction with
@@ -107,19 +126,26 @@ mentorshipRouter.post(
         )
       }
 
-      // Free allowance: the mentee's first FREE_SESSIONS non-declined sessions
-      // are free; beyond that the session is paid at the mentor's rate.
-      const used = await client.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM mentorship_sessions WHERE mentee_id = $1 AND status <> 'declined'`,
-        [req.user!.sub],
-      )
-      const isPaid = used.rows[0].n >= FREE_SESSIONS
-      const price = isPaid ? mentorRate : 0
+      let isPaid: boolean
+      let price: number
+      if (service) {
+        isPaid = service.pricing_mode !== 'free'
+        price = service.pricing_mode === 'paid' ? service.amount ?? 0 : 0
+      } else {
+        // Free allowance: the mentee's first FREE_SESSIONS non-declined sessions
+        // are free; beyond that the session is paid at the mentor's rate.
+        const used = await client.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM mentorship_sessions WHERE mentee_id = $1 AND status <> 'declined'`,
+          [req.user!.sub],
+        )
+        isPaid = used.rows[0].n >= FREE_SESSIONS
+        price = isPaid ? mentorRate : 0
+      }
 
       return client.query<{ id: string }>(
-        `INSERT INTO mentorship_sessions (mentor_id, mentee_id, topic, date_label, time_label, status, is_paid, price)
-         VALUES ($1, $2, $3, $4, $5, 'requested', $6, $7) RETURNING id`,
-        [mentorId, req.user!.sub, topic, date, time, isPaid, price],
+        `INSERT INTO mentorship_sessions (mentor_id, mentee_id, topic, date_label, time_label, status, is_paid, price, service_id)
+         VALUES ($1, $2, $3, $4, $5, 'requested', $6, $7, $8) RETURNING id`,
+        [mentorId, req.user!.sub, topic, date, time, isPaid, price, serviceId ?? null],
       )
     })
     const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
