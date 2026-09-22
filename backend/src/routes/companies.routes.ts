@@ -128,7 +128,11 @@ companiesRouter.get(
                      -- the same two-branch rule, and the module header is
                      -- explicit that it must live in exactly one place so the
                      -- count and the preview cannot drift apart.
-                     WHERE ${matchesCompany('u2.company')}
+                     -- u2.id <> $1 mirrors the FILTER above: without it, a
+                     -- viewer who matches their own company shows up as one
+                     -- of their own company's preview avatars while
+                     -- alumni_count (correctly) doesn't count them.
+                     WHERE ${matchesCompany('u2.company')} AND u2.id <> $1
                      ORDER BY u2.name LIMIT 4
                    ) p
                   ), '[]'
