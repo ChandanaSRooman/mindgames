@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { BookOpen, Check, CircleDashed, Flag, Map, Target, Users } from 'lucide-react'
 import { Card } from '../ui'
-import type { CareerRoadmap, CareerStage, CareerStageStatus } from '../../types'
+import { AlumniListModal } from './AlumniListModal'
+import type { AlumniHelper, CareerRoadmap, CareerStage, CareerStageStatus } from '../../types'
 
 const BADGE: Record<CareerStageStatus, string> = {
   completed: 'bg-green-500 text-white',
@@ -14,11 +16,25 @@ const BADGE: Record<CareerStageStatus, string> = {
  *  readable on a phone rather than being a shrunken desktop row. */
 export function CareerRoadmapTimeline({
   roadmap,
+  people,
   onStepStatus,
+  onBookPerson,
 }: {
   roadmap: CareerRoadmap
+  /** The roadmap's full matched-alumni list — each stage card filters this
+   *  down to its own relevantAlumniIds rather than fetching anything new. */
+  people: AlumniHelper[]
   onStepStatus: (stepKey: string, status: CareerStageStatus) => void
+  onBookPerson: (person: AlumniHelper) => void
 }) {
+  // Which stage's alumni list is open, if any. One at a time, so opening a
+  // second stage's list closes the first rather than stacking modals.
+  const [openFor, setOpenFor] = useState<string | null>(null)
+  const openStage = roadmap.stages.find((s) => s.stepKey === openFor)
+  const openStagePeople = openStage
+    ? people.filter((p) => openStage.relevantAlumniIds.includes(p.id))
+    : []
+
   return (
     <Card className="p-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -49,6 +65,7 @@ export function CareerRoadmapTimeline({
               isFirst={i === 0}
               isLast={i === roadmap.stages.length - 1}
               onStepStatus={onStepStatus}
+              onShowPeople={() => setOpenFor(stage.stepKey)}
             />
             {i < roadmap.stages.length - 1 && (
               <span
@@ -59,6 +76,19 @@ export function CareerRoadmapTimeline({
           </div>
         ))}
       </div>
+
+      {openStage && (
+        <AlumniListModal
+          people={openStagePeople}
+          title={`Alumni who can help with “${openStage.title}”`}
+          subtitle={`${openStagePeople.length} ${openStagePeople.length === 1 ? 'person matches' : 'people match'} this stage`}
+          onClose={() => setOpenFor(null)}
+          onBook={(p) => {
+            onBookPerson(p)
+            setOpenFor(null)
+          }}
+        />
+      )}
     </Card>
   )
 }
@@ -78,12 +108,14 @@ function StageCard({
   isFirst,
   isLast,
   onStepStatus,
+  onShowPeople,
 }: {
   stage: CareerStage
   index: number
   isFirst: boolean
   isLast: boolean
   onStepStatus: (stepKey: string, status: CareerStageStatus) => void
+  onShowPeople: () => void
 }) {
   const Icon = isFirst ? Flag : isLast ? Target : stage.status === 'completed' ? Check : BookOpen
   const helpers = stage.relevantAlumniIds.length
@@ -124,10 +156,14 @@ function StageCard({
           Completed
         </span>
       ) : helpers > 0 ? (
-        <span className="mt-2 flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-[#878a8c]">
+        <button
+          onClick={onShowPeople}
+          className="mt-2 flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-[#878a8c] transition-colors hover:bg-orange-50 hover:text-[#ff4500]"
+          title={`See who: ${stage.title}`}
+        >
           <Users size={11} />
           {helpers} alumni can help
-        </span>
+        </button>
       ) : null}
 
       {/* Progress control — the plan is the member's to drive, not a fixed

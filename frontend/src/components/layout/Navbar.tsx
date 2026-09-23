@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import {
   Bell,
   ChevronDown,
+  Crown,
   LogOut,
   MessageSquare,
   Plus,
@@ -16,6 +17,7 @@ import { useLayout } from './LayoutContext'
 import { Avatar } from '../ui'
 import { NotificationsDropdown } from './NotificationsDropdown'
 import { SearchDropdown } from './SearchDropdown'
+import { SubscriptionPanel } from '../subscription/SubscriptionPanel'
 
 export function Navbar() {
   const { currentUser, query, setQuery, unreadNotifications, unreadMessages, signOut } = useApp()
@@ -25,6 +27,10 @@ export function Navbar() {
   const [showNotifs, setShowNotifs] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [showPlans, setShowPlans] = useState(false)
+  const { subscription } = useApp()
+  const planActive = subscription?.status === 'active'
+  const planLabel = subscription ? subscription.plan[0].toUpperCase() + subscription.plan.slice(1) : ''
   const notifRef = useRef<HTMLDivElement>(null)
   const profileRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLDivElement>(null)
@@ -73,6 +79,22 @@ export function Navbar() {
 
       {/* Right cluster */}
       <div className="flex shrink-0 items-center gap-1">
+        {/* Plan status. Gold when active so a paying mentor can see it at a
+            glance; outlined when not, because it is then a call to action. */}
+        <button
+          onClick={() => setShowPlans(true)}
+          title={planActive ? 'Your mentor plan' : 'Mentor plans'}
+          aria-label="Mentor plans"
+          className={`mr-1 flex h-9 items-center gap-1.5 rounded-full px-2.5 text-sm font-semibold transition-colors ${
+            planActive
+              ? 'bg-gradient-to-r from-[#ffd700] to-[#ff9500] text-[#1c1c1c] hover:brightness-105'
+              : 'border border-[#edeff1] text-[#878a8c] hover:bg-gray-100 hover:text-[#1c1c1c]'
+          }`}
+        >
+          <Crown size={18} />
+          {planActive && <span className="hidden lg:inline">{planLabel}</span>}
+        </button>
+
         <IconButton label="Messages" badge={unreadMessages} onClick={toggleChat}>
           <MessageSquare size={20} />
         </IconButton>
@@ -122,6 +144,7 @@ export function Navbar() {
           )}
         </div>
       </div>
+      {showPlans && <SubscriptionPanel onClose={() => setShowPlans(false)} />}
     </header>
   )
 }

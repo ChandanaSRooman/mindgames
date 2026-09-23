@@ -39,9 +39,18 @@ export function ChatPanel({
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Opened from a profile "Message" button — get/create that conversation.
+  // Every "Message" button that can reach here already hides itself for an
+  // unconnected member, so the backend's connection gate should never fire
+  // from this path in practice — but a caught error and a toast is what
+  // happens if it ever does, rather than an unhandled rejection.
   useEffect(() => {
-    if (initialUserId) messageUser(initialUserId).then(setActiveId)
-  }, [initialUserId, messageUser])
+    if (initialUserId) {
+      messageUser(initialUserId).then(setActiveId, (err) => {
+        notify(err instanceof Error ? err.message : 'Could not open that conversation.', 'error')
+        onClose()
+      })
+    }
+  }, [initialUserId, messageUser, notify, onClose])
 
   // While the panel is open, poll for incoming messages so chats feel live.
   useEffect(() => {

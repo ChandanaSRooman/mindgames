@@ -1146,6 +1146,183 @@ export interface AlumniService {
   providerCompany?: string
 }
 
+// --- Mentor workspace -------------------------------------------------------
+
+/** Someone this mentor has an accepted session with. */
+export interface Mentee {
+  id: string
+  name: string
+  photo?: string
+  designation: string
+  company: string
+  sessions: number
+  lastSessionAt: string | null
+  hasRoadmap: boolean
+  goal: { currentRole?: string; targetRole?: string } | null
+}
+
+/** A mentee's roadmap as a mentor sees it — the plan plus what they asked
+ *  for in their own words, which is the most useful part before a session. */
+export interface MenteeRoadmap extends CareerRoadmap {
+  member: { id: string; name: string; designation: string; company: string; photo?: string }
+  context: { supportPreference: string; note: string; helpTypes: string[] }
+}
+
+/** Public profile record, built only from sessions both sides confirmed. */
+export interface ProfileStats {
+  sessionsGiven: number
+  sessionsTaken: number
+  hoursGiven: number
+  hoursTaken: number
+  avgRating: number | null
+  ratingCount: number
+  mentorStreakWeeks: number
+  learnerStreakWeeks: number
+  roadmapProgress: { total: number; completed: number } | null
+  eventsAttended: number
+  likesGiven: number
+  likesReceived: number
+  badges: { id: string; name: string; description: string; side: string; earnedAt: string }[]
+}
+
+/** AI briefing a mentor reads before a session — the substance of the
+ *  printable report. Generated from the student's plan and own words. */
+export interface MenteeBrief {
+  summary: string
+  strengths: string[]
+  gaps: string[]
+  focusThisSession: string[]
+  questionsToAsk: string[]
+  watchOuts: string[]
+}
+
+// --- Mentor subscriptions ---------------------------------------------------
+// Mirrors backend/src/subscription.ts. A mentor needs an active plan to
+// ACCEPT a session; a mentee's free-session allowance is unrelated to this.
+
+export const PLAN_IDS = ['free', 'mentor', 'pro', 'institute'] as const
+export type PlanId = (typeof PLAN_IDS)[number]
+
+export interface Plan {
+  id: PlanId
+  name: string
+  price: number
+  tagline: string
+  sessionsPerMonth: number | null
+  serviceLimit: number | null
+  invitesPerMonth: number
+  platformFeePct: number
+  paidEvents: boolean
+  features: string[]
+  highlighted?: boolean
+}
+
+export interface SubscriptionState {
+  plan: PlanId
+  status: 'inactive' | 'pending' | 'active' | 'expired' | 'cancelled'
+  source: 'none' | 'grandfathered' | 'admin' | 'gateway'
+  expiresAt: string | null
+  canAcceptSessions: boolean
+  sessionsThisMonth: number
+  sessionsPerMonth: number | null
+  blockedReason?: string
+}
+
+export interface CheckoutSession {
+  reference: string
+  provider: string
+  amount: number
+  currency: string
+  redirectUrl: string
+  /** True when no money moved — the UI must say so rather than imply a charge. */
+  simulated: boolean
+  clientPayload?: { signature?: string }
+}
+
+export interface AdminSubscriptionRow {
+  userId: string
+  name: string
+  email: string
+  photo?: string
+  designation: string
+  company: string
+  plan: PlanId
+  status: string
+  source: string
+  expiresAt: string | null
+  sessionsThisMonth: number
+  subscribed: boolean
+}
+
+// One row of a mentor's subscription audit trail — what was requested,
+// granted, renewed or failed, and when. Mirrors GET
+// /api/subscription/admin/events/:userId.
+export interface SubscriptionEvent {
+  kind: 'requested' | 'activated' | 'renewed' | 'cancelled' | 'expired' | 'payment_failed'
+  plan: string
+  amount?: number
+  provider?: string
+  note: string
+  createdAt: string
+}
+
+// --- Group sessions ----------------------------------------------------------
+// Mirrors backend/src/routes/groupSessions.routes.ts. A mentor hosting many
+// mentees at once rather than one — a separate table and flow from a 1:1
+// mentorship_sessions row, because capacity/roster don't fit that shape.
+// Gated on the plan's groupSessions flag (Pro/Institute), checked at creation.
+
+export interface GroupSession {
+  id: string
+  mentorId: string
+  mentorName: string
+  mentorPhoto?: string
+  topic: string
+  description: string
+  domain: string
+  scheduledAt: string
+  durationMinutes: number
+  capacity: number
+  attendeeCount: number
+  seatsLeft: number
+  meetingLink?: string
+  pricingMode: 'free' | 'paid'
+  pricePerSeat: number
+  status: 'scheduled' | 'completed' | 'cancelled'
+  /** 'invite_only' is hidden from the public browse list — only the host and
+   *  the people invited to it can see or join it. */
+  visibility: 'public' | 'invite_only'
+  joinedByMe: boolean
+  /** True for an invite_only session this member was invited to but hasn't
+   *  joined yet — how they find it, since it isn't in the public list. */
+  invitedByMe: boolean
+  mentorConfirmed: boolean
+}
+
+export interface GroupSessionAttendee {
+  id: string
+  name: string
+  photo?: string
+  joinedAt: string
+  confirmed: boolean
+}
+
+export interface GroupSessionInput {
+  topic: string
+  description?: string
+  domain?: string
+  scheduledAt: string
+  durationMinutes?: number
+  capacity?: number
+  meetingLink?: string
+  pricingMode?: 'free' | 'paid'
+  pricePerSeat?: number
+  visibility?: 'public' | 'invite_only'
+  /** Required when visibility is 'invite_only' — validated server-side
+   *  against this mentor's accepted connections. */
+  inviteeIds?: string[]
+}
+
 /** A person surfaced by the roadmap, with the stage that made them relevant. */
 export interface AlumniHelper {
   id: string

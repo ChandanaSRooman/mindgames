@@ -18,6 +18,7 @@ import { PostCard } from '../components/feed/PostCard'
 import { EditProfileModal } from '../components/profile/EditProfileModal'
 import { ProfilePhoto } from '../components/profile/ProfilePhoto'
 import { ProfileBadges } from '../components/profile/ProfileBadges'
+import { MentorshipRecord } from '../components/profile/MentorshipRecord'
 import { ProfileCompletenessMeter } from '../components/profile/ProfileCompletenessMeter'
 import {
   AboutSection,
@@ -200,6 +201,13 @@ export function Profile() {
             <Stat value={(user.experience ?? []).length} label="Roles" />
           </div>
 
+          {/* The verified record: mentorship both sides confirmed, events
+              actually attended, like involvement, and badges earned from all
+              of it — additive to the tiles above, not a replacement. */}
+          <div className="mt-3">
+            <MentorshipRecord userId={user.id} />
+          </div>
+
           <div className="mt-4 flex flex-wrap items-center gap-2">
             {isMe ? (
               <Button variant="outline" icon={<Edit2 size={15} />} onClick={openEditor}>
@@ -219,13 +227,19 @@ export function Profile() {
                       ? 'Request sent'
                       : 'Send Note'}
                 </Button>
-                <Button
-                  variant="outline"
-                  icon={<MessageSquare size={15} />}
-                  onClick={() => openChatWith(user.id)}
-                >
-                  Message
-                </Button>
+                {/* Only shown once connected — the backend refuses to open a
+                    new DM otherwise, so an unconnected visitor gets "Send
+                    Note" as the actionable button instead of one that would
+                    just error when clicked. */}
+                {conn === 'connected' && (
+                  <Button
+                    variant="outline"
+                    icon={<MessageSquare size={15} />}
+                    onClick={() => openChatWith(user.id)}
+                  >
+                    Message
+                  </Button>
+                )}
                 {user.company && (
                   <Button
                     variant="subtle"

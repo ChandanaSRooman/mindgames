@@ -154,16 +154,19 @@ export function ProfileQuickView({ userId, onClose }: { userId: string; onClose:
                 <UserPlus size={15} />
                 {conn === 'connected' ? 'Connected' : conn === 'pending' ? 'Request sent' : 'Connect'}
               </Button>
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={() => {
-                  openChatWith(user.id)
-                  onClose()
-                }}
-              >
-                <MessageSquare size={15} /> Message
-              </Button>
+              {/* Only once connected — same rule as everywhere else. */}
+              {conn === 'connected' && (
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    openChatWith(user.id)
+                    onClose()
+                  }}
+                >
+                  <MessageSquare size={15} /> Message
+                </Button>
+              )}
             </motion.div>
           )}
 

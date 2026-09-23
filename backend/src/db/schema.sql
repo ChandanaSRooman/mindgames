@@ -1023,3 +1023,196 @@ CREATE INDEX IF NOT EXISTS idx_alumni_services_active ON alumni_services (servic
 -- with this column pointing back at which service it came from. No parallel
 -- booking system — accept/decline/rate/complete all stay exactly as they are.
 ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS service_id TEXT REFERENCES alumni_services(id) ON DELETE SET NULL;
+
+-- ---------------------------------------------------------------------------
+-- Mentor subscriptions
+--
+-- A mentor needs an active subscription to ACCEPT a session. This is the
+-- supply side only: a mentee's first few sessions stay free (see
+-- FREE_MENTORSHIP_SESSIONS), which is a separate, unrelated allowance.
+--
+-- Deliberately provider-agnostic. `provider` and `provider_ref` are the only
+-- columns a payment gateway needs, so wiring one up later sets those two
+-- rather than reshaping the table. Until then a subscription is granted by an
+-- admin or by the grandfathering rule below — the same "arranged offline"
+-- posture the rest of this app's pricing already takes.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mentor_subscriptions (
+  user_id      TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  plan         TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'mentor', 'pro', 'institute')),
+  status       TEXT NOT NULL DEFAULT 'inactive' CHECK (status IN ('inactive', 'pending', 'active', 'expired', 'cancelled')),
+  -- How this subscription came to be, so support can tell a comped account
+  -- from a paid one without reading payment history.
+  source       TEXT NOT NULL DEFAULT 'none' CHECK (source IN ('none', 'grandfathered', 'admin', 'gateway')),
+  provider     TEXT,
+  provider_ref TEXT,
+  started_at   TIMESTAMPTZ,
+  -- NULL means "no end date" (an admin grant). A grandfathered or paid period
+  -- sets this, and the gate treats a past date as expired.
+  expires_at   TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mentor_subs_status ON mentor_subscriptions (status, expires_at);
+
+-- Every payment-ish event, whoever produced it. Exists so a gateway webhook
+-- has somewhere idempotent to land: a provider re-sending the same event id
+-- must not grant a second month. Also the audit trail for admin grants.
+CREATE TABLE IF NOT EXISTS subscription_events (
+  id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind         TEXT NOT NULL CHECK (kind IN ('requested', 'activated', 'renewed', 'cancelled', 'expired', 'payment_failed')),
+  plan         TEXT NOT NULL DEFAULT 'free',
+  amount       INTEGER,
+  provider     TEXT,
+  -- The provider's own event id. Unique so a replayed webhook is a no-op.
+  provider_ref TEXT,
+  note         TEXT NOT NULL DEFAULT '',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sub_events_provider_ref
+  ON subscription_events (provider, provider_ref) WHERE provider_ref IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sub_events_user ON subscription_events (user_id, created_at DESC);
+
+-- Grandfathering: mentors approved before subscriptions existed keep working.
+-- 90 days of 'pro' so nobody is cut off the day the gate ships. Inserted once
+-- per mentor — ON CONFLICT DO NOTHING means re-running the migration never
+-- extends the window, and never overwrites a real subscription bought later.
+--
+-- Scoped to mentors verified before the cutoff below, not to "any mentor
+-- without a subscriptions row yet": schema.sql reruns on every deploy, and an
+-- unscoped WHERE is_mentor would silently re-grant this free 90 days to every
+-- mentor approved AFTER the gate shipped too, bypassing the paywall forever.
+-- NULL mentor_verified_at (seeded demo mentors, or any mentor that predates
+-- that column) is treated as "before the cutoff" since there is no later
+-- timestamp to compare against.
+INSERT INTO mentor_subscriptions (user_id, plan, status, source, started_at, expires_at)
+SELECT id, 'pro', 'active', 'grandfathered', now(), now() + INTERVAL '90 days'
+  FROM users
+ WHERE is_mentor
+   AND (mentor_verified_at IS NULL OR mentor_verified_at < TIMESTAMPTZ '2026-09-23 00:00:00+00')
+ON CONFLICT (user_id) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- Session tracking
+--
+-- date_label/time_label are free text a human typed ("Mon, 30 Jun", "6:00 PM
+-- IST"). They stay exactly as they are and keep driving the existing UI — but
+-- you cannot compute hours, streaks or "sessions this month" from them, so
+-- these columns record the same facts in a form that can be queried.
+--
+-- mentee_confirmed/mentor_confirmed are the load-bearing pair: a session only
+-- counts toward anybody's profile once BOTH sides say it happened. That makes
+-- the numbers on a profile evidence rather than a self-reported claim, and it
+-- is what makes an empty duration on a "completed" session visible.
+-- ---------------------------------------------------------------------------
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ;
+-- When the mentor accepted the request, not when the mentee sent it
+-- (created_at). The monthly session cap counts against this: a request that
+-- sat unaccepted for weeks must not eat a cap month it was never actioned in,
+-- and a request accepted this month must count against this month even if it
+-- was sent last month.
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS duration_minutes INTEGER;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT '';
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS mentee_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS mentor_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_sessions_mentor_confirmed
+  ON mentorship_sessions (mentor_id, confirmed_at DESC) WHERE confirmed_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sessions_mentee_confirmed
+  ON mentorship_sessions (mentee_id, confirmed_at DESC) WHERE confirmed_at IS NOT NULL;
+
+-- Badges earned from confirmed activity. Stored rather than derived on every
+-- read so "when did you earn this" is answerable, and so awarding one can
+-- raise a notification exactly once.
+CREATE TABLE IF NOT EXISTS profile_badges (
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  badge      TEXT NOT NULL,
+  -- 'mentor' badges describe help given, 'learner' badges help received.
+  side       TEXT NOT NULL DEFAULT 'learner' CHECK (side IN ('mentor', 'learner')),
+  earned_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, badge)
+);
+
+CREATE INDEX IF NOT EXISTS idx_profile_badges_user ON profile_badges (user_id, earned_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Group sessions
+--
+-- A separate table rather than reusing mentorship_sessions: that table's
+-- whole shape is one mentor + one mentee (composite lookups, FREE_SESSIONS
+-- counting, the mentor_id/mentee_id pair everywhere) and a session with a
+-- capacity and a roster of attendees doesn't fit it without turning every
+-- 1:1 query into "and also handle the group case". Attendees get their own
+-- table for the same reason events already separate event_rsvps out.
+--
+-- Gated on the same subscription as 1:1 sessions, but requires the plan's
+-- groupSessions flag (Pro/Institute) — see subscription.ts.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS group_sessions (
+  id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  mentor_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  topic             TEXT NOT NULL,
+  description       TEXT NOT NULL DEFAULT '',
+  domain            TEXT NOT NULL DEFAULT '',
+  -- Real timestamp, not a free-text label — a group session needs a genuine
+  -- capacity/roster query, which date_label on mentorship_sessions can't do.
+  scheduled_at      TIMESTAMPTZ NOT NULL,
+  duration_minutes  INTEGER NOT NULL DEFAULT 60,
+  capacity          INTEGER NOT NULL DEFAULT 10 CHECK (capacity > 0),
+  meeting_link      TEXT,
+  pricing_mode      TEXT NOT NULL DEFAULT 'free' CHECK (pricing_mode IN ('free', 'paid')),
+  -- Per seat, not per session — what one attendee sees and pays.
+  price_per_seat    INTEGER NOT NULL DEFAULT 0,
+  status            TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'completed', 'cancelled')),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_sessions_mentor ON group_sessions (mentor_id, scheduled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_group_sessions_upcoming ON group_sessions (scheduled_at) WHERE status = 'scheduled';
+
+-- 'public' (default): anyone can browse and join, today's only behaviour.
+-- 'invite_only': hidden from the public browse list; only the mentor and the
+-- rows in group_session_invites below can see or join it. A mentor who wants
+-- to run something for specific connections rather than broadcast it does
+-- not need a whole separate feature — just a narrower audience on the same
+-- session type.
+ALTER TABLE group_sessions ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'invite_only'));
+
+-- Who was invited to an invite_only session. No status column: an invite is
+-- either acted on (a group_session_attendees row exists) or it isn't —
+-- there is nothing else to track. Deliberately not scoped to being an
+-- accepted connection at read time (leaving a connection after being invited
+-- must not retroactively lock someone out of a session they were already
+-- asked to).
+CREATE TABLE IF NOT EXISTS group_session_invites (
+  session_id TEXT NOT NULL REFERENCES group_sessions(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (session_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_group_session_invites_user ON group_session_invites (user_id);
+
+-- One row per attendee. mentor_confirmed lives on group_sessions (the mentor
+-- confirms the whole session ran once); mentee_confirmed is per attendee,
+-- because who actually showed up is a per-person fact a shared session
+-- status cannot express. Mirrors mentorship_sessions' mutual-confirmation
+-- rule: a seat counts toward either profile only once both sides agree it
+-- happened — see sessionStats.ts.
+CREATE TABLE IF NOT EXISTS group_session_attendees (
+  session_id       TEXT NOT NULL REFERENCES group_sessions(id) ON DELETE CASCADE,
+  mentee_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  joined_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  mentee_confirmed BOOLEAN NOT NULL DEFAULT FALSE,
+  confirmed_at     TIMESTAMPTZ,
+  PRIMARY KEY (session_id, mentee_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_attendees_mentee ON group_session_attendees (mentee_id);
+
+ALTER TABLE group_sessions ADD COLUMN IF NOT EXISTS mentor_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
