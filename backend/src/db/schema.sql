@@ -1157,6 +1157,27 @@ CREATE TABLE IF NOT EXISTS group_sessions (
 CREATE INDEX IF NOT EXISTS idx_group_sessions_mentor ON group_sessions (mentor_id, scheduled_at DESC);
 CREATE INDEX IF NOT EXISTS idx_group_sessions_upcoming ON group_sessions (scheduled_at) WHERE status = 'scheduled';
 
+-- 'public' (default): anyone can browse and join, today's only behaviour.
+-- 'invite_only': hidden from the public browse list; only the mentor and the
+-- rows in group_session_invites below can see or join it. A mentor who wants
+-- to run something for specific connections rather than broadcast it does
+-- not need a whole separate feature — just a narrower audience on the same
+-- session type.
+ALTER TABLE group_sessions ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'invite_only'));
+
+-- Who was invited to an invite_only session. No status column: an invite is
+-- either acted on (a group_session_attendees row exists) or it isn't —
+-- there is nothing else to track. Deliberately not scoped to being an
+-- accepted connection at read time (leaving a connection after being invited
+-- must not retroactively lock someone out of a session they were already
+-- asked to).
+CREATE TABLE IF NOT EXISTS group_session_invites (
+  session_id TEXT NOT NULL REFERENCES group_sessions(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (session_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_group_session_invites_user ON group_session_invites (user_id);
+
 -- One row per attendee. mentor_confirmed lives on group_sessions (the mentor
 -- confirms the whole session ran once); mentee_confirmed is per attendee,
 -- because who actually showed up is a per-person fact a shared session

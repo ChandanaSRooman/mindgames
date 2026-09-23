@@ -24,8 +24,10 @@ interface GroupSessionRow {
   pricing_mode: 'free' | 'paid'
   price_per_seat: number
   status: 'scheduled' | 'completed' | 'cancelled'
+  visibility: 'public' | 'invite_only'
   attendee_count: number
   joined_by_me: boolean
+  invited_by_me: boolean
   mentor_confirmed: boolean
 }
 
@@ -36,9 +38,10 @@ interface GroupSessionRow {
 const LIST_SELECT = (viewerParam: string) => `
   SELECT g.id, g.mentor_id, u.name AS mentor_name, u.photo AS mentor_photo,
          g.topic, g.description, g.domain, g.scheduled_at, g.duration_minutes,
-         g.capacity, g.meeting_link, g.pricing_mode, g.price_per_seat, g.status, g.mentor_confirmed,
+         g.capacity, g.meeting_link, g.pricing_mode, g.price_per_seat, g.status, g.visibility, g.mentor_confirmed,
          (SELECT count(*)::int FROM group_session_attendees a WHERE a.session_id = g.id) AS attendee_count,
-         EXISTS (SELECT 1 FROM group_session_attendees a WHERE a.session_id = g.id AND a.mentee_id = ${viewerParam}) AS joined_by_me
+         EXISTS (SELECT 1 FROM group_session_attendees a WHERE a.session_id = g.id AND a.mentee_id = ${viewerParam}) AS joined_by_me,
+         EXISTS (SELECT 1 FROM group_session_invites gi WHERE gi.session_id = g.id AND gi.user_id = ${viewerParam}) AS invited_by_me
     FROM group_sessions g JOIN users u ON u.id = g.mentor_id`
 
 function mapGroupSession(r: GroupSessionRow) {
@@ -59,7 +62,9 @@ function mapGroupSession(r: GroupSessionRow) {
     pricingMode: r.pricing_mode,
     pricePerSeat: r.price_per_seat,
     status: r.status,
+    visibility: r.visibility,
     joinedByMe: r.joined_by_me,
+    invitedByMe: r.invited_by_me,
     mentorConfirmed: r.mentor_confirmed,
   }
 }
@@ -74,6 +79,12 @@ const createSchema = z.object({
   meetingLink: z.string().trim().url().optional().or(z.literal('')),
   pricingMode: z.enum(['free', 'paid']).optional().default('free'),
   pricePerSeat: z.number().int().min(0).max(1_000_000).optional().default(0),
+  // 'public' (default) keeps today's behaviour — open to browse and join.
+  // 'invite_only' requires at least one connection id in inviteeIds; anyone
+  // else is validated server-side and silently dropped rather than trusted
+  // from the client (see the handler).
+  visibility: z.enum(['public', 'invite_only']).optional().default('public'),
+  inviteeIds: z.array(z.string().trim().min(1)).max(500).optional().default([]),
 })
 
 // POST /api/group-sessions — a mentor schedules a session for many mentees
@@ -96,24 +107,67 @@ groupSessionsRouter.post(
     if (Number.isNaN(+startsAt)) throw new ApiError(400, 'A valid date/time is required')
     if (+startsAt < Date.now() - 60_000) throw new ApiError(400, 'The session must be in the future')
 
+    // Invitees are never trusted as given — only ids that are actually an
+    // accepted connection of this mentor are kept, same rule messages.routes.ts
+    // uses to gate a DM. Anyone else in the list is silently dropped rather
+    // than erroring the whole request over one stale id.
+    let inviteeIds: string[] = []
+    if (g.visibility === 'invite_only') {
+      if (g.inviteeIds.length === 0) {
+        throw new ApiError(400, 'Pick at least one connection to invite.')
+      }
+      const valid = await query<{ id: string }>(
+        `SELECT u.id FROM users u
+           JOIN connections c ON c.status = 'accepted'
+            AND ((c.requester_id = $1 AND c.addressee_id = u.id) OR (c.requester_id = u.id AND c.addressee_id = $1))
+         WHERE u.id = ANY($2)`,
+        [req.user!.sub, g.inviteeIds],
+      )
+      inviteeIds = valid.rows.map((r) => r.id)
+      if (inviteeIds.length === 0) {
+        throw new ApiError(400, 'None of the people you picked are in your connections.')
+      }
+      if (g.capacity < inviteeIds.length) {
+        throw new ApiError(400, `Capacity must be at least ${inviteeIds.length} to fit everyone invited.`)
+      }
+    }
+
     const isPaid = g.pricingMode === 'paid' && g.pricePerSeat > 0
     const ins = await query<{ id: string }>(
       `INSERT INTO group_sessions
          (mentor_id, topic, description, domain, scheduled_at, duration_minutes, capacity,
-          meeting_link, pricing_mode, price_per_seat)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+          meeting_link, pricing_mode, price_per_seat, visibility)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
       [
         req.user!.sub, g.topic, g.description, g.domain, startsAt, g.durationMinutes, g.capacity,
-        g.meetingLink || null, isPaid ? 'paid' : 'free', isPaid ? g.pricePerSeat : 0,
+        g.meetingLink || null, isPaid ? 'paid' : 'free', isPaid ? g.pricePerSeat : 0, g.visibility,
       ],
     )
 
     const mentor = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
-    void pushNotificationToAll(
-      'mentorship',
-      `${mentor.rows[0].name} is hosting a group session: "${g.topic}" — ${g.capacity} seats available.`,
-      req.user!.sub,
-    )
+
+    if (g.visibility === 'invite_only') {
+      await query(
+        `INSERT INTO group_session_invites (session_id, user_id)
+         SELECT $1, x FROM unnest($2::text[]) AS x`,
+        [ins.rows[0].id, inviteeIds],
+      )
+      // Notify only the people actually invited — never the whole network,
+      // which is the entire point of choosing invite_only over public.
+      for (const id of inviteeIds) {
+        void pushNotification(
+          id, 'mentorship',
+          `${mentor.rows[0].name} invited you to a group session: "${g.topic}".`,
+          req.user!.sub,
+        )
+      }
+    } else {
+      void pushNotificationToAll(
+        'mentorship',
+        `${mentor.rows[0].name} is hosting a group session: "${g.topic}" — ${g.capacity} seats available.`,
+        req.user!.sub,
+      )
+    }
 
     const full = await query<GroupSessionRow>(`${LIST_SELECT('$2')} WHERE g.id = $1`, [ins.rows[0].id, req.user!.sub])
     res.status(201).json(mapGroupSession(full.rows[0]))
@@ -123,13 +177,15 @@ groupSessionsRouter.post(
 // GET /api/group-sessions — open sessions any member can browse and join,
 // soonest first. Cancelled ones are never listed; completed ones drop off
 // once they're in the past (still visible via /mine for the mentor).
+// invite_only sessions never appear here regardless of who is asking — that
+// is the one thing "invite only" has to actually mean.
 groupSessionsRouter.get(
   '/',
   requireAuth,
   asyncHandler(async (req, res) => {
     const rows = await query<GroupSessionRow>(
       `${LIST_SELECT('$1')}
-        WHERE g.status = 'scheduled' AND g.scheduled_at > now()
+        WHERE g.status = 'scheduled' AND g.scheduled_at > now() AND g.visibility = 'public'
         ORDER BY g.scheduled_at`,
       [req.user!.sub],
     )
@@ -137,7 +193,9 @@ groupSessionsRouter.get(
   }),
 )
 
-// GET /api/group-sessions/mine — sessions I host or have joined.
+// GET /api/group-sessions/mine — sessions I host, have joined, or have been
+// invited to (invite_only, not yet joined — that last case is how an invitee
+// finds a session that deliberately isn't in the public list above).
 groupSessionsRouter.get(
   '/mine',
   requireAuth,
@@ -146,6 +204,7 @@ groupSessionsRouter.get(
       `${LIST_SELECT('$1')}
         WHERE g.mentor_id = $1
            OR EXISTS (SELECT 1 FROM group_session_attendees a WHERE a.session_id = g.id AND a.mentee_id = $1)
+           OR EXISTS (SELECT 1 FROM group_session_invites gi WHERE gi.session_id = g.id AND gi.user_id = $1)
         ORDER BY g.scheduled_at DESC`,
       [req.user!.sub],
     )
@@ -193,14 +252,22 @@ groupSessionsRouter.post(
   requireAuth,
   asyncHandler(async (req, res) => {
     await withTransaction(async (client) => {
-      const g = await client.query<{ mentor_id: string; capacity: number; status: string; topic: string }>(
-        `SELECT mentor_id, capacity, status, topic FROM group_sessions WHERE id = $1 FOR UPDATE`,
+      const g = await client.query<{ mentor_id: string; capacity: number; status: string; topic: string; visibility: 'public' | 'invite_only' }>(
+        `SELECT mentor_id, capacity, status, topic, visibility FROM group_sessions WHERE id = $1 FOR UPDATE`,
         [req.params.id],
       )
       if (!g.rowCount) throw new ApiError(404, 'Group session not found')
       const session = g.rows[0]
       if (session.mentor_id === req.user!.sub) throw new ApiError(400, 'You are hosting this session')
       if (session.status !== 'scheduled') throw new ApiError(400, 'This session is no longer open')
+
+      if (session.visibility === 'invite_only') {
+        const invited = await client.query(
+          `SELECT 1 FROM group_session_invites WHERE session_id = $1 AND user_id = $2`,
+          [req.params.id, req.user!.sub],
+        )
+        if (!invited.rowCount) throw new ApiError(403, 'This session is invite-only.')
+      }
 
       const count = await client.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM group_session_attendees WHERE session_id = $1`,
@@ -358,5 +425,82 @@ groupSessionsRouter.post(
       )
     }
     res.json({ ok: true })
+  }),
+)
+
+const repeatSchema = z.object({
+  scheduledAt: z.string().datetime({ offset: true }).or(z.string().datetime()),
+  meetingLink: z.string().trim().url().optional().or(z.literal('')),
+})
+
+// POST /api/group-sessions/:id/repeat — run a past group session again with
+// the same people, without retyping topic/description/pricing or rebuilding
+// the invite list by hand. The new session is always invite_only, invited to
+// exactly who actually attended the source session (not who was merely
+// invited, and not a public re-broadcast) — that is "the same group",
+// concretely. Attendees are invited, not auto-added: capacity, payment and
+// the join flow all still apply the same way they would to any other
+// invite_only session.
+groupSessionsRouter.post(
+  '/:id/repeat',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = repeatSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
+    const startsAt = new Date(parsed.data.scheduledAt)
+    if (Number.isNaN(+startsAt)) throw new ApiError(400, 'A valid date/time is required')
+    if (+startsAt < Date.now() - 60_000) throw new ApiError(400, 'The session must be in the future')
+
+    const src = await query<{
+      topic: string; description: string; domain: string; duration_minutes: number
+      capacity: number; pricing_mode: 'free' | 'paid'; price_per_seat: number; status: string
+    }>(
+      `SELECT topic, description, domain, duration_minutes, capacity, pricing_mode, price_per_seat, status
+         FROM group_sessions WHERE id = $1 AND mentor_id = $2`,
+      [req.params.id, req.user!.sub],
+    )
+    if (!src.rowCount) throw new ApiError(404, 'Group session not found (or you are not its host)')
+    if (src.rows[0].status === 'scheduled') {
+      throw new ApiError(400, "That session hasn't happened yet — complete or cancel it first.")
+    }
+
+    const attendees = await query<{ mentee_id: string }>(
+      `SELECT mentee_id FROM group_session_attendees WHERE session_id = $1`,
+      [req.params.id],
+    )
+    if (!attendees.rowCount) throw new ApiError(400, 'That session had no attendees to invite again.')
+
+    const allowed = await canHostGroupSessions(req.user!.sub)
+    if (!allowed.allowed) throw new ApiError(402, allowed.reason ?? 'A plan is needed to host group sessions.')
+
+    const s = src.rows[0]
+    const ins = await query<{ id: string }>(
+      `INSERT INTO group_sessions
+         (mentor_id, topic, description, domain, scheduled_at, duration_minutes, capacity,
+          meeting_link, pricing_mode, price_per_seat, visibility)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'invite_only') RETURNING id`,
+      [
+        req.user!.sub, s.topic, s.description, s.domain, startsAt, s.duration_minutes,
+        Math.max(s.capacity, attendees.rowCount), parsed.data.meetingLink || null,
+        s.pricing_mode, s.price_per_seat,
+      ],
+    )
+    await query(
+      `INSERT INTO group_session_invites (session_id, user_id)
+       SELECT $1, mentee_id FROM group_session_attendees WHERE session_id = $2`,
+      [ins.rows[0].id, req.params.id],
+    )
+
+    const mentor = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
+    for (const a of attendees.rows) {
+      void pushNotification(
+        a.mentee_id, 'mentorship',
+        `${mentor.rows[0].name} scheduled a repeat session with your group: "${s.topic}".`,
+        req.user!.sub,
+      )
+    }
+
+    const full = await query<GroupSessionRow>(`${LIST_SELECT('$2')} WHERE g.id = $1`, [ins.rows[0].id, req.user!.sub])
+    res.status(201).json(mapGroupSession(full.rows[0]))
   }),
 )

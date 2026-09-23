@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  Calendar, Check, Clock, Crown, Loader2, Plus, Users, Video, X,
+  Calendar, Check, Clock, Crown, Loader2, Lock, Plus, Repeat, Users, Video, X,
 } from 'lucide-react'
 import { Avatar, Button, Card } from '../ui'
 import { api, isPaymentRequired } from '../../lib/api'
@@ -29,6 +29,7 @@ export function GroupSessionsTab() {
   const [showPlans, setShowPlans] = useState(false)
   const [completing, setCompleting] = useState<GroupSession | null>(null)
   const [rosterFor, setRosterFor] = useState<GroupSession | null>(null)
+  const [repeating, setRepeating] = useState<GroupSession | null>(null)
 
   function reload() {
     Promise.all([api.getGroupSessions(), api.getMyGroupSessions()])
@@ -39,7 +40,11 @@ export function GroupSessionsTab() {
   useEffect(reload, [notify])
 
   const hosting = mine.filter((g) => g.mentorId === currentUser.id)
-  const joined = mine.filter((g) => g.mentorId !== currentUser.id)
+  // An invite_only session I haven't joined yet: this is how it's found at
+  // all, since it's deliberately excluded from the public "Open sessions"
+  // list below.
+  const invited = mine.filter((g) => g.mentorId !== currentUser.id && g.invitedByMe && !g.joinedByMe)
+  const joined = mine.filter((g) => g.mentorId !== currentUser.id && g.joinedByMe)
   // Don't repeat a session the member already sees in "mine".
   const mineIds = new Set(mine.map((g) => g.id))
   const browsable = open.filter((g) => !mineIds.has(g.id))
@@ -117,7 +122,19 @@ export function GroupSessionsTab() {
                 onViewRoster={() => setRosterFor(g)}
                 onComplete={() => setCompleting(g)}
                 onCancel={() => cancel(g)}
+                onRepeat={() => setRepeating(g)}
               />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {invited.length > 0 && (
+        <section>
+          <h2 className="mb-3 text-lg font-bold text-[#1c1c1c]">Invited</h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {invited.map((g) => (
+              <BrowseCard key={g.id} session={g} onJoin={() => join(g)} />
             ))}
           </div>
         </section>
@@ -181,6 +198,22 @@ export function GroupSessionsTab() {
         />
       )}
       {rosterFor && <RosterModal session={rosterFor} onClose={() => setRosterFor(null)} />}
+      {repeating && (
+        <RepeatSessionModal
+          session={repeating}
+          onClose={() => setRepeating(null)}
+          onRepeat={async (scheduledAt, meetingLink) => {
+            try {
+              await api.repeatGroupSession(repeating.id, { scheduledAt, meetingLink })
+              notify('Scheduled — the same group has been invited.', 'success')
+              setRepeating(null)
+              reload()
+            } catch (err) {
+              notify(err instanceof Error ? err.message : 'Could not schedule the repeat session.', 'error')
+            }
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -201,6 +234,11 @@ function BrowseCard({ session, onJoin }: { session: GroupSession; onJoin: () => 
           <p className="truncate text-sm font-bold text-[#1c1c1c]">{session.topic}</p>
           <p className="text-xs text-[#878a8c]">by {session.mentorName}</p>
         </div>
+        {session.visibility === 'invite_only' && (
+          <span className="flex shrink-0 items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-[11px] font-semibold text-purple-700">
+            <Lock size={10} /> Invited
+          </span>
+        )}
         {session.domain && (
           <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-[#ff4500]">
             {session.domain}
@@ -260,15 +298,24 @@ function JoinedRow({
 }
 
 function HostRow({
-  session, onViewRoster, onComplete, onCancel,
-}: { session: GroupSession; onViewRoster: () => void; onComplete: () => void; onCancel: () => void }) {
+  session, onViewRoster, onComplete, onCancel, onRepeat,
+}: {
+  session: GroupSession
+  onViewRoster: () => void
+  onComplete: () => void
+  onCancel: () => void
+  onRepeat: () => void
+}) {
   return (
     <Card className="flex flex-wrap items-center gap-3 p-3.5">
       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-orange-50 text-[#ff4500]">
         <Users size={16} />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-semibold text-[#1c1c1c]">{session.topic}</p>
+        <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-[#1c1c1c]">
+          {session.topic}
+          {session.visibility === 'invite_only' && <Lock size={12} className="shrink-0 text-purple-600" />}
+        </p>
         <p className="text-xs text-[#878a8c]">
           {fmt(session.scheduledAt)} · {session.attendeeCount}/{session.capacity} joined
         </p>
@@ -287,7 +334,7 @@ function HostRow({
       <Button variant="outline" className="!px-3 !py-1.5 !text-xs" onClick={onViewRoster}>
         Roster
       </Button>
-      {session.status === 'scheduled' && (
+      {session.status === 'scheduled' ? (
         <>
           <Button className="!px-3 !py-1.5 !text-xs" onClick={onComplete}>
             Mark completed
@@ -296,6 +343,12 @@ function HostRow({
             Cancel
           </Button>
         </>
+      ) : (
+        session.attendeeCount > 0 && (
+          <Button variant="outline" icon={<Repeat size={12} />} className="!px-3 !py-1.5 !text-xs" onClick={onRepeat}>
+            Repeat with same group
+          </Button>
+        )
       )}
     </Card>
   )
@@ -345,10 +398,70 @@ function RosterModal({ session, onClose }: { session: GroupSession; onClose: () 
   )
 }
 
+function RepeatSessionModal({
+  session, onClose, onRepeat,
+}: { session: GroupSession; onClose: () => void; onRepeat: (scheduledAt: string, meetingLink?: string) => void }) {
+  const [date, setDate] = useState('')
+  const [time, setTime] = useState('')
+  const [meetingLink, setMeetingLink] = useState(session.meetingLink ?? '')
+  const [saving, setSaving] = useState(false)
+  const field = 'w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]'
+
+  async function submit() {
+    if (!date || !time) return
+    const scheduledAt = new Date(`${date}T${time}`)
+    if (Number.isNaN(scheduledAt.getTime())) return
+    setSaving(true)
+    await onRepeat(scheduledAt.toISOString(), meetingLink.trim() || undefined)
+    setSaving(false)
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-[#1c1c1c]">Repeat with the same group</h2>
+            <p className="text-sm text-[#878a8c]">{session.topic}</p>
+          </div>
+          <button onClick={onClose} className="rounded-full p-1 text-[#878a8c] hover:bg-gray-100" aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+        <p className="mb-3 text-xs text-[#878a8c]">
+          Everyone who attended last time will be invited again. Pick a new date and time.
+        </p>
+        <div className="mb-3 grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-[#878a8c]">Date</label>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={field} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-[#878a8c]">Time</label>
+            <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={field} />
+          </div>
+        </div>
+        <label className="mb-1 block text-xs font-semibold text-[#878a8c]">Meeting link (optional)</label>
+        <input
+          value={meetingLink}
+          onChange={(e) => setMeetingLink(e.target.value)}
+          placeholder="https://meet.google.com/…"
+          className={`mb-4 ${field}`}
+        />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button loading={saving} disabled={!date || !time} onClick={submit}>Schedule</Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 function CreateGroupSessionModal({
   onClose, onCreated, onNeedsPlan,
 }: { onClose: () => void; onCreated: () => void; onNeedsPlan: () => void }) {
-  const { notify } = useApp()
+  const { notify, users, currentUser, connectionState } = useApp()
   const [topic, setTopic] = useState('')
   const [description, setDescription] = useState('')
   const [domain, setDomain] = useState('')
@@ -359,7 +472,20 @@ function CreateGroupSessionModal({
   const [meetingLink, setMeetingLink] = useState('')
   const [paid, setPaid] = useState(false)
   const [price, setPrice] = useState<number | ''>('')
+  const [visibility, setVisibility] = useState<'public' | 'invite_only'>('public')
+  const [inviteeIds, setInviteeIds] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
+
+  const connections = users.filter((u) => u.id !== currentUser.id && connectionState(u.id) === 'connected')
+
+  function toggleInvitee(id: string) {
+    setInviteeIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   async function submit() {
     if (!topic.trim() || !date || !time) {
@@ -371,6 +497,10 @@ function CreateGroupSessionModal({
       notify('That date/time doesn\'t look valid.', 'error')
       return
     }
+    if (visibility === 'invite_only' && inviteeIds.size === 0) {
+      notify('Pick at least one connection to invite.', 'error')
+      return
+    }
     setSaving(true)
     try {
       await api.createGroupSession({
@@ -379,12 +509,19 @@ function CreateGroupSessionModal({
         domain,
         scheduledAt: scheduledAt.toISOString(),
         durationMinutes: duration,
-        capacity,
+        capacity: visibility === 'invite_only' ? Math.max(capacity, inviteeIds.size) : capacity,
         meetingLink: meetingLink.trim() || undefined,
         pricingMode: paid ? 'paid' : 'free',
         pricePerSeat: paid ? Number(price) || 0 : 0,
+        visibility,
+        inviteeIds: visibility === 'invite_only' ? Array.from(inviteeIds) : undefined,
       })
-      notify('Group session scheduled.', 'success')
+      notify(
+        visibility === 'invite_only'
+          ? `Invited ${inviteeIds.size} ${inviteeIds.size === 1 ? 'person' : 'people'}.`
+          : 'Group session scheduled.',
+        'success',
+      )
       onCreated()
     } catch (err) {
       if (isPaymentRequired(err)) { onNeedsPlan(); return }
@@ -453,6 +590,55 @@ function CreateGroupSessionModal({
             </select>
           </div>
         </div>
+
+        <label className="mb-1.5 block text-xs font-semibold text-[#878a8c]">Who can join</label>
+        <div className="mb-3 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setVisibility('public')}
+            className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${visibility === 'public' ? 'border-[#ff4500] bg-orange-50 text-[#ff4500]' : 'border-[#edeff1] text-[#1c1c1c]'}`}
+          >
+            Anyone
+          </button>
+          <button
+            type="button"
+            onClick={() => setVisibility('invite_only')}
+            className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${visibility === 'invite_only' ? 'border-[#ff4500] bg-orange-50 text-[#ff4500]' : 'border-[#edeff1] text-[#1c1c1c]'}`}
+          >
+            Just my connections
+          </button>
+        </div>
+
+        {visibility === 'invite_only' && (
+          <div className="mb-3">
+            <label className="mb-1 block text-xs font-semibold text-[#878a8c]">
+              Invite from your connections ({inviteeIds.size} selected)
+            </label>
+            {connections.length === 0 ? (
+              <p className="rounded-lg bg-gray-50 px-3 py-4 text-center text-xs text-[#878a8c]">
+                You have no connections yet to invite.
+              </p>
+            ) : (
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-[#edeff1]">
+                {connections.map((u) => (
+                  <label
+                    key={u.id}
+                    className="flex cursor-pointer items-center gap-2.5 border-b border-[#edeff1] px-3 py-2 last:border-b-0 hover:bg-gray-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={inviteeIds.has(u.id)}
+                      onChange={() => toggleInvitee(u.id)}
+                      className="h-4 w-4 accent-[#ff4500]"
+                    />
+                    <Avatar name={u.name} src={u.photo} size={28} />
+                    <span className="truncate text-sm text-[#1c1c1c]">{u.name}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <label className="mb-1 block text-xs font-semibold text-[#878a8c]">Meeting link (optional)</label>
         <input
