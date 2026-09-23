@@ -74,10 +74,12 @@ export function ForYouSection() {
     }
   }, [load])
 
-  // Only companies there is evidence to judge. A company with no alumni and no
-  // open roles cannot be scored honestly (see hasMatchEvidence) and would sit
-  // here at 0 — or worse, at a confident-looking number earned entirely from an
-  // industry match. Those are still in the directory below.
+  // Only companies with actual alumni to judge — open Hiring roles alone are
+  // not enough (see hasMatchEvidence), since nobody there could actually help
+  // you get in. A company with no alumni cannot be scored honestly and would
+  // sit here at 0 — or worse, at a confident-looking number earned entirely
+  // from an industry match. Zero-alumni companies are excluded from the
+  // directory below too (GET /api/companies), even a saved one.
   const ranked = useMemo(
     () => (companies ? rankCompanies(companies.filter(hasMatchEvidence), currentUser) : []),
     [companies, currentUser],
@@ -136,8 +138,7 @@ export function ForYouSection() {
             <p className="text-sm text-[#878a8c]">Scoring companies against your profile…</p>
           ) : ranked.length === 0 ? (
             <p className="rounded-xl border border-[#edeff1] bg-white px-4 py-8 text-center text-sm text-[#878a8c]">
-              No company has Rooman alumni or open roles yet, so there is nothing to rank against
-              your profile. Browse the directory below.
+              No company has Rooman alumni yet, so there is nothing to rank against your profile.
             </p>
           ) : (
             <div className="flex flex-col">
@@ -165,8 +166,8 @@ export function ForYouSection() {
             )}
             {hidden > 0 && (
               <span className="text-xs text-[#878a8c]">
-                {hidden} more compan{hidden === 1 ? 'y has' : 'ies have'} no Rooman alumni or open
-                roles yet — find them in the directory below.
+                {hidden} more compan{hidden === 1 ? 'y has' : 'ies have'} no Rooman alumni yet, so
+                {hidden === 1 ? " it isn't" : " they aren't"} ranked here.
               </span>
             )}
           </div>

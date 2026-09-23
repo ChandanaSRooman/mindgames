@@ -212,7 +212,7 @@ postsRouter.post(
         [p.eventId, req.user!.sub],
       )
       for (const a of attendees.rows) {
-        void pushNotification(a.user_id, 'event', `New update on "${event.title}": ${p.content.slice(0, 120)}`, req.user!.sub)
+        void pushNotification(a.user_id, 'event', `New update on "${event.title}": ${p.content.slice(0, 120)}`, req.user!.sub, { type: 'event', id: p.eventId! })
       }
     }
 
@@ -232,6 +232,7 @@ postsRouter.post(
           'job',
           `New ${p.domain} job: ${p.role ?? 'open role'}${p.company ? ` at ${p.company}` : ''} — posted by ${poster.rows[0].name}.`,
           req.user!.sub,
+          { type: 'post', id: inserted.rows[0].id },
         )
       }
     }
@@ -327,7 +328,7 @@ postsRouter.post(
       )
       const { author_id, name } = meta.rows[0]
       if (author_id !== req.user!.sub) {
-        void pushNotification(author_id, 'like', `${name} liked your post.`, req.user!.sub)
+        void pushNotification(author_id, 'like', `${name} liked your post.`, req.user!.sub, { type: 'post', id: req.params.id })
       }
     }
     res.json({ likes, likedByMe: true })
@@ -409,7 +410,7 @@ postsRouter.post(
       )
       const { author_id, name } = meta.rows[0]
       if (author_id !== req.user!.sub) {
-        void pushNotification(author_id, 'like', `${name} reacted ${parsed.data.emoji} to your post.`, req.user!.sub)
+        void pushNotification(author_id, 'like', `${name} reacted ${parsed.data.emoji} to your post.`, req.user!.sub, { type: 'post', id: req.params.id })
         // A like is a complete, real action the moment it happens — unlike a
         // mentorship session there is nothing to wait for or confirm, so both
         // sides' engagement badges are checked right here rather than lazily.
@@ -490,7 +491,7 @@ postsRouter.post(
     )
     const { author_id, name } = meta.rows[0]
     if (author_id !== req.user!.sub) {
-      void pushNotification(author_id, 'comment', `${name} commented on your post.`, req.user!.sub)
+      void pushNotification(author_id, 'comment', `${name} commented on your post.`, req.user!.sub, { type: 'post', id: req.params.id })
     }
     res.status(201).json(mapComment(result.rows[0]))
   }),
@@ -583,6 +584,7 @@ postsRouter.post(
         'job',
         `${meRow.rows[0].name} applied to your job post${role ? ` for "${role}"` : ''}.`,
         me,
+        { type: 'post', id: req.params.id },
       )
     }
     const count = await query<{ count: number }>(
@@ -704,7 +706,10 @@ postsRouter.post(
       [req.user!.sub, text, pin],
     )
     if (pin) {
-      void pushNotificationToAll('announcement', `📢 Rooman: ${text}`, req.user!.sub)
+      void pushNotificationToAll('announcement', `📢 Rooman: ${text}`, req.user!.sub, {
+        type: 'post',
+        id: inserted.rows[0].id,
+      })
     }
 
     const full = await query<PostRow>(`${POST_SELECT} WHERE p.id = $2`, [req.user!.sub, inserted.rows[0].id])

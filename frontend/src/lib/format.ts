@@ -61,3 +61,11 @@ export function safeUrl(url?: string | null): string | undefined {
   const u = url?.trim()
   return u && /^https?:\/\//i.test(u) ? u : undefined
 }
+
+// A paid session booked against a "custom" (price-on-request) alumni service
+// has no amount to snapshot, so price comes back as 0 — which must not be
+// shown as "Paid ₹0" (reads as free). null means "not paid, show nothing".
+export function sessionPriceLabel(s: { isPaid?: boolean; price?: number }): string | null {
+  if (!s.isPaid) return null
+  return s.price ? `Paid ₹${s.price.toLocaleString('en-IN')}` : 'Paid (price on request)'
+}

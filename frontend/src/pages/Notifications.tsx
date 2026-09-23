@@ -13,7 +13,9 @@ import { useApp } from '../store/AppStore'
 import { NOTIFICATION_ROUTES } from '../components/layout/NotificationsDropdown'
 import { Avatar, Button, Card } from '../components/ui'
 import { timeAgo } from '../lib/format'
-import type { NotificationType } from '../types'
+import { notificationLink, opensChat } from '../lib/notificationLink'
+import { useLayout } from '../components/layout/LayoutContext'
+import type { AppNotification, NotificationType } from '../types'
 
 const ICONS: Record<NotificationType, typeof Bell> = {
   connection: UserPlus,
@@ -24,10 +26,20 @@ const ICONS: Record<NotificationType, typeof Bell> = {
   community: Users,
   announcement: Megaphone,
   event: Calendar,
+  message: MessageCircle,
 }
 
 export function Notifications() {
   const { notifications, markNotificationsRead, userById, pendingRequestIds, acceptRequest, ignoreRequest } = useApp()
+  const { openChatWith } = useLayout()
+
+  // Same rule as the bell dropdown: a message opens the chat panel in place,
+  // anything else navigates to the thing itself and falls back to the
+  // per-type page when there is no target.
+  function openNotification(n: AppNotification) {
+    if (opensChat(n)) openChatWith(n.actorId!)
+    else navigate(notificationLink(n, NOTIFICATION_ROUTES[n.type]))
+  }
   const navigate = useNavigate()
 
   // Mark everything read once the page is opened.
@@ -74,8 +86,8 @@ export function Notifications() {
               key={n.id}
               role="button"
               tabIndex={0}
-              onClick={() => navigate(NOTIFICATION_ROUTES[n.type])}
-              onKeyDown={(e) => e.key === 'Enter' && navigate(NOTIFICATION_ROUTES[n.type])}
+              onClick={() => openNotification(n)}
+              onKeyDown={(e) => e.key === 'Enter' && openNotification(n)}
               className={`flex cursor-pointer gap-3 px-4 py-3.5 hover:bg-gray-50 ${i < notifications.length - 1 ? 'border-b border-[#edeff1]' : ''}`}
             >
               {actor ? (

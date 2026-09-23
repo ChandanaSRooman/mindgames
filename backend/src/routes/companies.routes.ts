@@ -101,9 +101,17 @@ async function ensureCompanyExists(
   return found.rows[0]
 }
 
-// GET /api/companies — the directory: every company, alumni count, and a
-// 4-avatar preview for the overlapping-avatars card. Alumni are matched by
-// comparing users.company to companies.name case/whitespace-insensitively.
+// GET /api/companies — the directory: every company with at least one
+// matched alumnus besides the viewer themself, its alumni count, and a
+// 4-avatar preview for the overlapping-avatars card. Curated companies with
+// zero other alumni (seeded in schema.sql) are excluded via HAVING rather
+// than deleted from the table — they still exist so a matching alumnus's
+// profile picks up the curated domain/industry — and this applies uniformly,
+// including to a company the viewer has saved: with nobody who has ever
+// worked there, there is nothing the directory or the Saved filter can show.
+// Alumni are matched via MATCHES_COMPANY (name or alias,
+// case/whitespace-insensitively), the same alias-aware rule every other
+// query here uses.
 companiesRouter.get(
   '/',
   requireAuth,
@@ -111,7 +119,7 @@ companiesRouter.get(
     const rows = (
       await query<CompanyRow>(
         `SELECT c.id, c.name, c.domain, c.industry,
-                COUNT(u.id)::int AS alumni_count,
+                COUNT(u.id) FILTER (WHERE u.id <> $1)::int AS alumni_count,
                 COALESCE(
                   (SELECT json_agg(json_build_object('id', p.id, 'name', p.name, 'photo', p.photo))
                    FROM (
@@ -120,7 +128,11 @@ companiesRouter.get(
                      -- the same two-branch rule, and the module header is
                      -- explicit that it must live in exactly one place so the
                      -- count and the preview cannot drift apart.
-                     WHERE ${matchesCompany('u2.company')}
+                     -- u2.id <> $1 mirrors the FILTER above: without it, a
+                     -- viewer who matches their own company shows up as one
+                     -- of their own company's preview avatars while
+                     -- alumni_count (correctly) doesn't count them.
+                     WHERE ${matchesCompany('u2.company')} AND u2.id <> $1
                      ORDER BY u2.name LIMIT 4
                    ) p
                   ), '[]'
@@ -134,6 +146,14 @@ companiesRouter.get(
          LEFT JOIN users u ON ${MATCHES_COMPANY}
          WHERE ${NOT_MERGED}
          GROUP BY c.id
+         -- Excludes the viewer from the count, same as GET /:id (u.id <> $2
+         -- there) — otherwise a company whose only "alumnus" is the viewer
+         -- themself passed this filter and then rendered the empty card on
+         -- /:id. Applies even to a saved company: a bookmark against a
+         -- company nobody has ever worked at points at an empty page either
+         -- way, so it is hidden here too rather than kept visible just
+         -- because it is saved.
+         HAVING COUNT(u.id) FILTER (WHERE u.id <> $1) > 0
          ORDER BY alumni_count DESC, c.name`,
         [req.user!.sub],
       )
@@ -250,8 +270,11 @@ const signalsCols = (viewer: string): string => `
                       OR (cn.addressee_id = ${viewer} AND cn.requester_id = u.id))
                   WHERE ${MATCHES_COMPANY}) AS connected_alumni,
 
+                -- "Alumni here", same rule GET / uses: the viewer working at
+                -- a company is not evidence about the company, so they don't
+                -- count as one of its alumni for scoring purposes either.
                 (SELECT count(*)::int FROM users u
-                  WHERE ${MATCHES_COMPANY}) AS sample_size`
+                  WHERE ${MATCHES_COMPANY} AND u.id <> ${viewer}) AS sample_size`
 
 // GET /api/companies/for-you — every company plus the aggregate "signals"
 // that describe it, so the frontend can score the fit against the viewer's
@@ -273,7 +296,7 @@ companiesRouter.get(
       await query<CompanyRow & CompanySignalsRow>(
         `SELECT c.id, c.name, c.domain, c.industry,
                 (SELECT count(*)::int FROM users u
-                  WHERE ${MATCHES_COMPANY}) AS alumni_count,
+                  WHERE ${MATCHES_COMPANY} AND u.id <> $1) AS alumni_count,
                 NULL AS preview_alumni,
                 EXISTS (
                   SELECT 1 FROM company_saves cs
@@ -696,6 +719,7 @@ companiesRouter.post(
         'mentorship',
         `${askerName} asked how you got into ${company.name}. Share your roadmap to help them in.`,
         me,
+        { type: 'company', id: company.id },
       )
     }
 

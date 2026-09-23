@@ -41,7 +41,15 @@ reportsRouter.post(
     )
     const admins = await query<{ id: string }>(`SELECT id FROM users WHERE is_admin`)
     for (const a of admins.rows) {
-      void pushNotification(a.id, 'announcement', `A ${targetType} was reported: "${reason.slice(0, 80)}"`, req.user!.sub)
+      // Point the admin at the reported thing itself. targetType is already
+      // constrained to 'post' | 'user' by the zod schema above.
+      void pushNotification(
+        a.id,
+        'announcement',
+        `A ${targetType} was reported: "${reason.slice(0, 80)}"`,
+        req.user!.sub,
+        { type: targetType === 'post' ? 'post' : 'user', id: targetId },
+      )
     }
     res.status(201).json({ ok: true })
   }),
@@ -118,10 +126,17 @@ reportsRouter.post(
       await query(`DELETE FROM posts WHERE id = $1`, [rep.rows[0].target_id])
     }
     await query(`UPDATE reports SET status = 'resolved' WHERE id = $1`, [req.params.id])
+    // No target when the post was removed: the whole point of the action was
+    // that the thing no longer exists, so linking to it would be a dead end.
+    const removed = parsed.data.removePost && rep.rows[0].target_type === 'post'
     void pushNotification(
       rep.rows[0].reporter_id,
       'announcement',
       'Thanks for your report — the admin team has reviewed and actioned it.',
+      undefined,
+      removed
+        ? undefined
+        : { type: rep.rows[0].target_type === 'post' ? 'post' : 'user', id: rep.rows[0].target_id },
     )
     res.json({ ok: true })
   }),

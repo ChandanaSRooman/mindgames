@@ -764,6 +764,20 @@ export type NotificationType =
   | 'community'
   | 'announcement'
   | 'event'
+  | 'message'
+
+// What a notification is ABOUT. Mirrors the CHECK on notifications.target_type
+// in schema.sql; a value here with no entry in lib/notificationLink.ts simply
+// falls back to the per-type route, so the two can be extended independently.
+export type NotificationTargetType =
+  | 'post'
+  | 'event'
+  | 'community'
+  | 'user'
+  | 'company'
+  | 'startup'
+  | 'session'
+  | 'conversation'
 
 export interface AppNotification {
   id: string
@@ -772,6 +786,9 @@ export interface AppNotification {
   createdAt: string // ISO
   read: boolean
   actorId?: string
+  /** Both present or both absent — see mapNotification in the backend. */
+  targetType?: NotificationTargetType
+  targetId?: string
 }
 
 export interface MessageThread {
