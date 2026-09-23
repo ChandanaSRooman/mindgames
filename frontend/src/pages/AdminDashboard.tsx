@@ -3,12 +3,16 @@ import { Link } from 'react-router-dom'
 import { Check, CheckCircle2, ExternalLink, FilePenLine, FileText, Megaphone, Pin, X, XCircle } from 'lucide-react'
 import {
   MENTOR_CLAIM_LABELS,
+  PLAN_IDS,
   type Alumni,
+  type AdminSubscriptionRow,
   type ContactRow,
   type MentorApplication,
   type PendingCommunity,
   type PendingEvent,
+  type PlanId,
   type StartupApplication,
+  type SubscriptionEvent,
   type User,
 } from '../types'
 import { api } from '../lib/api'
@@ -140,6 +144,8 @@ export function AdminDashboard() {
       {view === 'announcements' && <AnnouncementsPanel />}
 
       {view === 'mentors' && <MentorApprovalsPanel />}
+
+      {view === 'subscriptions' && <SubscriptionsPanel />}
 
       {view === 'startups' && <StartupApplicationsPanel />}
 
@@ -391,6 +397,203 @@ function MentorApprovalsPanel() {
           ))}
         </div>
       </Card>
+    </div>
+  )
+}
+
+// Every approved mentor's plan, comp a plan without payment, or revoke one.
+// The only UI for POST /api/subscription/admin/grant and /admin/revoke —
+// without this panel those routes had no caller anywhere in the product.
+function SubscriptionsPanel() {
+  const { notify } = useApp()
+  const [rows, setRows] = useState<AdminSubscriptionRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [grantFor, setGrantFor] = useState<AdminSubscriptionRow | null>(null)
+  const [historyFor, setHistoryFor] = useState<AdminSubscriptionRow | null>(null)
+
+  const load = useCallback(() => {
+    api.getAdminSubscriptions().then(setRows, () => notify('Could not load subscriptions.', 'error')).finally(() => setLoading(false))
+  }, [notify])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  async function revoke(row: AdminSubscriptionRow) {
+    try {
+      await api.revokeSubscription(row.userId)
+      notify(`Revoked ${row.name}'s subscription.`, 'success')
+      load()
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Could not revoke subscription', 'error')
+    }
+  }
+
+  async function grant(plan: PlanId, months: number, note: string) {
+    if (!grantFor) return
+    try {
+      await api.grantSubscription(grantFor.userId, plan, months, note || undefined)
+      notify(`Granted ${grantFor.name} the ${plan} plan.`, 'success')
+      setGrantFor(null)
+      load()
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Could not grant subscription', 'error')
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <Card className="p-5">
+        <h2 className="text-base font-bold text-[#1c1c1c]">Mentor Subscriptions ({rows.length})</h2>
+        <p className="mt-1 text-sm text-[#878a8c]">
+          Comp a plan for a mentor (support fixing a failed charge, or before a gateway is wired up),
+          or revoke one.
+        </p>
+        {loading ? (
+          <p className="mt-4 text-sm text-[#878a8c]">Loading…</p>
+        ) : rows.length === 0 ? (
+          <p className="mt-4 text-sm text-[#878a8c]">No approved mentors yet.</p>
+        ) : (
+          <div className="mt-3 flex flex-col gap-2">
+            {rows.map((r) => (
+              <div key={r.userId} className="flex flex-wrap items-center gap-3 rounded-lg border border-[#edeff1] p-3">
+                <Avatar name={r.name} src={r.photo} size={38} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-[#1c1c1c]">{r.name}</p>
+                  <p className="truncate text-xs text-[#878a8c]">
+                    {[r.designation, r.company].filter(Boolean).join(' · ')}
+                  </p>
+                </div>
+                <span
+                  className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                    r.subscribed ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-[#878a8c]'
+                  }`}
+                >
+                  {r.plan} · {r.status}
+                </span>
+                <span className="shrink-0 text-xs text-[#878a8c]">
+                  {r.sessionsThisMonth} session{r.sessionsThisMonth === 1 ? '' : 's'} this month
+                  {r.expiresAt && ` · expires ${new Date(r.expiresAt).toLocaleDateString('en-IN')}`}
+                </span>
+                <div className="flex shrink-0 gap-2">
+                  <Button variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => setHistoryFor(r)}>
+                    History
+                  </Button>
+                  <Button variant="outline" className="!px-3 !py-1.5 !text-xs" onClick={() => setGrantFor(r)}>
+                    Grant
+                  </Button>
+                  {r.subscribed && (
+                    <Button variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => revoke(r)}>
+                      Revoke
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {grantFor && (
+        <GrantSubscriptionModal
+          name={grantFor.name}
+          onClose={() => setGrantFor(null)}
+          onGrant={grant}
+        />
+      )}
+      {historyFor && (
+        <SubscriptionHistoryModal
+          userId={historyFor.userId}
+          name={historyFor.name}
+          onClose={() => setHistoryFor(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function SubscriptionHistoryModal({ userId, name, onClose }: { userId: string; name: string; onClose: () => void }) {
+  const [events, setEvents] = useState<SubscriptionEvent[] | null>(null)
+
+  useEffect(() => {
+    api.getSubscriptionEvents(userId).then(setEvents, () => setEvents([]))
+  }, [userId])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <h2 className="font-bold text-[#1c1c1c]">{name}'s subscription history</h2>
+        <div className="mt-3 flex-1 overflow-y-auto">
+          {events === null ? (
+            <p className="text-sm text-[#878a8c]">Loading…</p>
+          ) : events.length === 0 ? (
+            <p className="text-sm text-[#878a8c]">No subscription events yet.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {events.map((e, i) => (
+                <div key={i} className="rounded-lg border border-[#edeff1] p-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-[#1c1c1c]">{e.kind} · {e.plan}</span>
+                    <span className="text-xs text-[#878a8c]">{new Date(e.createdAt).toLocaleString('en-IN')}</span>
+                  </div>
+                  {(e.amount || e.provider || e.note) && (
+                    <p className="mt-1 text-xs text-[#878a8c]">
+                      {[e.amount ? `₹${e.amount.toLocaleString('en-IN')}` : null, e.provider, e.note].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <Button variant="ghost" className="mt-4" onClick={onClose}>Close</Button>
+      </div>
+    </div>
+  )
+}
+
+function GrantSubscriptionModal({
+  name,
+  onClose,
+  onGrant,
+}: {
+  name: string
+  onClose: () => void
+  onGrant: (plan: PlanId, months: number, note: string) => void
+}) {
+  const [plan, setPlan] = useState<PlanId>('mentor')
+  const [months, setMonths] = useState('1')
+  const [note, setNote] = useState('')
+  const field = 'mt-1 w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <h2 className="font-bold text-[#1c1c1c]">Grant a plan to {name}</h2>
+        <label className="mt-4 block text-sm font-medium text-[#1c1c1c]">Plan</label>
+        <select value={plan} onChange={(e) => setPlan(e.target.value as PlanId)} className={field}>
+          {PLAN_IDS.filter((p) => p !== 'free').map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+        <label className="mt-3 block text-sm font-medium text-[#1c1c1c]">Months</label>
+        <input
+          type="number"
+          min={1}
+          max={24}
+          value={months}
+          onChange={(e) => setMonths(e.target.value)}
+          className={field}
+        />
+        <label className="mt-3 block text-sm font-medium text-[#1c1c1c]">Note (optional)</label>
+        <input value={note} onChange={(e) => setNote(e.target.value)} className={field} placeholder="e.g. Comp for a failed charge" />
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => onGrant(plan, Math.min(24, Math.max(1, Number(months) || 1)), note.trim())}>
+            Grant
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }

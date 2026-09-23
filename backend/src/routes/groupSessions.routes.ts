@@ -29,12 +29,16 @@ interface GroupSessionRow {
   mentor_confirmed: boolean
 }
 
-const LIST_SELECT = (viewer: string) => `
+// `viewerParam` is the `$N` placeholder the caller has reserved for the
+// viewer's id in its own params array (not the id itself) — every call site
+// binds it as a real parameter, same as the rest of this file's queries,
+// rather than splicing the value into the SQL text.
+const LIST_SELECT = (viewerParam: string) => `
   SELECT g.id, g.mentor_id, u.name AS mentor_name, u.photo AS mentor_photo,
          g.topic, g.description, g.domain, g.scheduled_at, g.duration_minutes,
          g.capacity, g.meeting_link, g.pricing_mode, g.price_per_seat, g.status, g.mentor_confirmed,
          (SELECT count(*)::int FROM group_session_attendees a WHERE a.session_id = g.id) AS attendee_count,
-         EXISTS (SELECT 1 FROM group_session_attendees a WHERE a.session_id = g.id AND a.mentee_id = '${viewer}') AS joined_by_me
+         EXISTS (SELECT 1 FROM group_session_attendees a WHERE a.session_id = g.id AND a.mentee_id = ${viewerParam}) AS joined_by_me
     FROM group_sessions g JOIN users u ON u.id = g.mentor_id`
 
 function mapGroupSession(r: GroupSessionRow) {
@@ -111,7 +115,7 @@ groupSessionsRouter.post(
       req.user!.sub,
     )
 
-    const full = await query<GroupSessionRow>(`${LIST_SELECT(req.user!.sub)} WHERE g.id = $1`, [ins.rows[0].id])
+    const full = await query<GroupSessionRow>(`${LIST_SELECT('$2')} WHERE g.id = $1`, [ins.rows[0].id, req.user!.sub])
     res.status(201).json(mapGroupSession(full.rows[0]))
   }),
 )
@@ -124,9 +128,10 @@ groupSessionsRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const rows = await query<GroupSessionRow>(
-      `${LIST_SELECT(req.user!.sub)}
+      `${LIST_SELECT('$1')}
         WHERE g.status = 'scheduled' AND g.scheduled_at > now()
         ORDER BY g.scheduled_at`,
+      [req.user!.sub],
     )
     res.json(rows.rows.map(mapGroupSession))
   }),
@@ -138,7 +143,7 @@ groupSessionsRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const rows = await query<GroupSessionRow>(
-      `${LIST_SELECT(req.user!.sub)}
+      `${LIST_SELECT('$1')}
         WHERE g.mentor_id = $1
            OR EXISTS (SELECT 1 FROM group_session_attendees a WHERE a.session_id = g.id AND a.mentee_id = $1)
         ORDER BY g.scheduled_at DESC`,
@@ -221,7 +226,7 @@ groupSessionsRouter.post(
       )
     })
 
-    const full = await query<GroupSessionRow>(`${LIST_SELECT(req.user!.sub)} WHERE g.id = $1`, [req.params.id])
+    const full = await query<GroupSessionRow>(`${LIST_SELECT('$2')} WHERE g.id = $1`, [req.params.id, req.user!.sub])
     res.json(mapGroupSession(full.rows[0]))
   }),
 )
@@ -236,7 +241,7 @@ groupSessionsRouter.post(
       [req.params.id, req.user!.sub],
     )
     if (!del.rowCount) throw new ApiError(404, "You haven't joined this session")
-    const full = await query<GroupSessionRow>(`${LIST_SELECT(req.user!.sub)} WHERE g.id = $1`, [req.params.id])
+    const full = await query<GroupSessionRow>(`${LIST_SELECT('$2')} WHERE g.id = $1`, [req.params.id, req.user!.sub])
     res.json(full.rowCount ? mapGroupSession(full.rows[0]) : { id: req.params.id })
   }),
 )
@@ -253,29 +258,37 @@ groupSessionsRouter.post(
   '/:id/complete',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const g = await query<{ mentor_id: string; status: string; topic: string }>(
-      `SELECT mentor_id, status, topic FROM group_sessions WHERE id = $1`,
-      [req.params.id],
-    )
-    if (!g.rowCount || g.rows[0].mentor_id !== req.user!.sub) {
-      throw new ApiError(404, 'Group session not found (or you are not its host)')
-    }
-    if (g.rows[0].status !== 'scheduled') throw new ApiError(400, `Session is already ${g.rows[0].status}`)
-
     const parsed = completeSchema.safeParse(req.body)
     if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
 
-    await query(
-      `UPDATE group_sessions SET status = 'completed', mentor_confirmed = TRUE,
-              duration_minutes = COALESCE($2, duration_minutes),
-              domain = CASE WHEN $3 <> '' THEN $3 ELSE domain END
-        WHERE id = $1`,
-      [req.params.id, parsed.data.durationMinutes ?? null, parsed.data.domain ?? ''],
-    )
-    await query(
-      `UPDATE users SET sessions_conducted = COALESCE(sessions_conducted, 0) + 1 WHERE id = $1`,
-      [req.user!.sub],
-    )
+    // FOR UPDATE, same as /join: without it, a double-click or a retried
+    // request can both read status = 'scheduled' before either UPDATE
+    // commits, both mark it completed, and both increment
+    // sessions_conducted — inflating the mentor's stat and double-notifying
+    // every attendee.
+    const topic = await withTransaction(async (client) => {
+      const g = await client.query<{ mentor_id: string; status: string; topic: string }>(
+        `SELECT mentor_id, status, topic FROM group_sessions WHERE id = $1 FOR UPDATE`,
+        [req.params.id],
+      )
+      if (!g.rowCount || g.rows[0].mentor_id !== req.user!.sub) {
+        throw new ApiError(404, 'Group session not found (or you are not its host)')
+      }
+      if (g.rows[0].status !== 'scheduled') throw new ApiError(400, `Session is already ${g.rows[0].status}`)
+
+      await client.query(
+        `UPDATE group_sessions SET status = 'completed', mentor_confirmed = TRUE,
+                duration_minutes = COALESCE($2, duration_minutes),
+                domain = CASE WHEN $3 <> '' THEN $3 ELSE domain END
+          WHERE id = $1`,
+        [req.params.id, parsed.data.durationMinutes ?? null, parsed.data.domain ?? ''],
+      )
+      await client.query(
+        `UPDATE users SET sessions_conducted = COALESCE(sessions_conducted, 0) + 1 WHERE id = $1`,
+        [req.user!.sub],
+      )
+      return g.rows[0].topic
+    })
 
     const attendees = await query<{ mentee_id: string }>(
       `SELECT mentee_id FROM group_session_attendees WHERE session_id = $1`,
@@ -284,12 +297,12 @@ groupSessionsRouter.post(
     for (const a of attendees.rows) {
       void pushNotification(
         a.mentee_id, 'mentorship',
-        `"${g.rows[0].topic}" is marked completed — confirm it to add it to your learning record. 🎓`,
+        `"${topic}" is marked completed — confirm it to add it to your learning record. 🎓`,
         req.user!.sub,
       )
     }
 
-    const full = await query<GroupSessionRow>(`${LIST_SELECT(req.user!.sub)} WHERE g.id = $1`, [req.params.id])
+    const full = await query<GroupSessionRow>(`${LIST_SELECT('$2')} WHERE g.id = $1`, [req.params.id, req.user!.sub])
     res.json(mapGroupSession(full.rows[0]))
   }),
 )
@@ -314,7 +327,7 @@ groupSessionsRouter.post(
     if (!upd.rowCount) throw new ApiError(404, "You didn't attend this session")
     await recordConfirmedGroupAttendance(req.params.id, req.user!.sub)
 
-    const full = await query<GroupSessionRow>(`${LIST_SELECT(req.user!.sub)} WHERE g.id = $1`, [req.params.id])
+    const full = await query<GroupSessionRow>(`${LIST_SELECT('$2')} WHERE g.id = $1`, [req.params.id, req.user!.sub])
     res.json(mapGroupSession(full.rows[0]))
   }),
 )

@@ -107,16 +107,7 @@ subscriptionRouter.post(
     // someone else.
     if (verified.userId !== req.user!.sub) throw new ApiError(403, 'That payment reference is not yours.')
 
-    const already = await query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM subscription_events
-        WHERE provider = $1 AND provider_ref = $2`,
-      [paymentProvider().name, verified.providerRef],
-    )
-    if (already.rows[0].n > 0) {
-      return res.json(await getSubscription(req.user!.sub))
-    }
-
-    const state = await activateSubscription({
+    const { state, granted } = await activateSubscription({
       userId: verified.userId,
       plan: verified.plan,
       months: verified.months,
@@ -125,11 +116,16 @@ subscriptionRouter.post(
       providerRef: verified.providerRef,
       note: `Activated via ${paymentProvider().name}`,
     })
-    void pushNotification(
-      verified.userId,
-      'mentorship',
-      `Your ${PLAN_DETAILS[verified.plan].name} plan is active — you can accept mentorship sessions now.`,
-    )
+    // A replayed webhook for the same providerRef is a no-op grant (see
+    // activateSubscription) — skip the "your plan is active" notification too,
+    // so a retried callback doesn't ping the mentor a second time.
+    if (granted) {
+      void pushNotification(
+        verified.userId,
+        'mentorship',
+        `Your ${PLAN_DETAILS[verified.plan].name} plan is active — you can accept mentorship sessions now.`,
+      )
+    }
     res.json(state)
   }),
 )
@@ -228,7 +224,7 @@ subscriptionRouter.post(
     if (!target.rowCount) throw new ApiError(404, 'User not found')
     if (!target.rows[0].is_mentor) throw new ApiError(400, 'That member is not an approved mentor')
 
-    const state = await activateSubscription({
+    const { state } = await activateSubscription({
       userId, plan, months, source: 'admin',
       note: note || `Granted by admin for ${months} month(s)`,
     })

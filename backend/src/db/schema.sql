@@ -1060,9 +1060,19 @@ CREATE INDEX IF NOT EXISTS idx_sub_events_user ON subscription_events (user_id, 
 -- 90 days of 'pro' so nobody is cut off the day the gate ships. Inserted once
 -- per mentor — ON CONFLICT DO NOTHING means re-running the migration never
 -- extends the window, and never overwrites a real subscription bought later.
+--
+-- Scoped to mentors verified before the cutoff below, not to "any mentor
+-- without a subscriptions row yet": schema.sql reruns on every deploy, and an
+-- unscoped WHERE is_mentor would silently re-grant this free 90 days to every
+-- mentor approved AFTER the gate shipped too, bypassing the paywall forever.
+-- NULL mentor_verified_at (seeded demo mentors, or any mentor that predates
+-- that column) is treated as "before the cutoff" since there is no later
+-- timestamp to compare against.
 INSERT INTO mentor_subscriptions (user_id, plan, status, source, started_at, expires_at)
 SELECT id, 'pro', 'active', 'grandfathered', now(), now() + INTERVAL '90 days'
-  FROM users WHERE is_mentor
+  FROM users
+ WHERE is_mentor
+   AND (mentor_verified_at IS NULL OR mentor_verified_at < TIMESTAMPTZ '2026-09-23 00:00:00+00')
 ON CONFLICT (user_id) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
@@ -1079,6 +1089,12 @@ ON CONFLICT (user_id) DO NOTHING;
 -- is what makes an empty duration on a "completed" session visible.
 -- ---------------------------------------------------------------------------
 ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ;
+-- When the mentor accepted the request, not when the mentee sent it
+-- (created_at). The monthly session cap counts against this: a request that
+-- sat unaccepted for weeks must not eat a cap month it was never actioned in,
+-- and a request accepted this month must count against this month even if it
+-- was sent last month.
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
 ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
 ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
 ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS duration_minutes INTEGER;

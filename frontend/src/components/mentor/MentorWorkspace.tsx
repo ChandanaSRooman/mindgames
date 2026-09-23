@@ -24,12 +24,16 @@ import type { Mentee, MentorshipSession, ProfileStats } from '../../types'
 export function MentorWorkspace({
   requests,
   upcoming,
+  finished,
   onAccept,
   onDecline,
   onComplete,
 }: {
   requests: MentorshipSession[]
   upcoming: MentorshipSession[]
+  /** Sessions this mentor completed or declined — their side of "My
+   *  Sessions → Past", which only shows the mentee's own history. */
+  finished: MentorshipSession[]
   onAccept: (id: string) => void
   onDecline: (id: string) => void
   onComplete: (session: MentorshipSession) => void
@@ -60,7 +64,7 @@ export function MentorWorkspace({
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
           <Crown size={18} className="shrink-0 text-amber-600" />
           <p className="flex-1 text-sm text-amber-900">
-            <strong>{subscription?.blockedReason ?? 'Dude, you need a subscription to accept sessions.'}</strong>
+            <strong>{subscription?.blockedReason ?? 'You need a subscription to accept sessions.'}</strong>
           </p>
           <Button className="!py-1.5" icon={<Crown size={14} />} onClick={() => setShowPlans(true)}>
             See plans
@@ -165,6 +169,39 @@ export function MentorWorkspace({
         </Card>
       )}
 
+      {/* Completed or declined — this mentor's own record, since "My
+          Sessions → Past" only shows the mentee side of the history. */}
+      {finished.length > 0 && (
+        <Card className="p-5">
+          <h2 className="mb-3 flex items-center gap-2 text-lg font-bold text-[#1c1c1c]">
+            <GraduationCap size={18} className="text-[#878a8c]" />
+            Past
+          </h2>
+          <div className="flex flex-col gap-2">
+            {finished.map((s) => {
+              const declined = s.status === 'declined'
+              return (
+                <div key={s.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-[#edeff1] p-3 opacity-80">
+                  <Avatar name={s.menteeName} size={38} to={`/profile/${s.menteeId}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-[#1c1c1c]">{s.topic}</p>
+                    <p className="text-xs text-[#878a8c]">{s.menteeName} · {s.date}</p>
+                  </div>
+                  {!declined && s.rating && (
+                    <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-600">
+                      <Star size={11} className="fill-amber-500 text-amber-500" /> {s.rating}
+                    </span>
+                  )}
+                  <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${declined ? 'bg-red-50 text-red-500' : 'bg-gray-100 text-[#878a8c]'}`}>
+                    {declined ? 'Declined' : 'Completed'}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </Card>
+      )}
+
       {/* People being helped */}
       <Card className="p-5">
         <h2 className="mb-3 flex items-center gap-2 text-lg font-bold text-[#1c1c1c]">
@@ -265,7 +302,7 @@ export function MentorWorkspace({
       {showServices && <ManageServicesPanel onClose={() => setShowServices(false)} />}
       {roadmapFor && <MenteeRoadmapModal menteeId={roadmapFor} onClose={() => setRoadmapFor(null)} />}
       {showPlans && (
-        <SubscriptionPlans reason="Dude, you need a subscription" onClose={() => setShowPlans(false)} />
+        <SubscriptionPlans reason="You need a subscription to accept sessions" onClose={() => setShowPlans(false)} />
       )}
     </div>
   )

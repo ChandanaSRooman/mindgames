@@ -63,6 +63,7 @@ export function Mentorship() {
   const finished = asMentee.filter((s) => s.status === 'past' || s.status === 'declined')
   const mentorRequests = asMentor.filter((s) => s.status === 'requested')
   const mentorUpcoming = asMentor.filter((s) => s.status === 'upcoming')
+  const mentorFinished = asMentor.filter((s) => s.status === 'past' || s.status === 'declined')
 
   // Mentee free-session allowance: the first N booked (non-declined) sessions
   // are free; beyond that, sessions are paid at the mentor's rate.
@@ -291,6 +292,7 @@ export function Mentorship() {
         <MentorWorkspace
           requests={mentorRequests}
           upcoming={mentorUpcoming}
+          finished={mentorFinished}
           onAccept={(id) => setAccepting(id)}
           onDecline={declineSession}
           onComplete={(session) => setCompleting(session)}
@@ -328,7 +330,7 @@ export function Mentorship() {
 
       {payFor && (
         <SubscriptionPlans
-          reason="Dude, you need a subscription"
+          reason="You need a subscription to accept sessions"
           onClose={() => setPayFor(null)}
           onActivated={async () => {
             // Pick up exactly where they left off: the session they were

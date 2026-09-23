@@ -20,6 +20,7 @@ import type {
   PlanId,
   ProfileStats,
   ServiceType,
+  SubscriptionEvent,
   SubscriptionState,
   Comment,
   Community,
@@ -704,6 +705,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ userId }),
     }),
+  getSubscriptionEvents: (userId: string) =>
+    http<SubscriptionEvent[]>(`/api/subscription/admin/events/${userId}`),
   getMatchedServices: () => http<AlumniService[]>('/api/career/services/matched'),
   getAllServices: () => http<AlumniService[]>('/api/career/services'),
   getMyServices: () => http<AlumniService[]>('/api/career/services/mine'),

@@ -1,4 +1,5 @@
-import { query } from './db/pool.js'
+import type pg from 'pg'
+import { query, withTransaction } from './db/pool.js'
 
 /**
  * Mentor subscriptions.
@@ -162,9 +163,13 @@ export async function getSubscription(userId: string): Promise<SubscriptionState
   )
   const row = r.rows[0]
   const used = await query<{ n: number }>(
+    // Counted by when the mentor accepted, not when the mentee asked — a
+    // request that sits unaccepted for weeks must not eat a cap month it was
+    // never actioned in. accepted_at is only set from the point this column
+    // was added; a session that predates it falls back to created_at.
     `SELECT count(*)::int AS n FROM mentorship_sessions
       WHERE mentor_id = $1 AND status IN ('upcoming', 'past')
-        AND created_at >= date_trunc('month', now())`,
+        AND COALESCE(accepted_at, created_at) >= date_trunc('month', now())`,
     [userId],
   )
   const sessionsThisMonth = used.rows[0]?.n ?? 0
@@ -173,7 +178,7 @@ export async function getSubscription(userId: string): Promise<SubscriptionState
     return {
       plan: 'free', status: 'inactive', source: 'none', expiresAt: null,
       canAcceptSessions: false, sessionsThisMonth, sessionsPerMonth: 0,
-      blockedReason: 'Dude, you need a subscription to accept sessions.',
+      blockedReason: 'You need a subscription to accept sessions.',
     }
   }
 
@@ -185,12 +190,12 @@ export async function getSubscription(userId: string): Promise<SubscriptionState
 
   let canAccept = status === 'active'
   let blockedReason: string | undefined
-  if (status === 'expired') blockedReason = 'Dude, your plan expired. Renew to keep accepting sessions.'
-  else if (status === 'cancelled') blockedReason = 'Dude, your plan was cancelled. Pick one to start again.'
-  else if (status !== 'active') blockedReason = 'Dude, you need a subscription to accept sessions.'
+  if (status === 'expired') blockedReason = 'Your plan expired. Renew to keep accepting sessions.'
+  else if (status === 'cancelled') blockedReason = 'Your plan was cancelled. Pick one to start again.'
+  else if (status !== 'active') blockedReason = 'You need a subscription to accept sessions.'
   else if (cap !== null && sessionsThisMonth >= cap) {
     canAccept = false
-    blockedReason = `Dude, you've used all ${cap} sessions on the ${details.name} plan this month. Upgrade for more.`
+    blockedReason = `You've used all ${cap} sessions on the ${details.name} plan this month. Upgrade for more.`
   }
 
   return {
@@ -229,7 +234,7 @@ export async function canHostPaidEvents(userId: string): Promise<{ allowed: bool
 export async function canHostGroupSessions(userId: string): Promise<{ allowed: boolean; reason?: string }> {
   const s = await getSubscription(userId)
   if (s.status !== 'active') {
-    return { allowed: false, reason: 'Dude, you need a subscription to host group sessions.' }
+    return { allowed: false, reason: 'You need a subscription to host group sessions.' }
   }
   if (!PLAN_DETAILS[s.plan]?.groupSessions) {
     return {
@@ -242,7 +247,18 @@ export async function canHostGroupSessions(userId: string): Promise<{ allowed: b
 
 /** Grant or extend a subscription. One path for every source — an admin
  *  grant, the grandfathering rule and a future gateway callback all land
- *  here, so activation behaves identically however it was triggered. */
+ *  here, so activation behaves identically however it was triggered.
+ *
+ *  When `providerRef` is given, the audit-row insert and the grant itself run
+ *  in one transaction, with the audit row inserted FIRST: its own unique
+ *  index on (provider, provider_ref) is what makes a replayed or
+ *  double-submitted gateway callback a no-op. Granting first and logging
+ *  second (the previous order) let two concurrent callbacks for the same
+ *  payment both pass a separate "already processed?" check before either had
+ *  written the row that check relied on — each would then grant its own
+ *  month, crediting the mentor twice for one payment. Returns `granted:
+ *  false` when this call was such a duplicate, so the caller can skip
+ *  re-notifying the mentor. */
 export async function activateSubscription(opts: {
   userId: string
   plan: PlanId
@@ -251,57 +267,80 @@ export async function activateSubscription(opts: {
   provider?: string
   providerRef?: string
   note?: string
-}): Promise<SubscriptionState> {
+}): Promise<{ state: SubscriptionState; granted: boolean }> {
   const months = opts.months ?? 1
-  await query(
-    `INSERT INTO mentor_subscriptions (user_id, plan, status, source, provider, provider_ref, started_at, expires_at, updated_at)
-     VALUES ($1, $2, 'active', $3, $4, $5, now(), now() + ($6 || ' months')::interval, now())
-     ON CONFLICT (user_id) DO UPDATE SET
-       plan = $2, status = 'active', source = $3, provider = $4, provider_ref = $5,
-       started_at = COALESCE(mentor_subscriptions.started_at, now()),
-       -- Renewing before expiry extends from the existing end date rather
-       -- than from today, so a mentor never loses days by paying early.
-       expires_at = GREATEST(COALESCE(mentor_subscriptions.expires_at, now()), now()) + ($6 || ' months')::interval,
-       updated_at = now()`,
-    [opts.userId, opts.plan, opts.source, opts.provider ?? null, opts.providerRef ?? null, String(months)],
-  )
-  await recordEvent({
-    userId: opts.userId,
-    kind: 'activated',
-    plan: opts.plan,
-    amount: PLAN_DETAILS[opts.plan]?.price ?? 0,
-    provider: opts.provider,
-    providerRef: opts.providerRef,
-    note: opts.note ?? '',
+  const granted = await withTransaction(async (client) => {
+    const inserted = await recordEvent(
+      {
+        userId: opts.userId,
+        kind: 'activated',
+        plan: opts.plan,
+        amount: PLAN_DETAILS[opts.plan]?.price ?? 0,
+        provider: opts.provider,
+        providerRef: opts.providerRef,
+        note: opts.note ?? '',
+      },
+      client,
+    )
+    // No providerRef means this grant has no de-dupe key (admin/grandfather),
+    // so there is nothing to conflict on and it always proceeds. With one,
+    // a false `inserted` means a previous call already claimed this exact
+    // provider_ref — do not grant the month a second time.
+    if (opts.providerRef && !inserted) return false
+    await client.query(
+      `INSERT INTO mentor_subscriptions (user_id, plan, status, source, provider, provider_ref, started_at, expires_at, updated_at)
+       VALUES ($1, $2, 'active', $3, $4, $5, now(), now() + ($6 || ' months')::interval, now())
+       ON CONFLICT (user_id) DO UPDATE SET
+         plan = $2, status = 'active', source = $3, provider = $4, provider_ref = $5,
+         started_at = COALESCE(mentor_subscriptions.started_at, now()),
+         -- Renewing before expiry extends from the existing end date rather
+         -- than from today, so a mentor never loses days by paying early.
+         expires_at = GREATEST(COALESCE(mentor_subscriptions.expires_at, now()), now()) + ($6 || ' months')::interval,
+         updated_at = now()`,
+      [opts.userId, opts.plan, opts.source, opts.provider ?? null, opts.providerRef ?? null, String(months)],
+    )
+    return true
   })
-  return getSubscription(opts.userId)
+  return { state: await getSubscription(opts.userId), granted }
 }
 
+/** Cancel a subscription. A no-op — no audit event, no error — if the user
+ *  has no subscription row or is already cancelled, so an admin revoking a
+ *  never-subscribed user doesn't leave a misleading "cancelled" event for a
+ *  subscription that never existed. */
 export async function cancelSubscription(userId: string, note = ''): Promise<SubscriptionState> {
-  await query(
-    `UPDATE mentor_subscriptions SET status = 'cancelled', updated_at = now() WHERE user_id = $1`,
-    [userId],
-  )
-  await recordEvent({ userId, kind: 'cancelled', plan: 'free', note })
+  await withTransaction(async (client) => {
+    const upd = await client.query(
+      `UPDATE mentor_subscriptions SET status = 'cancelled', updated_at = now()
+        WHERE user_id = $1 AND status <> 'cancelled'`,
+      [userId],
+    )
+    if (upd.rowCount) await recordEvent({ userId, kind: 'cancelled', plan: 'free', note }, client)
+  })
   return getSubscription(userId)
 }
 
 /** Append to the audit trail. `providerRef` is unique per provider, so a
  *  gateway replaying the same webhook is silently ignored rather than
- *  granting a second month. */
-export async function recordEvent(e: {
-  userId: string
-  kind: 'requested' | 'activated' | 'renewed' | 'cancelled' | 'expired' | 'payment_failed'
-  plan: PlanId | 'free'
-  amount?: number
-  provider?: string
-  providerRef?: string
-  note?: string
-}): Promise<void> {
-  await query(
-    `INSERT INTO subscription_events (user_id, kind, plan, amount, provider, provider_ref, note)
+ *  granting a second month. Pass `client` to run inside an existing
+ *  transaction (see activateSubscription) and get back whether a row was
+ *  actually inserted, so the caller can tell a fresh event from a duplicate. */
+export async function recordEvent(
+  e: {
+    userId: string
+    kind: 'requested' | 'activated' | 'renewed' | 'cancelled' | 'expired' | 'payment_failed'
+    plan: PlanId | 'free'
+    amount?: number
+    provider?: string
+    providerRef?: string
+    note?: string
+  },
+  client?: pg.PoolClient,
+): Promise<boolean> {
+  const sql = `INSERT INTO subscription_events (user_id, kind, plan, amount, provider, provider_ref, note)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (provider, provider_ref) WHERE provider_ref IS NOT NULL DO NOTHING`,
-    [e.userId, e.kind, e.plan, e.amount ?? null, e.provider ?? null, e.providerRef ?? null, e.note ?? ''],
-  )
+     ON CONFLICT (provider, provider_ref) WHERE provider_ref IS NOT NULL DO NOTHING`
+  const params = [e.userId, e.kind, e.plan, e.amount ?? null, e.provider ?? null, e.providerRef ?? null, e.note ?? '']
+  const result = client ? await client.query(sql, params) : await query(sql, params)
+  return (result.rowCount ?? 0) > 0
 }

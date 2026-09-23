@@ -6,6 +6,7 @@ import { requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { mapLimitedUser, mapOwnUser, mapUser, USER_COLS, type UserRow } from '../mappers.js'
 import { sendEmail, sendEmailChangeRequestEmail } from '../email.js'
+import { getProfileStats } from '../sessionStats.js'
 
 export const usersRouter = Router()
 
@@ -561,11 +562,10 @@ usersRouter.get(
     const user = await query<{
       connections_count: number
       is_mentor: boolean
-      sessions_conducted: number | null
       email_verified_at: Date | null
       created_at: Date
     }>(
-      `SELECT connections_count, is_mentor, sessions_conducted, email_verified_at, created_at
+      `SELECT connections_count, is_mentor, email_verified_at, created_at
        FROM users WHERE id = $1`,
       [uid],
     )
@@ -592,7 +592,16 @@ usersRouter.get(
       [uid],
     )
     const c = stats.rows[0]
-    const sessions = u.sessions_conducted ?? 0
+    // Mentorship counts come from the same mutually-confirmed source the
+    // mentor workspace's stored badges use (sessionStats.getProfileStats),
+    // not the raw sessions_conducted counter — that counter bumps the moment
+    // a mentor clicks "mark completed", before the mentee confirms, so it can
+    // read higher than what actually counts. Without this, a mentor could
+    // read "Super Mentor" here while the mentor workspace's own "10 Sessions"
+    // badge (the stricter, canonical count) hadn't fired yet — same person,
+    // two disagreeing numbers.
+    const mentorStats = await getProfileStats(uid)
+    const sessions = mentorStats.sessionsGiven
 
     const badges = [
       { id: 'verified', emoji: '✅', label: 'Verified', description: 'Confirmed their email address', earned: !!u.email_verified_at },
@@ -602,7 +611,9 @@ usersRouter.get(
       { id: 'connector', emoji: '🤝', label: 'Connector', description: 'Made 5 or more connections', earned: u.connections_count >= 5 },
       { id: 'super-connector', emoji: '🌐', label: 'Super Connector', description: 'Made 20 or more connections', earned: u.connections_count >= 20 },
       { id: 'mentor', emoji: '🎓', label: 'Mentor', description: 'Gives back as a mentor', earned: u.is_mentor || sessions > 0 },
-      { id: 'super-mentor', emoji: '🏆', label: 'Super Mentor', description: 'Completed 5+ mentorship sessions', earned: sessions >= 5 },
+      // Threshold matches the mentor workspace's "10 Sessions" badge
+      // (sessionStats.BADGES: ten_sessions_given) so the two never disagree.
+      { id: 'super-mentor', emoji: '🏆', label: 'Super Mentor', description: 'Completed 10+ mentorship sessions', earned: sessions >= 10 },
       { id: 'job-creator', emoji: '💼', label: 'Job Creator', description: 'Posted an opening for fellow alumni', earned: c.jobs >= 1 },
       { id: 'community-builder', emoji: '🏗️', label: 'Community Builder', description: 'Started a community', earned: c.communities >= 1 },
       { id: 'founder', emoji: '🚀', label: 'Founder', description: 'Applied to StartupVarsity with an idea', earned: c.startups >= 1 },

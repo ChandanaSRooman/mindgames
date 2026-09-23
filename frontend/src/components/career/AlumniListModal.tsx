@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { GraduationCap, MessageSquare, Search, Sparkles, UserPlus, Users, Wrench, X } from 'lucide-react'
 import { Avatar, Button } from '../ui'
@@ -56,9 +57,9 @@ export function AlumniListModal({
     }
   }
 
-  return (
+  return createPortal(
     <>
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
         <div
           className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
           onClick={(e) => e.stopPropagation()}
@@ -129,7 +130,8 @@ export function AlumniListModal({
       </div>
 
       {connectTo && <ConnectNoteModal user={connectTo} onClose={() => setConnectTo(null)} />}
-    </>
+    </>,
+    document.body,
   )
 }
 

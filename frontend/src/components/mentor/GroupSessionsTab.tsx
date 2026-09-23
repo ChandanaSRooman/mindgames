@@ -158,7 +158,7 @@ export function GroupSessionsTab() {
       )}
       {showPlans && (
         <SubscriptionPlans
-          reason="Dude, you need Pro to host group sessions"
+          reason="You need Pro to host group sessions"
           onClose={() => setShowPlans(false)}
           onActivated={() => setShowPlans(false)}
         />

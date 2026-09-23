@@ -1237,6 +1237,18 @@ export interface AdminSubscriptionRow {
   subscribed: boolean
 }
 
+// One row of a mentor's subscription audit trail — what was requested,
+// granted, renewed or failed, and when. Mirrors GET
+// /api/subscription/admin/events/:userId.
+export interface SubscriptionEvent {
+  kind: 'requested' | 'activated' | 'renewed' | 'cancelled' | 'expired' | 'payment_failed'
+  plan: string
+  amount?: number
+  provider?: string
+  note: string
+  createdAt: string
+}
+
 // --- Group sessions ----------------------------------------------------------
 // Mirrors backend/src/routes/groupSessions.routes.ts. A mentor hosting many
 // mentees at once rather than one — a separate table and flow from a 1:1

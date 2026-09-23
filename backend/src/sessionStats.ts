@@ -1,3 +1,4 @@
+import type pg from 'pg'
 import { query } from './db/pool.js'
 import { pushNotification } from './notify.js'
 
@@ -273,19 +274,31 @@ export async function refreshBadges(userId: string): Promise<string[]> {
   return earned
 }
 
-/** Called once both sides have confirmed a session. Stamps confirmed_at,
- *  which is what every stat above counts, then refreshes both profiles. */
-export async function recordConfirmedSession(sessionId: string): Promise<void> {
-  const r = await query<{ mentor_id: string; mentee_id: string; both: boolean }>(
-    `UPDATE mentorship_sessions
-        SET confirmed_at = COALESCE(confirmed_at, now())
-      WHERE id = $1 AND mentee_confirmed AND mentor_confirmed
-      RETURNING mentor_id, mentee_id, TRUE AS both`,
-    [sessionId],
-  )
-  if (!r.rowCount) return
-  await refreshBadges(r.rows[0].mentor_id)
-  await refreshBadges(r.rows[0].mentee_id)
+/** Stamps confirmed_at once both sides have confirmed — which is what every
+ *  stat above counts — and returns who to refresh, or null when this call
+ *  wasn't the one that completed the pair.
+ *
+ *  Pass `client` to run inside the same transaction as the caller's own
+ *  mentee_confirmed/mentor_confirmed UPDATE. Without that, a crash between
+ *  "set my side's confirmed flag" and "stamp confirmed_at" can leave a
+ *  session where both flags end up TRUE but confirmed_at never gets
+ *  stamped — permanently missing from every stat and badge, since nothing
+ *  else ever re-triggers this stamp. Badge refreshing is deliberately NOT
+ *  done here: it must run after the transaction commits, or it would read
+ *  the pre-stamp state on a separate connection and undercount. */
+export async function stampMutualConfirmation(
+  sessionId: string,
+  client?: pg.PoolClient,
+): Promise<{ mentorId: string; menteeId: string } | null> {
+  const sql = `UPDATE mentorship_sessions
+      SET confirmed_at = COALESCE(confirmed_at, now())
+    WHERE id = $1 AND mentee_confirmed AND mentor_confirmed
+    RETURNING mentor_id, mentee_id`
+  const r = client
+    ? await client.query<{ mentor_id: string; mentee_id: string }>(sql, [sessionId])
+    : await query<{ mentor_id: string; mentee_id: string }>(sql, [sessionId])
+  if (!r.rowCount) return null
+  return { mentorId: r.rows[0].mentor_id, menteeId: r.rows[0].mentee_id }
 }
 
 /** The group-session equivalent: called once one attendee confirms. Unlike

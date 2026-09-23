@@ -5,7 +5,7 @@ import { requireAdmin, requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { pushNotification } from '../notify.js'
 import { getSubscription } from '../subscription.js'
-import { getProfileStats, recordConfirmedSession, refreshBadges } from '../sessionStats.js'
+import { getProfileStats, refreshBadges, stampMutualConfirmation } from '../sessionStats.js'
 
 export const mentorshipRouter = Router()
 
@@ -201,7 +201,8 @@ mentorshipRouter.post(
     const scheduledAt = when && !Number.isNaN(when.getTime()) ? when : null
     await query(
       `UPDATE mentorship_sessions
-          SET status = 'upcoming', meeting_link = $2, scheduled_at = COALESCE($3, scheduled_at)
+          SET status = 'upcoming', meeting_link = $2, scheduled_at = COALESCE($3, scheduled_at),
+              accepted_at = now()
         WHERE id = $1`,
       [req.params.id, link || null, scheduledAt],
     )
@@ -244,9 +245,6 @@ mentorshipRouter.post(
   '/sessions/:id/complete',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const s = await sessionForMentor(req.params.id, req.user!.sub)
-    if (s.status !== 'upcoming') throw new ApiError(400, 'Only confirmed (upcoming) sessions can be completed')
-
     // How long it actually ran, and what it covered. Optional so the
     // existing one-click "Mark completed" still works unchanged, but when
     // supplied this is what the public profile stats are built from.
@@ -254,24 +252,42 @@ mentorshipRouter.post(
     const durationMinutes = Number.isInteger(mins) && mins > 0 && mins <= 600 ? mins : null
     const domain = typeof req.body?.domain === 'string' ? req.body.domain.trim().slice(0, 60) : ''
 
-    await query(
-      `UPDATE mentorship_sessions
-          SET status = 'past',
-              duration_minutes = COALESCE($2, duration_minutes),
-              domain = CASE WHEN $3 <> '' THEN $3 ELSE domain END,
-              ended_at = COALESCE(ended_at, now()),
-              started_at = COALESCE(started_at, scheduled_at),
-              -- The mentor saying it happened is one half of the record; the
-              -- mentee confirms separately before it counts anywhere.
-              mentor_confirmed = TRUE
-        WHERE id = $1`,
-      [req.params.id, durationMinutes, domain],
-    )
-    await query(
-      `UPDATE users SET sessions_conducted = COALESCE(sessions_conducted, 0) + 1 WHERE id = $1`,
-      [req.user!.sub],
-    )
-    await recordConfirmedSession(req.params.id)
+    // FOR UPDATE + one transaction: without it, a double-click or retried
+    // request can both read status = 'upcoming' before either UPDATE
+    // commits, both mark it completed, and both increment
+    // sessions_conducted — the same race group-session /complete guards
+    // against, applied here to the 1:1 session.
+    const s = await withTransaction(async (client) => {
+      const r = await client.query<{ mentee_id: string; topic: string; status: string }>(
+        `SELECT mentee_id, topic, status FROM mentorship_sessions WHERE id = $1 AND mentor_id = $2 FOR UPDATE`,
+        [req.params.id, req.user!.sub],
+      )
+      if (!r.rowCount) throw new ApiError(404, 'Session not found (or you are not its mentor)')
+      if (r.rows[0].status !== 'upcoming') throw new ApiError(400, 'Only confirmed (upcoming) sessions can be completed')
+
+      await client.query(
+        `UPDATE mentorship_sessions
+            SET status = 'past',
+                duration_minutes = COALESCE($2, duration_minutes),
+                domain = CASE WHEN $3 <> '' THEN $3 ELSE domain END,
+                ended_at = COALESCE(ended_at, now()),
+                started_at = COALESCE(started_at, scheduled_at),
+                -- The mentor saying it happened is one half of the record;
+                -- the mentee confirms separately before it counts anywhere.
+                mentor_confirmed = TRUE
+          WHERE id = $1`,
+        [req.params.id, durationMinutes, domain],
+      )
+      await client.query(
+        `UPDATE users SET sessions_conducted = COALESCE(sessions_conducted, 0) + 1 WHERE id = $1`,
+        [req.user!.sub],
+      )
+      return r.rows[0]
+    })
+    // The mentee hasn't confirmed yet at this point (that's the next step),
+    // so this is a no-op today — kept because mentor_confirmed is now TRUE
+    // and this is the one place that stamp is checked for.
+    await stampMutualConfirmation(req.params.id)
 
     const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
     void pushNotification(
@@ -293,25 +309,36 @@ mentorshipRouter.post(
   '/sessions/:id/confirm',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const s = await query<{ mentor_id: string; topic: string; status: string }>(
-      `SELECT mentor_id, topic, status FROM mentorship_sessions WHERE id = $1 AND mentee_id = $2`,
-      [req.params.id, req.user!.sub],
-    )
-    if (!s.rowCount) throw new ApiError(404, 'Session not found (or you are not its mentee)')
-    if (s.rows[0].status !== 'past') {
-      throw new ApiError(400, 'You can confirm a session once the mentor has marked it completed')
-    }
-
     const mins = Number(req.body?.durationMinutes)
     const durationMinutes = Number.isInteger(mins) && mins > 0 && mins <= 600 ? mins : null
-    await query(
-      `UPDATE mentorship_sessions
-          SET mentee_confirmed = TRUE,
-              duration_minutes = COALESCE(duration_minutes, $2)
-        WHERE id = $1`,
-      [req.params.id, durationMinutes],
-    )
-    await recordConfirmedSession(req.params.id)
+
+    // Setting mentee_confirmed and stamping confirmed_at must commit
+    // together: if the process died between two separate statements here, a
+    // session could end up with both confirmed flags TRUE but confirmed_at
+    // never stamped — permanently missing from every stat and badge, since
+    // nothing else ever re-triggers this stamp.
+    const confirmed = await withTransaction(async (client) => {
+      const s = await client.query<{ status: string }>(
+        `SELECT status FROM mentorship_sessions WHERE id = $1 AND mentee_id = $2 FOR UPDATE`,
+        [req.params.id, req.user!.sub],
+      )
+      if (!s.rowCount) throw new ApiError(404, 'Session not found (or you are not its mentee)')
+      if (s.rows[0].status !== 'past') {
+        throw new ApiError(400, 'You can confirm a session once the mentor has marked it completed')
+      }
+      await client.query(
+        `UPDATE mentorship_sessions
+            SET mentee_confirmed = TRUE,
+                duration_minutes = COALESCE(duration_minutes, $2)
+          WHERE id = $1`,
+        [req.params.id, durationMinutes],
+      )
+      return stampMutualConfirmation(req.params.id, client)
+    })
+    if (confirmed) {
+      await refreshBadges(confirmed.mentorId)
+      await refreshBadges(confirmed.menteeId)
+    }
 
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
     res.json(mapSession(full.rows[0]))
