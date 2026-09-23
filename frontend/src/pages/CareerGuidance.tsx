@@ -80,6 +80,17 @@ export function CareerGuidance() {
     }
   }
 
+  // Shared by the timeline's per-stage "X alumni can help" list and the
+  // aggregate "People from Rooman" section below it — same action either way.
+  function bookPerson(p: AlumniHelper) {
+    setBooking({
+      kind: 'person',
+      mentorId: p.id,
+      name: p.name,
+      topic: p.reason || `Guidance towards ${roadmap?.goal.targetRole ?? 'my career goal'}`,
+    })
+  }
+
   async function toggleAllServices() {
     if (!showingAll && allServices === null) {
       try {
@@ -185,19 +196,14 @@ export function CareerGuidance() {
 
       <CareerGoalSummary roadmap={roadmap} supportPreference={assessment?.supportPreference ?? ''} />
 
-      <CareerRoadmapTimeline roadmap={roadmap} onStepStatus={setStepStatus} />
-
-      <AlumniHelpSection
+      <CareerRoadmapTimeline
+        roadmap={roadmap}
         people={helpers}
-        onBook={(p) =>
-          setBooking({
-            kind: 'person',
-            mentorId: p.id,
-            name: p.name,
-            topic: p.reason || `Guidance towards ${roadmap.goal.targetRole ?? 'my career goal'}`,
-          })
-        }
+        onStepStatus={setStepStatus}
+        onBookPerson={bookPerson}
       />
+
+      <AlumniHelpSection people={helpers} onBook={bookPerson} />
 
       <MatchedServices
         services={services}

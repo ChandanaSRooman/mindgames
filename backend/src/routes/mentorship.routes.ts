@@ -4,6 +4,8 @@ import { query, withTransaction } from '../db/pool.js'
 import { requireAdmin, requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { pushNotification } from '../notify.js'
+import { getSubscription } from '../subscription.js'
+import { getProfileStats, refreshBadges, stampMutualConfirmation } from '../sessionStats.js'
 
 export const mentorshipRouter = Router()
 
@@ -179,11 +181,32 @@ mentorshipRouter.post(
   asyncHandler(async (req, res) => {
     const s = await sessionForMentor(req.params.id, req.user!.sub)
     if (s.status !== 'requested') throw new ApiError(400, `Session is already ${s.status}`)
+
+    // The subscription gate. Giving a session is what a mentor pays for, so
+    // it is checked here rather than at booking — a mentee is never blocked
+    // by someone else's billing, and a request already sent stays in the
+    // mentor's queue until they sort their plan out.
+    //
+    // 402 (not 403) so the client can tell "you need to pay" apart from
+    // "you're not allowed", and open the plans instead of an error toast.
+    const sub = await getSubscription(req.user!.sub)
+    if (!sub.canAcceptSessions) {
+      throw new ApiError(402, sub.blockedReason ?? 'Accepting a session needs an active plan.')
+    }
+
     const link = typeof req.body?.meetingLink === 'string' ? req.body.meetingLink.trim().slice(0, 500) : ''
-    await query(`UPDATE mentorship_sessions SET status = 'upcoming', meeting_link = $2 WHERE id = $1`, [
-      req.params.id,
-      link || null,
-    ])
+    // scheduled_at is optional and additive: the free-text date/time labels
+    // stay the source of truth for display, while this gives the profile
+    // stats something they can actually count.
+    const when = typeof req.body?.scheduledAt === 'string' ? new Date(req.body.scheduledAt) : null
+    const scheduledAt = when && !Number.isNaN(when.getTime()) ? when : null
+    await query(
+      `UPDATE mentorship_sessions
+          SET status = 'upcoming', meeting_link = $2, scheduled_at = COALESCE($3, scheduled_at),
+              accepted_at = now()
+        WHERE id = $1`,
+      [req.params.id, link || null, scheduledAt],
+    )
     const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
     void pushNotification(
       s.mentee_id,
@@ -225,23 +248,120 @@ mentorshipRouter.post(
   '/sessions/:id/complete',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const s = await sessionForMentor(req.params.id, req.user!.sub)
-    if (s.status !== 'upcoming') throw new ApiError(400, 'Only confirmed (upcoming) sessions can be completed')
-    await query(`UPDATE mentorship_sessions SET status = 'past' WHERE id = $1`, [req.params.id])
-    await query(
-      `UPDATE users SET sessions_conducted = COALESCE(sessions_conducted, 0) + 1 WHERE id = $1`,
-      [req.user!.sub],
-    )
+    // How long it actually ran, and what it covered. Optional so the
+    // existing one-click "Mark completed" still works unchanged, but when
+    // supplied this is what the public profile stats are built from.
+    const mins = Number(req.body?.durationMinutes)
+    const durationMinutes = Number.isInteger(mins) && mins > 0 && mins <= 600 ? mins : null
+    const domain = typeof req.body?.domain === 'string' ? req.body.domain.trim().slice(0, 60) : ''
+
+    // FOR UPDATE + one transaction: without it, a double-click or retried
+    // request can both read status = 'upcoming' before either UPDATE
+    // commits, both mark it completed, and both increment
+    // sessions_conducted — the same race group-session /complete guards
+    // against, applied here to the 1:1 session.
+    const s = await withTransaction(async (client) => {
+      const r = await client.query<{ mentee_id: string; topic: string; status: string }>(
+        `SELECT mentee_id, topic, status FROM mentorship_sessions WHERE id = $1 AND mentor_id = $2 FOR UPDATE`,
+        [req.params.id, req.user!.sub],
+      )
+      if (!r.rowCount) throw new ApiError(404, 'Session not found (or you are not its mentor)')
+      if (r.rows[0].status !== 'upcoming') throw new ApiError(400, 'Only confirmed (upcoming) sessions can be completed')
+
+      await client.query(
+        `UPDATE mentorship_sessions
+            SET status = 'past',
+                duration_minutes = COALESCE($2, duration_minutes),
+                domain = CASE WHEN $3 <> '' THEN $3 ELSE domain END,
+                ended_at = COALESCE(ended_at, now()),
+                started_at = COALESCE(started_at, scheduled_at),
+                -- The mentor saying it happened is one half of the record;
+                -- the mentee confirms separately before it counts anywhere.
+                mentor_confirmed = TRUE
+          WHERE id = $1`,
+        [req.params.id, durationMinutes, domain],
+      )
+      await client.query(
+        `UPDATE users SET sessions_conducted = COALESCE(sessions_conducted, 0) + 1 WHERE id = $1`,
+        [req.user!.sub],
+      )
+      return r.rows[0]
+    })
+    // The mentee hasn't confirmed yet at this point (that's the next step),
+    // so this is a no-op today — kept because mentor_confirmed is now TRUE
+    // and this is the one place that stamp is checked for.
+    await stampMutualConfirmation(req.params.id)
+
     const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
     void pushNotification(
       s.mentee_id,
       'mentorship',
-      `Your session "${s.topic}" with ${me.rows[0].name} is marked completed. Hope it helped! 🎓`,
+      `Your session "${s.topic}" with ${me.rows[0].name} is marked completed — confirm it to add it to your learning record. 🎓`,
       req.user!.sub,
       { type: 'session', id: req.params.id },
     )
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
     res.json(mapSession(full.rows[0]))
+  }),
+)
+
+// POST /api/mentorship/sessions/:id/confirm — the mentee's half of the
+// record. A session counts toward either profile only once both sides have
+// said it happened, which is what stops the public numbers being a claim
+// anyone can inflate on their own.
+mentorshipRouter.post(
+  '/sessions/:id/confirm',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const mins = Number(req.body?.durationMinutes)
+    const durationMinutes = Number.isInteger(mins) && mins > 0 && mins <= 600 ? mins : null
+
+    // Setting mentee_confirmed and stamping confirmed_at must commit
+    // together: if the process died between two separate statements here, a
+    // session could end up with both confirmed flags TRUE but confirmed_at
+    // never stamped — permanently missing from every stat and badge, since
+    // nothing else ever re-triggers this stamp.
+    const confirmed = await withTransaction(async (client) => {
+      const s = await client.query<{ status: string }>(
+        `SELECT status FROM mentorship_sessions WHERE id = $1 AND mentee_id = $2 FOR UPDATE`,
+        [req.params.id, req.user!.sub],
+      )
+      if (!s.rowCount) throw new ApiError(404, 'Session not found (or you are not its mentee)')
+      if (s.rows[0].status !== 'past') {
+        throw new ApiError(400, 'You can confirm a session once the mentor has marked it completed')
+      }
+      await client.query(
+        `UPDATE mentorship_sessions
+            SET mentee_confirmed = TRUE,
+                duration_minutes = COALESCE(duration_minutes, $2)
+          WHERE id = $1`,
+        [req.params.id, durationMinutes],
+      )
+      return stampMutualConfirmation(req.params.id, client)
+    })
+    if (confirmed) {
+      await refreshBadges(confirmed.mentorId)
+      await refreshBadges(confirmed.menteeId)
+    }
+
+    const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
+    res.json(mapSession(full.rows[0]))
+  }),
+)
+
+// GET /api/mentorship/stats/:userId — the public profile record: sessions,
+// hours, rating, streaks and badges, all from mutually-confirmed sessions.
+mentorshipRouter.get(
+  '/stats/:userId',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    // Event-attendance badges have nothing that "completes" them the way a
+    // session confirmation does — an RSVP just quietly becomes "attended"
+    // once the event's start time passes. Rechecking on every self-view
+    // catches that without a cron job; nothing changes for the common case
+    // of viewing someone else's profile.
+    if (req.params.userId === req.user!.sub) void refreshBadges(req.params.userId)
+    res.json(await getProfileStats(req.params.userId))
   }),
 )
 

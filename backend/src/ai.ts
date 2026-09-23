@@ -1009,6 +1009,114 @@ export async function generateCareerRoadmap(context: CareerRoadmapContext): Prom
   return validateRoadmapResult(JSON.parse(text))
 }
 
+// ---------------------------------------------------------------------------
+// Mentee briefing: what a mentor should read before meeting a student.
+//
+// Built from the same retrieval discipline as the roadmap — the backend
+// gathers the student's profile, plan and history, and the model turns it
+// into something a mentor can act on in the five minutes before a call.
+// It never invents facts about the student; everything it says has to come
+// from the packet it is given.
+// ---------------------------------------------------------------------------
+
+export interface MenteeBriefContext {
+  name: string
+  currentRole: string
+  company: string
+  experienceYears: number
+  skills: string[]
+  goal: { currentRole: string; targetRole: string | null }
+  timelineMonths: number
+  hoursPerWeek: number
+  stages: { title: string; status: string; durationWeeks: number | null }[]
+  askedFor: string[]
+  ownWords: string
+  sessionsTogether: number
+  pastTopics: string[]
+}
+
+export interface MenteeBrief {
+  summary: string
+  strengths: string[]
+  gaps: string[]
+  focusThisSession: string[]
+  questionsToAsk: string[]
+  watchOuts: string[]
+}
+
+const BRIEF_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    summary: { type: 'string', description: '2-3 sentences on where this student is and what they are trying to do.' },
+    strengths: { type: 'array', items: { type: 'string' }, description: 'What they already have going for them.' },
+    gaps: { type: 'array', items: { type: 'string' }, description: 'What stands between them and the target role.' },
+    focusThisSession: { type: 'array', items: { type: 'string' }, description: 'Concrete things worth covering in the next session.' },
+    questionsToAsk: { type: 'array', items: { type: 'string' }, description: 'Questions that would tell the mentor the most.' },
+    watchOuts: { type: 'array', items: { type: 'string' }, description: 'Risks in their plan — pace, scope, unrealistic timelines.' },
+  },
+  required: ['summary', 'strengths', 'gaps', 'focusThisSession', 'questionsToAsk', 'watchOuts'],
+}
+
+const BRIEF_SYSTEM =
+  'You brief a mentor before they meet a student in the Rooman alumni network. ' +
+  'Use ONLY the information given — never invent employers, skills, achievements or facts about the student. ' +
+  'Be specific and practical: a mentor should be able to open the session knowing what to ask and what to cover. ' +
+  'Keep each list to 2-4 short items. Where the plan looks unrealistic for the hours available, say so plainly ' +
+  'in watchOuts rather than being encouraging about it.'
+
+/** Generate the mentor's briefing. Throws like the other AI calls rather than
+ *  returning a placeholder — a made-up briefing about a real student is worse
+ *  than none. */
+export async function generateMenteeBrief(context: MenteeBriefContext): Promise<MenteeBrief> {
+  if (!careerAiEnabled) {
+    throw new Error('AI briefings are not configured on this server.')
+  }
+  const prompt = `Student context (JSON):\n${JSON.stringify(context, null, 2)}\n\nReturn the briefing JSON now.`
+
+  if (AI_PROVIDER === 'openrouter') {
+    const messages: ChatMessage[] = [
+      { role: 'system', content: BRIEF_SYSTEM },
+      { role: 'user', content: prompt },
+    ]
+    const parsed = await callOpenRouterJson(
+      OPENROUTER_CAREER_MODEL, messages, 2048, BRIEF_SCHEMA, false, careerApiKey,
+    )
+    return validateBrief(parsed)
+  }
+
+  if (!client) throw new Error('AI briefings are not configured on this server (ANT_KEY missing).')
+  const res = await client.messages.create({
+    model: 'claude-opus-4-8',
+    max_tokens: 2048,
+    system: BRIEF_SYSTEM,
+    output_config: { format: { type: 'json_schema', schema: BRIEF_SCHEMA } },
+    messages: [{ role: 'user', content: prompt }],
+  } as Anthropic.MessageCreateParamsNonStreaming)
+  if (res.stop_reason === 'refusal') throw new Error('The AI declined to write this briefing.')
+  if (res.stop_reason === 'max_tokens') throw new Error('The briefing came back truncated. Please try again.')
+  const text = res.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text
+  if (!text) throw new Error('The AI returned an empty briefing.')
+  return validateBrief(JSON.parse(text))
+}
+
+function validateBrief(parsed: unknown): MenteeBrief {
+  if (typeof parsed !== 'object' || parsed === null) throw new Error('The AI returned an unexpected briefing shape.')
+  const raw = parsed as Record<string, unknown>
+  const list = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string').slice(0, 6) : []
+  const summary = typeof raw.summary === 'string' ? raw.summary : ''
+  if (!summary) throw new Error('The AI returned a briefing with no summary.')
+  return {
+    summary,
+    strengths: list(raw.strengths),
+    gaps: list(raw.gaps),
+    focusThisSession: list(raw.focusThisSession),
+    questionsToAsk: list(raw.questionsToAsk),
+    watchOuts: list(raw.watchOuts),
+  }
+}
+
 const ROO_SYSTEM =
   'You are Roo, the friendly assistant inside Root Connect — the Rooman Technologies alumni network. ' +
   'Answer questions using ONLY the network data snapshot provided below. Never invent people, jobs, ' +

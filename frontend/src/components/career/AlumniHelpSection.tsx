@@ -1,10 +1,14 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight, GraduationCap, Sparkles, Users, Wrench } from 'lucide-react'
-import { Avatar, Button, Card } from '../ui'
+import { Avatar, AvatarStack, Button, Card } from '../ui'
+import { AlumniListModal } from './AlumniListModal'
 import type { AlumniHelper } from '../../types'
 
 /** "People from Rooman who can help you" — the alumni the roadmap itself
- *  surfaced, each carrying the stage that made them relevant. */
+ *  surfaced, each carrying the stage that made them relevant. The cards are
+ *  a preview; the avatar stack and "View all" open the full scrollable list,
+ *  where the action offered depends on whether you're already connected. */
 export function AlumniHelpSection({
   people,
   onBook,
@@ -12,6 +16,8 @@ export function AlumniHelpSection({
   people: AlumniHelper[]
   onBook: (person: AlumniHelper) => void
 }) {
+  const [listOpen, setListOpen] = useState(false)
+
   return (
     <Card id="career-alumni-help" className="p-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -26,13 +32,29 @@ export function AlumniHelpSection({
             </p>
           </div>
         </div>
-        <Link
-          to="/network/matches"
-          className="flex items-center gap-1 text-sm font-semibold text-[#ff4500] hover:underline"
-        >
-          View all <ArrowRight size={14} />
-        </Link>
+        <div className="flex items-center gap-3">
+          {people.length > 0 && (
+            <button
+              onClick={() => setListOpen(true)}
+              className="hidden items-center gap-2 rounded-full border border-[#edeff1] py-1 pr-3 pl-1 transition-colors hover:bg-gray-50 sm:flex"
+              title="See everyone who can help"
+            >
+              <AvatarStack people={people.map((p) => ({ id: p.id, name: p.name, photo: p.photo }))} size={24} max={4} />
+              <span className="text-xs font-semibold text-[#1c1c1c]">{people.length}</span>
+            </button>
+          )}
+          <button
+            onClick={() => setListOpen(true)}
+            className="flex items-center gap-1 text-sm font-semibold text-[#ff4500] hover:underline"
+          >
+            View all <ArrowRight size={14} />
+          </button>
+        </div>
       </div>
+
+      {listOpen && (
+        <AlumniListModal people={people} onClose={() => setListOpen(false)} onBook={onBook} />
+      )}
 
       {people.length === 0 ? (
         <p className="rounded-lg bg-gray-50 px-4 py-6 text-center text-sm text-[#878a8c]">

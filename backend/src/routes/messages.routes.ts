@@ -110,6 +110,24 @@ messagesRouter.post(
     if (!target.rowCount) throw new ApiError(404, 'User not found')
 
     const [lo, hi] = [me, other].sort()
+
+    // A DM can only be opened between connected members — this is the one
+    // choke point that matters, since every message flows through a
+    // conversation created here. A thread that already exists is left
+    // alone even if the two are no longer connected (nothing is taken away
+    // retroactively); only a brand-new conversation is gated.
+    const existing = await query('SELECT 1 FROM conversations WHERE user_lo = $1 AND user_hi = $2', [lo, hi])
+    if (!existing.rowCount) {
+      const connected = await query(
+        `SELECT 1 FROM connections
+          WHERE status = 'accepted'
+            AND ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))`,
+        [me, other],
+      )
+      if (!connected.rowCount) {
+        throw new ApiError(403, 'Send a connection request first — you can message once they accept.')
+      }
+    }
     const upsert = await query<{ id: string }>(
       `INSERT INTO conversations (user_lo, user_hi) VALUES ($1, $2)
        ON CONFLICT (user_lo, user_hi) DO UPDATE SET user_lo = EXCLUDED.user_lo

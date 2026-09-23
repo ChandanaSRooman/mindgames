@@ -2,12 +2,17 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ExternalLink, Video, Award, Calendar, GraduationCap, Star, X } from 'lucide-react'
 import { useApp } from '../store/AppStore'
+import { SubscriptionPlans } from '../components/subscription/SubscriptionPlans'
+import { MentorWorkspace } from '../components/mentor/MentorWorkspace'
+import { GroupSessionsTab } from '../components/mentor/GroupSessionsTab'
+import { CompleteSessionModal } from '../components/mentor/CompleteSessionModal'
 import { api } from '../lib/api'
 import { roleLine, sessionPriceLabel } from '../lib/format'
+import { isBookableMentor } from '../lib/profileCompleteness'
 import { Avatar, Button, Card } from '../components/ui'
 import { FREE_MENTORSHIP_SESSIONS, type MentorshipSession, type User } from '../types'
 
-type Tab = 'Find a Mentor' | 'My Sessions'
+type Tab = 'Find a Mentor' | 'My Sessions' | 'Mentor Space' | 'Group Sessions'
 
 export function Mentorship() {
   const {
@@ -21,10 +26,13 @@ export function Mentorship() {
     declineSession,
     completeSession,
     becomeMentor,
+    refreshSubscription,
     query,
   } = useApp()
   const [tab, setTab] = useState<Tab>('Find a Mentor')
   const [accepting, setAccepting] = useState<string | null>(null)
+  // Session the mentor was accepting when the paywall interrupted.
+  const [payFor, setPayFor] = useState<{ id: string; link?: string } | null>(null)
   const [rating, setRating] = useState<MentorshipSession | null>(null)
   const [ratings, setRatings] = useState<Map<string, { avg: number; count: number }>>(new Map())
 
@@ -36,15 +44,26 @@ export function Mentorship() {
   }, [])
   const [booking, setBooking] = useState<User | null>(null)
   const [showBecome, setShowBecome] = useState(false)
+  // Session being marked completed — captures how long it actually ran.
+  const [completing, setCompleting] = useState<MentorshipSession | null>(null)
 
   const q = query.trim().toLowerCase()
   const mentors = users
-    .filter((u) => u.isMentor && u.id !== currentUser.id && u.id !== 'rooman')
+    .filter((u) => isBookableMentor(u) && u.id !== currentUser.id && u.id !== 'rooman')
     .filter((u) => !q || `${u.name} ${u.domain} ${u.expertise.join(' ')}`.toLowerCase().includes(q))
 
-  const requested = sessions.filter((s) => s.status === 'requested')
-  const upcoming = sessions.filter((s) => s.status === 'upcoming')
-  const finished = sessions.filter((s) => s.status === 'past' || s.status === 'declined')
+  // Split by role rather than mixing both into one list: a mentor's incoming
+  // requests and their own bookings as a mentee were previously interleaved,
+  // so "Requests" could mean either "someone wants your time" or "you are
+  // waiting on someone". Mentor-side items now live in Mentor Space.
+  const asMentee = sessions.filter((s) => s.menteeId === currentUser.id)
+  const asMentor = sessions.filter((s) => s.mentorId === currentUser.id)
+  const requested = asMentee.filter((s) => s.status === 'requested')
+  const upcoming = asMentee.filter((s) => s.status === 'upcoming')
+  const finished = asMentee.filter((s) => s.status === 'past' || s.status === 'declined')
+  const mentorRequests = asMentor.filter((s) => s.status === 'requested')
+  const mentorUpcoming = asMentor.filter((s) => s.status === 'upcoming')
+  const mentorFinished = asMentor.filter((s) => s.status === 'past' || s.status === 'declined')
 
   // Mentee free-session allowance: the first N booked (non-declined) sessions
   // are free; beyond that, sessions are paid at the mentor's rate.
@@ -63,15 +82,21 @@ export function Mentorship() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-[#1c1c1c]">Mentorship</h1>
         {!currentUser.isMentor && (
-          <Button variant="outline" onClick={() => setShowBecome(true)}>
-            <Award size={16} /> Become a Mentor
-          </Button>
+          // Links to the real verification flow on the profile. It used to
+          // call updateProfile({isMentor:true}), which the backend rejects
+          // with 403 unless already verified — so every unverified member who
+          // pressed it got an error and no way forward.
+          <Link to="/profile">
+            <Button variant="outline">
+              <Award size={16} /> Become a Mentor
+            </Button>
+          </Link>
         )}
       </div>
 
       {/* Tabs */}
       <div className="flex gap-1 rounded-xl border border-[#edeff1] bg-white p-1 shadow-sm">
-        {(['Find a Mentor', 'My Sessions'] as Tab[]).map((t) => (
+        {(['Find a Mentor', 'My Sessions', 'Mentor Space', 'Group Sessions'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -140,7 +165,7 @@ export function Mentorship() {
             </Card>
           ))}
         </div>
-      ) : (
+      ) : tab === 'My Sessions' ? (
         <div className="flex flex-col gap-5">
           {/* Requests: mentor decides; mentee awaits */}
           {requested.length > 0 && (
@@ -263,14 +288,57 @@ export function Mentorship() {
             </div>
           </section>
         </div>
+      ) : tab === 'Mentor Space' ? (
+        <MentorWorkspace
+          requests={mentorRequests}
+          upcoming={mentorUpcoming}
+          finished={mentorFinished}
+          onAccept={(id) => setAccepting(id)}
+          onDecline={declineSession}
+          onComplete={(session) => setCompleting(session)}
+        />
+      ) : (
+        <GroupSessionsTab />
+      )}
+
+      {completing && (
+        <CompleteSessionModal
+          topic={completing.topic}
+          who={completing.menteeName}
+          onClose={() => setCompleting(null)}
+          onConfirm={(minutes, domain) => {
+            completeSession(completing.id, minutes, domain)
+            setCompleting(null)
+          }}
+        />
       )}
 
       {accepting && (
         <AcceptModal
           onClose={() => setAccepting(null)}
-          onAccept={(link) => {
-            acceptSession(accepting, link || undefined)
+          onAccept={async (link) => {
+            const id = accepting
             setAccepting(null)
+            // A mentor without an active plan cannot accept. Open the plans
+            // rather than showing an error they have no way to act on, and
+            // remember the session so accepting resumes once they've paid.
+            const result = await acceptSession(id, link || undefined)
+            if (result === 'payment-required') setPayFor({ id, link: link || undefined })
+          }}
+        />
+      )}
+
+      {payFor && (
+        <SubscriptionPlans
+          reason="You need a subscription to accept sessions"
+          onClose={() => setPayFor(null)}
+          onActivated={async () => {
+            // Pick up exactly where they left off: the session they were
+            // accepting when the paywall interrupted is accepted now.
+            const pending = payFor
+            setPayFor(null)
+            await refreshSubscription()
+            if (pending) await acceptSession(pending.id, pending.link)
           }}
         />
       )}
