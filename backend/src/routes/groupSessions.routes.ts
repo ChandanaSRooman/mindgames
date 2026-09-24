@@ -322,17 +322,29 @@ groupSessionsRouter.post(
     // Only 'completed' is refused: leaving a cancelled session is pointless
     // but harmless, and blocking that too would take away an ability for no
     // reason.
-    const g = await query<{ status: string }>(`SELECT status FROM group_sessions WHERE id = $1`, [req.params.id])
-    if (!g.rowCount) throw new ApiError(404, 'Group session not found')
-    if (g.rows[0].status === 'completed') {
-      throw new ApiError(400, 'This session has already happened — it stays on your record.')
-    }
+    // Read the status and delete in ONE transaction with the session row
+    // locked, the same pattern /join and /complete already use. Checking in a
+    // separate statement leaves a gap: a leave arriving just as the host marks
+    // the session completed passes the check against the old status and then
+    // deletes attendance from a now-completed session — exactly the record
+    // loss this guard exists to prevent. FOR UPDATE makes the two requests
+    // queue instead of interleaving.
+    await withTransaction(async (client) => {
+      const g = await client.query<{ status: string }>(
+        `SELECT status FROM group_sessions WHERE id = $1 FOR UPDATE`,
+        [req.params.id],
+      )
+      if (!g.rowCount) throw new ApiError(404, 'Group session not found')
+      if (g.rows[0].status === 'completed') {
+        throw new ApiError(400, 'This session has already happened — it stays on your record.')
+      }
 
-    const del = await query(
-      `DELETE FROM group_session_attendees WHERE session_id = $1 AND mentee_id = $2`,
-      [req.params.id, req.user!.sub],
-    )
-    if (!del.rowCount) throw new ApiError(404, "You haven't joined this session")
+      const del = await client.query(
+        `DELETE FROM group_session_attendees WHERE session_id = $1 AND mentee_id = $2`,
+        [req.params.id, req.user!.sub],
+      )
+      if (!del.rowCount) throw new ApiError(404, "You haven't joined this session")
+    })
     const full = await query<GroupSessionRow>(`${LIST_SELECT('$2')} WHERE g.id = $1`, [req.params.id, req.user!.sub])
     res.json(full.rowCount ? mapGroupSession(full.rows[0]) : { id: req.params.id })
   }),

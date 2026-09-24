@@ -57,7 +57,11 @@ export function SubscriptionPanel({ onClose }: { onClose: () => void }) {
     )
   }
 
-  const active = sub?.status === 'active'
+  // planActive, not status === 'active': a member who cancelled but is still
+  // inside the period they paid for does still have the plan, and the panel
+  // was contradicting itself — header "No active plan" directly above a Facts
+  // row reading "Accept sessions: Allowed".
+  const active = sub?.planActive
   const expires = sub?.expiresAt ? new Date(sub.expiresAt) : null
   const daysLeft = expires ? Math.ceil((expires.getTime() - Date.now()) / 86_400_000) : null
 

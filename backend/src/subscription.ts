@@ -140,6 +140,15 @@ export interface SubscriptionState {
   expiresAt: string | null
   /** True when the mentor may accept a session right now. */
   canAcceptSessions: boolean
+  /** True when the member currently HAS the plan they paid for — including a
+   *  cancelled one that has not run out yet.
+   *
+   *  Deliberately not the same as canAcceptSessions: a mentor who has used up
+   *  the month's cap still has a plan, so the UI must keep showing "Pro plan"
+   *  rather than "No active plan". Conversely `status === 'active'` alone is
+   *  not enough either, since a cancelled-but-unexpired plan still works. The
+   *  UI reads this instead of re-deriving the rule and drifting from it. */
+  planActive: boolean
   /** Sessions accepted this calendar month, against the plan's cap. */
   sessionsThisMonth: number
   sessionsPerMonth: number | null
@@ -177,7 +186,7 @@ export async function getSubscription(userId: string): Promise<SubscriptionState
   if (!row) {
     return {
       plan: 'free', status: 'inactive', source: 'none', expiresAt: null,
-      canAcceptSessions: false, sessionsThisMonth, sessionsPerMonth: 0,
+      canAcceptSessions: false, planActive: false, sessionsThisMonth, sessionsPerMonth: 0,
       blockedReason: 'You need a subscription to accept sessions.',
     }
   }
@@ -215,6 +224,9 @@ export async function getSubscription(userId: string): Promise<SubscriptionState
     source: row.source,
     expiresAt: expiresAt ? expiresAt.toISOString() : null,
     canAcceptSessions: canAccept,
+    // Note this is NOT canAccept: a mentor who has used up the month's cap
+    // still holds the plan, and the UI must keep saying so.
+    planActive: status === 'active' || (status === 'cancelled' && withinPaidPeriod),
     sessionsThisMonth,
     sessionsPerMonth: cap,
     blockedReason,
@@ -230,8 +242,7 @@ export async function getSubscription(userId: string): Promise<SubscriptionState
  * cancelled-but-still-paid mentor cannot end up able to accept a 1:1 session
  * while being refused a group session on the same plan. */
 function hasPaidAccess(s: SubscriptionState): boolean {
-  if (s.status === 'active') return true
-  return s.status === 'cancelled' && s.expiresAt !== null && new Date(s.expiresAt).getTime() >= Date.now()
+  return s.planActive
 }
 
 /** Whether this member may charge for an event or webinar they host.
@@ -299,11 +310,17 @@ export async function activateSubscription(opts: {
         userId: opts.userId,
         kind: 'activated',
         plan: opts.plan,
-        // The whole sum for the period, not one month's price. The matching
-        // 'requested' event recorded price x months, so billing one month
-        // here made the audit trail read "11988 requested, 999 activated"
-        // for the same twelve-month purchase.
-        amount: (PLAN_DETAILS[opts.plan]?.price ?? 0) * months,
+        // Only a gateway activation involves money, and then it is the whole
+        // sum for the period — the matching 'requested' event recorded
+        // price x months, so recording one month here made the audit trail
+        // read "11988 requested, 999 activated" for one twelve-month purchase.
+        //
+        // An admin comp takes no payment at all, so it records no amount
+        // rather than a list price nobody was charged; a 24-month Institute
+        // grant would otherwise post 59,976 to the audit timeline and make
+        // comped accounts look like revenue. undefined is bound as NULL by
+        // recordEvent and renders as absent in GET /admin/events/:userId.
+        amount: opts.source === 'gateway' ? (PLAN_DETAILS[opts.plan]?.price ?? 0) * months : undefined,
         provider: opts.provider,
         providerRef: opts.providerRef,
         note: opts.note ?? '',

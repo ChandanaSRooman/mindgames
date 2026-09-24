@@ -200,7 +200,20 @@ subscriptionRouter.get(
           source: r.source ?? 'none',
           expiresAt: expires ? expires.toISOString() : null,
           sessionsThisMonth: r.sessions_this_month,
-          subscribed: r.status === 'active' && !expired,
+          // Mirrors getSubscription's rule: a cancelled plan still counts
+          // while it has not run out, because cancelling stops the renewal
+          // without taking back days already paid for. Deriving this from
+          // status alone showed a self-cancelled mentor as "not subscribed"
+          // in admin while they were still accepting sessions perfectly well.
+          // 'active' keeps its original meaning, including an open-ended
+          // admin grant with no expiry at all (expires === null, never
+          // expired). 'cancelled' additionally requires a real future end
+          // date, matching getSubscription, which treats a cancelled plan
+          // with no expiry as simply over.
+          subscribed:
+            r.status === 'active'
+              ? !expired
+              : r.status === 'cancelled' && expires !== null && !expired,
         }
       }),
     )
