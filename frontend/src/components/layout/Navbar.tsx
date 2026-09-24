@@ -29,7 +29,10 @@ export function Navbar() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [showPlans, setShowPlans] = useState(false)
   const { subscription } = useApp()
-  const planActive = subscription?.status === 'active'
+  // Reads the server's own answer rather than re-deriving it: a cancelled
+  // plan that has not run out yet still counts, so the crown stayed grey for
+  // a mentor who could in fact still accept sessions.
+  const planActive = subscription?.planActive
   const planLabel = subscription ? subscription.plan[0].toUpperCase() + subscription.plan.slice(1) : ''
   const notifRef = useRef<HTMLDivElement>(null)
   const profileRef = useRef<HTMLDivElement>(null)

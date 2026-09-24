@@ -611,9 +611,13 @@ usersRouter.get(
       { id: 'connector', emoji: '🤝', label: 'Connector', description: 'Made 5 or more connections', earned: u.connections_count >= 5 },
       { id: 'super-connector', emoji: '🌐', label: 'Super Connector', description: 'Made 20 or more connections', earned: u.connections_count >= 20 },
       { id: 'mentor', emoji: '🎓', label: 'Mentor', description: 'Gives back as a mentor', earned: u.is_mentor || sessions > 0 },
-      // Threshold matches the mentor workspace's "10 Sessions" badge
-      // (sessionStats.BADGES: ten_sessions_given) so the two never disagree.
-      { id: 'super-mentor', emoji: '🏆', label: 'Super Mentor', description: 'Completed 10+ mentorship sessions', earned: sessions >= 10 },
+      // Stays at 5, the threshold this badge has always used. It is a
+      // different badge from the mentor workspace's "10 Sessions"
+      // (sessionStats.BADGES: ten_sessions_given) — different name, different
+      // surface — so they do not need the same number, and raising this one
+      // to match would take the badge away from every mentor sitting on 5-9
+      // sessions who had already earned it.
+      { id: 'super-mentor', emoji: '🏆', label: 'Super Mentor', description: 'Completed 5+ mentorship sessions', earned: sessions >= 5 },
       { id: 'job-creator', emoji: '💼', label: 'Job Creator', description: 'Posted an opening for fellow alumni', earned: c.jobs >= 1 },
       { id: 'community-builder', emoji: '🏗️', label: 'Community Builder', description: 'Started a community', earned: c.communities >= 1 },
       { id: 'founder', emoji: '🚀', label: 'Founder', description: 'Applied to StartupVarsity with an idea', earned: c.startups >= 1 },

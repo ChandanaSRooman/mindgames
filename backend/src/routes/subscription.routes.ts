@@ -168,9 +168,15 @@ subscriptionRouter.get(
     const rows = await query<AdminRow>(
       `SELECT u.id, u.name, u.email, u.photo, u.designation, u.company, u.is_mentor,
               s.plan, s.status, s.source, s.expires_at,
+              -- COALESCE(accepted_at, created_at), matching getSubscription
+              -- exactly. Counting by created_at here meant this column and
+              -- the cap the mentor actually hits were two different numbers
+              -- under one label: a request sent last month but accepted this
+              -- month counts against this month's cap, and admin could not
+              -- see why someone was blocked at "3 of 10".
               (SELECT count(*)::int FROM mentorship_sessions ms
                 WHERE ms.mentor_id = u.id AND ms.status IN ('upcoming','past')
-                  AND ms.created_at >= date_trunc('month', now())) AS sessions_this_month
+                  AND COALESCE(ms.accepted_at, ms.created_at) >= date_trunc('month', now())) AS sessions_this_month
          FROM users u
          LEFT JOIN mentor_subscriptions s ON s.user_id = u.id
         WHERE u.is_mentor
@@ -194,7 +200,20 @@ subscriptionRouter.get(
           source: r.source ?? 'none',
           expiresAt: expires ? expires.toISOString() : null,
           sessionsThisMonth: r.sessions_this_month,
-          subscribed: r.status === 'active' && !expired,
+          // Mirrors getSubscription's rule: a cancelled plan still counts
+          // while it has not run out, because cancelling stops the renewal
+          // without taking back days already paid for. Deriving this from
+          // status alone showed a self-cancelled mentor as "not subscribed"
+          // in admin while they were still accepting sessions perfectly well.
+          // 'active' keeps its original meaning, including an open-ended
+          // admin grant with no expiry at all (expires === null, never
+          // expired). 'cancelled' additionally requires a real future end
+          // date, matching getSubscription, which treats a cancelled plan
+          // with no expiry as simply over.
+          subscribed:
+            r.status === 'active'
+              ? !expired
+              : r.status === 'cancelled' && expires !== null && !expired,
         }
       }),
     )
@@ -246,7 +265,10 @@ subscriptionRouter.post(
   asyncHandler(async (req, res) => {
     const userId = typeof req.body?.userId === 'string' ? req.body.userId : ''
     if (!userId) throw new ApiError(400, 'userId is required')
-    res.json(await cancelSubscription(userId, 'Revoked by admin'))
+    // immediate: an admin revoke ends the paid period too, not just the
+    // renewal. A member cancelling their own plan keeps the days they paid
+    // for; a revoke is meant to take access away now, as this route says.
+    res.json(await cancelSubscription(userId, 'Revoked by admin', { immediate: true }))
   }),
 )
 

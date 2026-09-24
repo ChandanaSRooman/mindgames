@@ -140,6 +140,15 @@ export interface SubscriptionState {
   expiresAt: string | null
   /** True when the mentor may accept a session right now. */
   canAcceptSessions: boolean
+  /** True when the member currently HAS the plan they paid for — including a
+   *  cancelled one that has not run out yet.
+   *
+   *  Deliberately not the same as canAcceptSessions: a mentor who has used up
+   *  the month's cap still has a plan, so the UI must keep showing "Pro plan"
+   *  rather than "No active plan". Conversely `status === 'active'` alone is
+   *  not enough either, since a cancelled-but-unexpired plan still works. The
+   *  UI reads this instead of re-deriving the rule and drifting from it. */
+  planActive: boolean
   /** Sessions accepted this calendar month, against the plan's cap. */
   sessionsThisMonth: number
   sessionsPerMonth: number | null
@@ -177,7 +186,7 @@ export async function getSubscription(userId: string): Promise<SubscriptionState
   if (!row) {
     return {
       plan: 'free', status: 'inactive', source: 'none', expiresAt: null,
-      canAcceptSessions: false, sessionsThisMonth, sessionsPerMonth: 0,
+      canAcceptSessions: false, planActive: false, sessionsThisMonth, sessionsPerMonth: 0,
       blockedReason: 'You need a subscription to accept sessions.',
     }
   }
@@ -188,12 +197,23 @@ export async function getSubscription(userId: string): Promise<SubscriptionState
   const details = PLAN_DETAILS[row.plan] ?? PLAN_DETAILS.free
   const cap = details.sessionsPerMonth
 
-  let canAccept = status === 'active'
+  // Cancelling stops the renewal, it does not claw back days already paid
+  // for — which is what POST /subscription/cancel tells the member happens.
+  // Without this a mentor who cancelled on day 2 of a paid month lost the
+  // remaining 28 days instantly, and `status` alone could not express
+  // "cancelled but still inside the paid period".
+  const withinPaidPeriod = expiresAt !== null && expiresAt.getTime() >= Date.now()
+  let canAccept = status === 'active' || (status === 'cancelled' && withinPaidPeriod)
+
   let blockedReason: string | undefined
-  if (status === 'expired') blockedReason = 'Your plan expired. Renew to keep accepting sessions.'
-  else if (status === 'cancelled') blockedReason = 'Your plan was cancelled. Pick one to start again.'
-  else if (status !== 'active') blockedReason = 'You need a subscription to accept sessions.'
-  else if (cap !== null && sessionsThisMonth >= cap) {
+  if (!canAccept) {
+    if (status === 'expired') blockedReason = 'Your plan expired. Renew to keep accepting sessions.'
+    else if (status === 'cancelled') blockedReason = 'Your plan was cancelled. Pick one to start again.'
+    else blockedReason = 'You need a subscription to accept sessions.'
+  } else if (cap !== null && sessionsThisMonth >= cap) {
+    // Checked after the grace above, not inside the old `status === 'active'`
+    // branch, so a cancelled-but-still-paid mentor is held to the same
+    // monthly cap as anyone else rather than slipping past it.
     canAccept = false
     blockedReason = `You've used all ${cap} sessions on the ${details.name} plan this month. Upgrade for more.`
   }
@@ -204,10 +224,25 @@ export async function getSubscription(userId: string): Promise<SubscriptionState
     source: row.source,
     expiresAt: expiresAt ? expiresAt.toISOString() : null,
     canAcceptSessions: canAccept,
+    // Note this is NOT canAccept: a mentor who has used up the month's cap
+    // still holds the plan, and the UI must keep saying so.
+    planActive: status === 'active' || (status === 'cancelled' && withinPaidPeriod),
     sessionsThisMonth,
     sessionsPerMonth: cap,
     blockedReason,
   }
+}
+
+/** Does this member currently have the plan they paid for?
+ *
+ * 'active' is the ordinary case. 'cancelled' still counts while expires_at is
+ * in the future, for the same reason accepting a session does (see
+ * getSubscription): cancelling stops the renewal, it does not take back days
+ * already paid for. Both capability gates below go through this so a
+ * cancelled-but-still-paid mentor cannot end up able to accept a 1:1 session
+ * while being refused a group session on the same plan. */
+function hasPaidAccess(s: SubscriptionState): boolean {
+  return s.planActive
 }
 
 /** Whether this member may charge for an event or webinar they host.
@@ -219,7 +254,7 @@ export async function getSubscription(userId: string): Promise<SubscriptionState
  * ability students already have. */
 export async function canHostPaidEvents(userId: string): Promise<{ allowed: boolean; reason?: string }> {
   const s = await getSubscription(userId)
-  if (s.status !== 'active') {
+  if (!hasPaidAccess(s)) {
     return { allowed: false, reason: 'Charging for an event needs an active plan. Free events are open to everyone.' }
   }
   if (!PLAN_DETAILS[s.plan]?.paidEvents) {
@@ -233,7 +268,7 @@ export async function canHostPaidEvents(userId: string): Promise<{ allowed: bool
  *  plan itself has to include the capability. */
 export async function canHostGroupSessions(userId: string): Promise<{ allowed: boolean; reason?: string }> {
   const s = await getSubscription(userId)
-  if (s.status !== 'active') {
+  if (!hasPaidAccess(s)) {
     return { allowed: false, reason: 'You need a subscription to host group sessions.' }
   }
   if (!PLAN_DETAILS[s.plan]?.groupSessions) {
@@ -275,7 +310,17 @@ export async function activateSubscription(opts: {
         userId: opts.userId,
         kind: 'activated',
         plan: opts.plan,
-        amount: PLAN_DETAILS[opts.plan]?.price ?? 0,
+        // Only a gateway activation involves money, and then it is the whole
+        // sum for the period — the matching 'requested' event recorded
+        // price x months, so recording one month here made the audit trail
+        // read "11988 requested, 999 activated" for one twelve-month purchase.
+        //
+        // An admin comp takes no payment at all, so it records no amount
+        // rather than a list price nobody was charged; a 24-month Institute
+        // grant would otherwise post 59,976 to the audit timeline and make
+        // comped accounts look like revenue. undefined is bound as NULL by
+        // recordEvent and renders as absent in GET /admin/events/:userId.
+        amount: opts.source === 'gateway' ? (PLAN_DETAILS[opts.plan]?.price ?? 0) * months : undefined,
         provider: opts.provider,
         providerRef: opts.providerRef,
         note: opts.note ?? '',
@@ -308,12 +353,32 @@ export async function activateSubscription(opts: {
  *  has no subscription row or is already cancelled, so an admin revoking a
  *  never-subscribed user doesn't leave a misleading "cancelled" event for a
  *  subscription that never existed. */
-export async function cancelSubscription(userId: string, note = ''): Promise<SubscriptionState> {
+export async function cancelSubscription(
+  userId: string,
+  note = '',
+  opts: { immediate?: boolean } = {},
+): Promise<SubscriptionState> {
+  const immediate = opts.immediate ?? false
   await withTransaction(async (client) => {
     const upd = await client.query(
-      `UPDATE mentor_subscriptions SET status = 'cancelled', updated_at = now()
-        WHERE user_id = $1 AND status <> 'cancelled'`,
-      [userId],
+      // `immediate` also ends the paid period, instead of only stopping the
+      // renewal. A member cancelling keeps the days they paid for, but an
+      // admin revoke is a moderation action whose route promises to "end a
+      // plan now" — without this it would leave the mentor fully able to
+      // accept sessions and host paid events until the original expiry, which
+      // for a comped 24-month grant is two years of access the admin believed
+      // they had just removed.
+      //
+      // The WHERE lets an immediate revoke also truncate a row that is
+      // already 'cancelled' but still inside its paid window — otherwise a
+      // member who cancelled first would be permanently un-revokable.
+      `UPDATE mentor_subscriptions
+          SET status = 'cancelled',
+              updated_at = now(),
+              expires_at = CASE WHEN $2 THEN now() ELSE expires_at END
+        WHERE user_id = $1
+          AND (status <> 'cancelled' OR ($2 AND expires_at > now()))`,
+      [userId, immediate],
     )
     if (upd.rowCount) await recordEvent({ userId, kind: 'cancelled', plan: 'free', note }, client)
   })

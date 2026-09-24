@@ -133,7 +133,9 @@ export function SubscriptionPlans({
                   key={p.id}
                   plan={p}
                   months={months}
-                  isCurrent={current?.plan === p.id && current?.status === 'active'}
+                  // planActive, so a mentor who cancelled but still has paid
+                  // days sees the plan they are actually on marked as current.
+                  isCurrent={current?.plan === p.id && (current?.planActive ?? false)}
                   busy={busy === p.id}
                   disabled={busy !== null}
                   onChoose={() => choose(p.id)}

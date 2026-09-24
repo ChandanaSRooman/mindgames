@@ -133,7 +133,10 @@ interface AppContextValue {
   // mentorship + startups
   sessions: MentorshipSession[]
   bookSession: (mentorId: string, topic: string, date: string, time: string, serviceId?: string) => void
-  acceptSession: (id: string, meetingLink?: string) => Promise<'ok' | 'payment-required'>
+  /** 'payment-required' means the mentor needs a plan and the caller should
+   *  open the pricing page; 'error' means it genuinely failed and has already
+   *  been reported to the member, so the caller must not treat it as done. */
+  acceptSession: (id: string, meetingLink?: string) => Promise<'ok' | 'payment-required' | 'error'>
   rateSession: (id: string, rating: number, review?: string) => void
   declineSession: (id: string) => void
   completeSession: (id: string, durationMinutes?: number, domain?: string) => void
@@ -857,7 +860,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // mentor needs a plan, and the caller opens the pricing page instead of
   // showing a toast the member cannot act on.
   const acceptSession = useCallback(
-    async (id: string, meetingLink?: string): Promise<'ok' | 'payment-required'> => {
+    async (id: string, meetingLink?: string): Promise<'ok' | 'payment-required' | 'error'> => {
       try {
         const updated = await api.acceptSession(id, meetingLink)
         setSessions((list) => list.map((s) => (s.id === updated.id ? updated : s)))
@@ -866,7 +869,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       } catch (err) {
         if (isPaymentRequired(err)) return 'payment-required'
         notify(err instanceof Error ? err.message : 'Could not update the session.', 'error')
-        return 'ok'
+        // 'error', not 'ok'. The union had no way to say "this failed", so a
+        // real failure was reported to the caller as success — the member saw
+        // an error toast while the UI carried on as though the session had
+        // been accepted.
+        return 'error'
       }
     },
     [notify],
