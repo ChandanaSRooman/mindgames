@@ -38,7 +38,19 @@ interface GroupSessionRow {
 const LIST_SELECT = (viewerParam: string) => `
   SELECT g.id, g.mentor_id, u.name AS mentor_name, u.photo AS mentor_photo,
          g.topic, g.description, g.domain, g.scheduled_at, g.duration_minutes,
-         g.capacity, g.meeting_link, g.pricing_mode, g.price_per_seat, g.status, g.visibility, g.mentor_confirmed,
+         g.capacity, g.pricing_mode, g.price_per_seat, g.status, g.visibility, g.mentor_confirmed,
+         -- Only the host and people who actually hold a seat get the joining
+         -- link. It used to be selected flat, so GET / handed the link for
+         -- every public session to any signed-in member — anyone could walk
+         -- straight into the call without joining, which made capacity and
+         -- the roster advisory rather than real. Everyone else reads NULL,
+         -- which mapGroupSession turns into an absent field.
+         CASE
+           WHEN g.mentor_id = ${viewerParam}
+             OR EXISTS (SELECT 1 FROM group_session_attendees a
+                         WHERE a.session_id = g.id AND a.mentee_id = ${viewerParam})
+           THEN g.meeting_link
+         END AS meeting_link,
          (SELECT count(*)::int FROM group_session_attendees a WHERE a.session_id = g.id) AS attendee_count,
          EXISTS (SELECT 1 FROM group_session_attendees a WHERE a.session_id = g.id AND a.mentee_id = ${viewerParam}) AS joined_by_me,
          EXISTS (SELECT 1 FROM group_session_invites gi WHERE gi.session_id = g.id AND gi.user_id = ${viewerParam}) AS invited_by_me
@@ -303,6 +315,19 @@ groupSessionsRouter.post(
   '/:id/leave',
   requireAuth,
   asyncHandler(async (req, res) => {
+    // A completed session is a record, not a booking. Leaving one deleted the
+    // attendee row outright, which took the mentee's own confirmation with it
+    // and silently decremented the mentor's confirmed-attendee count — an
+    // attendee could quietly rewrite someone else's history after the fact.
+    // Only 'completed' is refused: leaving a cancelled session is pointless
+    // but harmless, and blocking that too would take away an ability for no
+    // reason.
+    const g = await query<{ status: string }>(`SELECT status FROM group_sessions WHERE id = $1`, [req.params.id])
+    if (!g.rowCount) throw new ApiError(404, 'Group session not found')
+    if (g.rows[0].status === 'completed') {
+      throw new ApiError(400, 'This session has already happened — it stays on your record.')
+    }
+
     const del = await query(
       `DELETE FROM group_session_attendees WHERE session_id = $1 AND mentee_id = $2`,
       [req.params.id, req.user!.sub],

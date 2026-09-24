@@ -1216,3 +1216,61 @@ CREATE TABLE IF NOT EXISTS group_session_attendees (
 CREATE INDEX IF NOT EXISTS idx_group_attendees_mentee ON group_session_attendees (mentee_id);
 
 ALTER TABLE group_sessions ADD COLUMN IF NOT EXISTS mentor_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- ---------------------------------------------------------------------------
+-- Backfill: mentorship that happened before mutual confirmation existed.
+--
+-- confirmed_at, mentor_confirmed and mentee_confirmed are added above by this
+-- same file, so every session completed before they existed reads as
+-- unconfirmed — and therefore counts toward nobody's stats or badges.
+--
+-- That is not a "until everyone re-confirms" problem, it is permanent:
+-- mentor_confirmed is only ever set by POST /sessions/:id/complete, which
+-- refuses anything that is not still 'upcoming'. A session already sitting at
+-- 'past' has no route that can ever set it, so without this backfill every
+-- pre-existing completed session is excluded from the record forever and
+-- mentors silently lose badges they had already earned.
+--
+-- Only sessions that were already 'past' with BOTH flags still false are
+-- touched. A session completed through the new flow has mentor_confirmed
+-- TRUE and is legitimately waiting on its mentee, so it is left alone rather
+-- than having the mentee's half forged for them.
+--
+-- confirmed_at is stamped with when the session actually happened, not now():
+-- stamping now() would drop the entire history into the deploy week and hand
+-- everybody a fake one-week streak while erasing the real timeline.
+--
+-- duration_minutes is deliberately left NULL. It was never captured back
+-- then, so these sessions count toward "sessions mentored" but contribute no
+-- hours — an honest gap, rather than inventing a duration nobody recorded.
+--
+-- Deliberately NOT scoped to a cutoff date. The only statement that MOVES a
+-- session to status = 'past' is POST /sessions/:id/complete, and it sets
+-- mentor_confirmed = TRUE in the very same UPDATE. So for anything that went
+-- through the app, "past with neither side confirmed" already means
+-- "completed before this feature existed" — the flags identify legacy rows
+-- exactly, with no date to guess at.
+--
+-- One other source inserts 'past' rows directly rather than completing them:
+-- db/seed-data.ts (e.g. session 's3'). Those are demo fixtures representing
+-- sessions that already happened, so having this mark them confirmed is the
+-- intended outcome — it is what makes the seeded profiles show the stats and
+-- badges the demo is meant to show. Worth knowing before adding any future
+-- code path that writes 'past' directly: it would be treated as legacy and
+-- confirmed on the next deploy, so such a path should set the flags itself.
+--
+-- A hardcoded cutoff would have to be the production DEPLOY date, not the
+-- merge date, and picking it wrong silently strands real sessions: every
+-- session completed between the guessed date and the actual deploy would stay
+-- uncounted forever, which is the exact bug this backfill exists to fix.
+--
+-- Idempotent: after this runs, confirmed_at IS NOT NULL excludes the same
+-- rows on every later deploy, so it can never double-apply.
+UPDATE mentorship_sessions
+   SET mentor_confirmed = TRUE,
+       mentee_confirmed = TRUE,
+       confirmed_at     = COALESCE(scheduled_at, created_at)
+ WHERE status = 'past'
+   AND confirmed_at IS NULL
+   AND NOT mentor_confirmed
+   AND NOT mentee_confirmed;
