@@ -69,3 +69,17 @@ export function sessionPriceLabel(s: { isPaid?: boolean; price?: number }): stri
   if (!s.isPaid) return null
   return s.price ? `Paid ₹${s.price.toLocaleString('en-IN')}` : 'Paid (price on request)'
 }
+
+// Tailwind classes for a mentorship badge pill, by tier. Shared between
+// MentorWorkspace and MentorshipRecord so the two never drift — silver and
+// gold are plain fills; crimson (the badges that take real volume or can't
+// be earned by volume at all, like a rating others give you) gets a
+// diagonal dark-red-to-black gradient via arbitrary-value classes rather
+// than a flat fill, so it reads as red-and-black, not just another pastel.
+export function badgeTierClasses(tier: 'silver' | 'gold' | 'crimson'): string {
+  if (tier === 'silver') return 'border-slate-300 bg-slate-50 text-slate-600'
+  if (tier === 'crimson') {
+    return 'border-red-700 bg-[linear-gradient(135deg,#7f1d1d_0%,#200606_60%,#000_100%)] text-red-200'
+  }
+  return 'border-amber-200 bg-amber-50 text-amber-800'
+}

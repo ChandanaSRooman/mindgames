@@ -133,6 +133,19 @@ interface AppContextValue {
   // mentorship + startups
   sessions: MentorshipSession[]
   bookSession: (mentorId: string, topic: string, date: string, time: string, serviceId?: string) => void
+  /** Mentor offers a connection a slot; they accept or decline it. */
+  offerSession: (
+    menteeId: string, topic: string, date: string, time: string,
+    meetingLink?: string, scheduledAt?: string,
+  ) => Promise<'ok' | 'payment-required'>
+  acceptSessionOffer: (id: string) => void
+  declineSessionOffer: (id: string) => void
+  /** Mentee confirms a completed session actually happened. */
+  confirmSession: (id: string) => void
+  /** Either side calls off a requested or upcoming session. */
+  cancelSession: (id: string) => void
+  /** Mentor adds or changes the join link; '' clears it. */
+  setSessionMeetingLink: (id: string, meetingLink: string) => void
   acceptSession: (id: string, meetingLink?: string) => Promise<'ok' | 'payment-required'>
   rateSession: (id: string, rating: number, review?: string) => void
   declineSession: (id: string) => void
@@ -871,6 +884,54 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [notify],
   )
+  // A mentor offering a slot is gated by the same plan check as accepting a
+  // request, so this reports 'payment-required' the same way acceptSession
+  // does rather than showing a toast the mentor can't act on.
+  const offerSession = useCallback(
+    async (
+      menteeId: string, topic: string, date: string, time: string,
+      meetingLink?: string, scheduledAt?: string,
+    ): Promise<'ok' | 'payment-required'> => {
+      try {
+        const session = await api.offerSession(menteeId, topic, date, time, meetingLink, scheduledAt)
+        setSessions((s) => [session, ...s])
+        notify('Session offered — waiting for them to accept.')
+        return 'ok'
+      } catch (err) {
+        if (isPaymentRequired(err)) return 'payment-required'
+        notify(err instanceof Error ? err.message : 'Could not offer the session.', 'error')
+        return 'ok'
+      }
+    },
+    [notify],
+  )
+  const acceptSessionOffer = useCallback(
+    (id: string) => sessionAction(api.acceptSessionOffer(id), 'Session confirmed — see My Sessions.'),
+    [sessionAction],
+  )
+  const declineSessionOffer = useCallback(
+    (id: string) => sessionAction(api.declineSessionOffer(id), 'Offer declined.'),
+    [sessionAction],
+  )
+  // The mentee's half of mutual confirmation. Until both sides confirm, a
+  // session counts toward nobody's stats or badges.
+  const confirmSession = useCallback(
+    (id: string) =>
+      sessionAction(api.confirmSession(id), 'Confirmed — it now counts towards both your records. 🎓'),
+    [sessionAction],
+  )
+  const cancelSession = useCallback(
+    (id: string) => sessionAction(api.cancelSession(id), 'Session cancelled.'),
+    [sessionAction],
+  )
+  const setSessionMeetingLink = useCallback(
+    (id: string, meetingLink: string) =>
+      sessionAction(
+        api.setSessionMeetingLink(id, meetingLink),
+        meetingLink ? 'Meeting link saved — your mentee has been notified.' : 'Meeting link removed.',
+      ),
+    [sessionAction],
+  )
   const rateSession = useCallback(
     (id: string, rating: number, review?: string) =>
       sessionAction(api.rateSession(id, rating, review), 'Thanks — your rating helps other alumni. ⭐'),
@@ -1230,6 +1291,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     createCommunity,
     sessions,
     bookSession,
+    offerSession,
+    acceptSessionOffer,
+    declineSessionOffer,
+    confirmSession,
+    cancelSession,
+    setSessionMeetingLink,
     acceptSession,
     rateSession,
     declineSession,

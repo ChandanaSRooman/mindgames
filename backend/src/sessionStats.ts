@@ -15,38 +15,48 @@ import { pushNotification } from './notify.js'
  * is what ranks them in Career Guidance and what a student can point at.
  */
 
+/** How hard a badge is to earn, purely for display — a silver outline, a
+ *  gold fill (unchanged from before tiers existed), or a crimson-to-black
+ *  gradient for the four that take sustained volume or, for 'top_rated' and
+ *  'goal_reached', can't be earned by volume at all. */
+export type BadgeTier = 'silver' | 'gold' | 'crimson'
+
 export interface BadgeDef {
   id: string
   side: 'mentor' | 'learner'
   name: string
   description: string
+  tier: BadgeTier
 }
 
 export const BADGES: BadgeDef[] = [
-  { id: 'first_session_given', side: 'mentor', name: 'First Session', description: 'Mentored your first student' },
-  { id: 'ten_sessions_given', side: 'mentor', name: '10 Sessions', description: 'Completed 10 mentorship sessions' },
-  { id: 'fifty_sessions_given', side: 'mentor', name: '50 Sessions', description: 'Completed 50 mentorship sessions' },
-  { id: 'ten_hours_given', side: 'mentor', name: '10 Hours', description: 'Given 10 hours of mentorship' },
-  { id: 'fifty_hours_given', side: 'mentor', name: '50 Hours', description: 'Given 50 hours of mentorship' },
-  { id: 'top_rated', side: 'mentor', name: 'Top Rated', description: '4.5+ average across 5 or more rated sessions' },
-  { id: 'consistent_mentor', side: 'mentor', name: 'Consistent', description: 'Mentored in 4 consecutive weeks' },
+  { id: 'first_session_given', side: 'mentor', name: 'First Session', description: 'Mentored your first student', tier: 'silver' },
+  { id: 'ten_sessions_given', side: 'mentor', name: '10 Sessions', description: 'Completed 10 mentorship sessions', tier: 'gold' },
+  { id: 'fifty_sessions_given', side: 'mentor', name: '50 Sessions', description: 'Completed 50 mentorship sessions', tier: 'crimson' },
+  { id: 'ten_hours_given', side: 'mentor', name: '10 Hours', description: 'Given 10 hours of mentorship', tier: 'gold' },
+  { id: 'fifty_hours_given', side: 'mentor', name: '50 Hours', description: 'Given 50 hours of mentorship', tier: 'crimson' },
+  // The two crimson badges that can't be brute-forced by volume alone —
+  // others have to actually rate you well, or you have to finish the whole
+  // roadmap — is what earns them the top tier, not just a bigger number.
+  { id: 'top_rated', side: 'mentor', name: 'Top Rated', description: '4.5+ average across 5 or more rated sessions', tier: 'crimson' },
+  { id: 'consistent_mentor', side: 'mentor', name: 'Consistent', description: 'Mentored in 4 consecutive weeks', tier: 'gold' },
 
-  { id: 'first_session_taken', side: 'learner', name: 'First Session', description: 'Took your first mentorship session' },
-  { id: 'five_sessions_taken', side: 'learner', name: 'Committed Learner', description: 'Took 5 mentorship sessions' },
-  { id: 'ten_hours_learned', side: 'learner', name: '10 Hours Learned', description: 'Spent 10 hours in mentorship' },
-  { id: 'roadmap_started', side: 'learner', name: 'Roadmap Started', description: 'Built a career roadmap' },
-  { id: 'roadmap_halfway', side: 'learner', name: 'Halfway There', description: 'Completed half your roadmap' },
-  { id: 'goal_reached', side: 'learner', name: 'Goal Reached', description: 'Completed every stage of your roadmap' },
-  { id: 'consistent_learner', side: 'learner', name: 'On A Streak', description: 'Learned in 4 consecutive weeks' },
+  { id: 'first_session_taken', side: 'learner', name: 'First Session', description: 'Took your first mentorship session', tier: 'silver' },
+  { id: 'five_sessions_taken', side: 'learner', name: 'Committed Learner', description: 'Took 5 mentorship sessions', tier: 'gold' },
+  { id: 'ten_hours_learned', side: 'learner', name: '10 Hours Learned', description: 'Spent 10 hours in mentorship', tier: 'gold' },
+  { id: 'roadmap_started', side: 'learner', name: 'Roadmap Started', description: 'Built a career roadmap', tier: 'silver' },
+  { id: 'roadmap_halfway', side: 'learner', name: 'Halfway There', description: 'Completed half your roadmap', tier: 'gold' },
+  { id: 'goal_reached', side: 'learner', name: 'Goal Reached', description: 'Completed every stage of your roadmap', tier: 'crimson' },
+  { id: 'consistent_learner', side: 'learner', name: 'On A Streak', description: 'Learned in 4 consecutive weeks', tier: 'gold' },
 
   // Community involvement — not mentorship, but the same "earned from real
   // activity, not self-reported" rule: an RSVP only counts once the event
   // has actually happened, and likes are counted both ways so the badge
   // rewards participating, not just being popular.
-  { id: 'event_regular', side: 'learner', name: 'Community Regular', description: 'Attended 5 events' },
-  { id: 'event_veteran', side: 'learner', name: 'Community Veteran', description: 'Attended 15 events' },
-  { id: 'engaged_member', side: 'learner', name: 'Engaged Member', description: 'Liked 25 posts from others' },
-  { id: 'well_liked', side: 'learner', name: 'Well Liked', description: 'Received 50 likes on your posts' },
+  { id: 'event_regular', side: 'learner', name: 'Community Regular', description: 'Attended 5 events', tier: 'silver' },
+  { id: 'event_veteran', side: 'learner', name: 'Community Veteran', description: 'Attended 15 events', tier: 'gold' },
+  { id: 'engaged_member', side: 'learner', name: 'Engaged Member', description: 'Liked 25 posts from others', tier: 'silver' },
+  { id: 'well_liked', side: 'learner', name: 'Well Liked', description: 'Received 50 likes on your posts', tier: 'gold' },
 ]
 
 const BADGE_BY_ID = new Map(BADGES.map((b) => [b.id, b]))
@@ -222,6 +232,9 @@ export async function getProfileStats(userId: string): Promise<ProfileStats> {
       name: BADGE_BY_ID.get(b.badge)?.name ?? b.badge,
       description: BADGE_BY_ID.get(b.badge)?.description ?? '',
       side: b.side,
+      // Falls back to 'gold' — today's only look — for a badge id stored
+      // before tiers existed, or one the catalogue no longer lists.
+      tier: BADGE_BY_ID.get(b.badge)?.tier ?? 'gold',
       earnedAt: new Date(b.earned_at).toISOString(),
     })),
   }

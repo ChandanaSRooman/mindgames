@@ -369,6 +369,29 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ mentorId, topic, date, time, serviceId }),
     }),
+  /** The reverse of bookSession: a mentor offers a connection a 1:1 slot,
+   *  which that member then accepts or declines. */
+  offerSession: (
+    menteeId: string, topic: string, date: string, time: string,
+    meetingLink?: string, scheduledAt?: string,
+  ) =>
+    http<MentorshipSession>('/api/mentorship/sessions/offer', {
+      method: 'POST',
+      body: JSON.stringify({ menteeId, topic, date, time, meetingLink, scheduledAt }),
+    }),
+  /** Either side calls off a requested or upcoming session. */
+  cancelSession: (id: string) =>
+    http<MentorshipSession>(`/api/mentorship/sessions/${id}/cancel`, { method: 'POST' }),
+  /** Mentor adds or changes the join link on a session; '' clears it. */
+  setSessionMeetingLink: (id: string, meetingLink: string) =>
+    http<MentorshipSession>(`/api/mentorship/sessions/${id}/meeting-link`, {
+      method: 'POST',
+      body: JSON.stringify({ meetingLink }),
+    }),
+  acceptSessionOffer: (id: string) =>
+    http<MentorshipSession>(`/api/mentorship/sessions/${id}/accept-offer`, { method: 'POST' }),
+  declineSessionOffer: (id: string) =>
+    http<MentorshipSession>(`/api/mentorship/sessions/${id}/decline-offer`, { method: 'POST' }),
   acceptSession: (id: string, meetingLink?: string) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/accept`, {
       method: 'POST',

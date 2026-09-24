@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Award, Calendar, Clock, Flame, GraduationCap, Heart, Star } from 'lucide-react'
 import { api } from '../../lib/api'
+import { badgeTierClasses } from '../../lib/format'
 import type { ProfileStats } from '../../types'
 
 /**
@@ -66,7 +67,7 @@ export function MentorshipRecord({ userId }: { userId: string }) {
             <span
               key={b.id}
               title={b.description}
-              className="flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800"
+              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${badgeTierClasses(b.tier)}`}
             >
               <Award size={12} />
               {b.name}

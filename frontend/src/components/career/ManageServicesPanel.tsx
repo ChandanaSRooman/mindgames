@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Plus, X } from 'lucide-react'
 import { Button, Card } from '../ui'
 import { api, type ServiceInput } from '../../lib/api'
@@ -25,6 +25,15 @@ export function ManageServicesPanel({ onClose }: { onClose: () => void }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState<ServiceInput>(BLANK)
   const [tagText, setTagText] = useState('')
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  // This panel opens below the button that spawned it, and in Mentor Space
+  // that button sits near the bottom of a long page — so the panel appeared
+  // off-screen and pressing "Manage services" looked like it did nothing at
+  // all. Bring it into view instead of leaving the member to guess.
+  useEffect(() => {
+    panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [])
 
   useEffect(() => {
     api
@@ -62,7 +71,7 @@ export function ManageServicesPanel({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Card className="p-5">
+    <Card ref={panelRef} className="p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-[#1c1c1c]">Services you offer</h2>
