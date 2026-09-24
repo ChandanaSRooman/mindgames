@@ -6,6 +6,7 @@ import { SubscriptionPlans } from '../components/subscription/SubscriptionPlans'
 import { MentorWorkspace } from '../components/mentor/MentorWorkspace'
 import { GroupSessionsTab } from '../components/mentor/GroupSessionsTab'
 import { CompleteSessionModal } from '../components/mentor/CompleteSessionModal'
+import { EditSessionModal } from '../components/mentor/EditSessionModal'
 import { api } from '../lib/api'
 import { roleLine, sessionPriceLabel } from '../lib/format'
 import { isBookableMentor } from '../lib/profileCompleteness'
@@ -25,6 +26,7 @@ export function Mentorship() {
     rateSession,
     declineSession,
     completeSession,
+    editSession,
     becomeMentor,
     refreshSubscription,
     query,
@@ -46,6 +48,8 @@ export function Mentorship() {
   const [showBecome, setShowBecome] = useState(false)
   // Session being marked completed — captures how long it actually ran.
   const [completing, setCompleting] = useState<MentorshipSession | null>(null)
+  // Session being rescheduled/renamed by its mentor.
+  const [editing, setEditing] = useState<MentorshipSession | null>(null)
 
   const q = query.trim().toLowerCase()
   const mentors = users
@@ -296,9 +300,21 @@ export function Mentorship() {
           onAccept={(id) => setAccepting(id)}
           onDecline={declineSession}
           onComplete={(session) => setCompleting(session)}
+          onEdit={(session) => setEditing(session)}
         />
       ) : (
         <GroupSessionsTab />
+      )}
+
+      {editing && (
+        <EditSessionModal
+          session={editing}
+          onClose={() => setEditing(null)}
+          onSave={(changes) => {
+            editSession(editing.id, changes)
+            setEditing(null)
+          }}
+        />
       )}
 
       {completing && (

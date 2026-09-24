@@ -140,6 +140,11 @@ interface AppContextValue {
   rateSession: (id: string, rating: number, review?: string) => void
   declineSession: (id: string) => void
   completeSession: (id: string, durationMinutes?: number, domain?: string) => void
+  /** Mentor-only: move a session, rename it, or change its joining link.
+   *  scheduledAt is a real ISO instant — it is what makes the 6-hour
+   *  reminder possible, since the date/time a session was booked with are
+   *  free text nothing can be computed from. */
+  editSession: (id: string, changes: { topic?: string; scheduledAt?: string; meetingLink?: string }) => void
   becomeMentor: (rate: number) => void
   startups: Startup[]
   submitStartup: (
@@ -887,6 +892,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (id: string) => sessionAction(api.declineSession(id), 'Session declined.'),
     [sessionAction],
   )
+  const editSession = useCallback(
+    (id: string, changes: { topic?: string; scheduledAt?: string; meetingLink?: string }) =>
+      sessionAction(api.editSession(id, changes), 'Session updated. Your mentee has been notified.'),
+    [sessionAction],
+  )
   const completeSession = useCallback(
     (id: string, durationMinutes?: number, domain?: string) => {
       sessionAction(
@@ -1241,6 +1251,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     rateSession,
     declineSession,
     completeSession,
+    editSession,
     becomeMentor,
     startups,
     submitStartup,
