@@ -55,12 +55,18 @@ export function MentorWorkspace({
 
   if (!isMentor) return <LockedState />
 
-  const planActive = subscription?.status === 'active'
+  // The banner below renders `blockedReason`, so it should appear exactly
+  // when there IS one — i.e. when the mentor cannot currently accept.
+  // Deriving it from status instead meant two wrong answers: a mentor who
+  // cancelled but still has paid days got a false "you need a subscription"
+  // alarm, and a mentor who had used up the month's session cap got no
+  // warning at all despite being blocked.
+  const canAccept = subscription?.canAcceptSessions ?? false
 
   return (
     <div className="flex flex-col gap-4">
       {/* Plan banner: the one thing that stops everything else working. */}
-      {!planActive && (
+      {!canAccept && (
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
           <Crown size={18} className="shrink-0 text-amber-600" />
           <p className="flex-1 text-sm text-amber-900">
