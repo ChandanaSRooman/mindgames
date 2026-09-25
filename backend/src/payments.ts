@@ -137,7 +137,20 @@ const PROVIDERS: Record<string, PaymentProvider> = { stub: stubProvider }
 
 export function paymentProvider(): PaymentProvider {
   const wanted = process.env.PAYMENT_PROVIDER || 'stub'
-  return PROVIDERS[wanted] ?? stubProvider
+  const chosen = PROVIDERS[wanted]
+  // Deliberately throws rather than falling back to the stub. The stub grants
+  // a plan without taking money, so silently substituting it for a provider
+  // that was asked for but does not exist — a typo, or PAYMENT_PROVIDER set
+  // to 'razorpay' before the implementation lands — would turn a paywall into
+  // free self-service with nothing in the logs to say so. Failing loudly on a
+  // misconfiguration is the safe direction for a payment path.
+  if (!chosen) {
+    throw new Error(
+      `PAYMENT_PROVIDER is set to "${wanted}", which is not implemented. ` +
+        `Known providers: ${Object.keys(PROVIDERS).join(', ')}.`,
+    )
+  }
+  return chosen
 }
 
 /** Whether real money can move. The UI uses this to decide between "Pay" and

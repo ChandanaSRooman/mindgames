@@ -1237,6 +1237,11 @@ export interface SubscriptionState {
   source: 'none' | 'grandfathered' | 'admin' | 'gateway'
   expiresAt: string | null
   canAcceptSessions: boolean
+  /** Whether the member currently holds a plan — including a cancelled one
+   *  that has not run out yet. Not the same as canAcceptSessions, which is
+   *  false once the month's session cap is used up even though the plan is
+   *  still very much active. Use this for "do they have a plan" UI. */
+  planActive: boolean
   sessionsThisMonth: number
   sessionsPerMonth: number | null
   blockedReason?: string

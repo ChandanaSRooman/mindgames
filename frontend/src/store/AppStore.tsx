@@ -146,10 +146,18 @@ interface AppContextValue {
   cancelSession: (id: string) => void
   /** Mentor adds or changes the join link; '' clears it. */
   setSessionMeetingLink: (id: string, meetingLink: string) => void
-  acceptSession: (id: string, meetingLink?: string) => Promise<'ok' | 'payment-required'>
+  /** 'payment-required' means the mentor needs a plan and the caller should
+   *  open the pricing page; 'error' means it genuinely failed and has already
+   *  been reported to the member, so the caller must not treat it as done. */
+  acceptSession: (id: string, meetingLink?: string) => Promise<'ok' | 'payment-required' | 'error'>
   rateSession: (id: string, rating: number, review?: string) => void
   declineSession: (id: string) => void
   completeSession: (id: string, durationMinutes?: number, domain?: string) => void
+  /** Mentor-only: move a session, rename it, or change its joining link.
+   *  scheduledAt is a real ISO instant — it is what makes the 6-hour
+   *  reminder possible, since the date/time a session was booked with are
+   *  free text nothing can be computed from. */
+  editSession: (id: string, changes: { topic?: string; scheduledAt?: string; meetingLink?: string }) => void
   becomeMentor: (rate: number) => void
   startups: Startup[]
   submitStartup: (
@@ -870,7 +878,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // mentor needs a plan, and the caller opens the pricing page instead of
   // showing a toast the member cannot act on.
   const acceptSession = useCallback(
-    async (id: string, meetingLink?: string): Promise<'ok' | 'payment-required'> => {
+    async (id: string, meetingLink?: string): Promise<'ok' | 'payment-required' | 'error'> => {
       try {
         const updated = await api.acceptSession(id, meetingLink)
         setSessions((list) => list.map((s) => (s.id === updated.id ? updated : s)))
@@ -879,7 +887,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       } catch (err) {
         if (isPaymentRequired(err)) return 'payment-required'
         notify(err instanceof Error ? err.message : 'Could not update the session.', 'error')
-        return 'ok'
+        // 'error', not 'ok'. The union had no way to say "this failed", so a
+        // real failure was reported to the caller as success — the member saw
+        // an error toast while the UI carried on as though the session had
+        // been accepted.
+        return 'error'
       }
     },
     [notify],
@@ -939,6 +951,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
   const declineSession = useCallback(
     (id: string) => sessionAction(api.declineSession(id), 'Session declined.'),
+    [sessionAction],
+  )
+  const editSession = useCallback(
+    (id: string, changes: { topic?: string; scheduledAt?: string; meetingLink?: string }) =>
+      sessionAction(api.editSession(id, changes), 'Session updated. Your mentee has been notified.'),
     [sessionAction],
   )
   const completeSession = useCallback(
@@ -1301,6 +1318,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     rateSession,
     declineSession,
     completeSession,
+    editSession,
     becomeMentor,
     startups,
     submitStartup,

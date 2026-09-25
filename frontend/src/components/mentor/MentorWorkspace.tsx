@@ -30,6 +30,7 @@ export function MentorWorkspace({
   onAccept,
   onDecline,
   onComplete,
+  onEdit,
 }: {
   requests: MentorshipSession[]
   upcoming: MentorshipSession[]
@@ -39,6 +40,7 @@ export function MentorWorkspace({
   onAccept: (id: string) => void
   onDecline: (id: string) => void
   onComplete: (session: MentorshipSession) => void
+  onEdit: (session: MentorshipSession) => void
 }) {
   const { currentUser, subscription } = useApp()
   const [mentees, setMentees] = useState<Mentee[]>([])
@@ -59,12 +61,18 @@ export function MentorWorkspace({
 
   if (!isMentor) return <LockedState />
 
-  const planActive = subscription?.status === 'active'
+  // The banner below renders `blockedReason`, so it should appear exactly
+  // when there IS one — i.e. when the mentor cannot currently accept.
+  // Deriving it from status instead meant two wrong answers: a mentor who
+  // cancelled but still has paid days got a false "you need a subscription"
+  // alarm, and a mentor who had used up the month's session cap got no
+  // warning at all despite being blocked.
+  const canAccept = subscription?.canAcceptSessions ?? false
 
   return (
     <div className="flex flex-col gap-4">
       {/* Plan banner: the one thing that stops everything else working. */}
-      {!planActive && (
+      {!canAccept && (
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
           <Crown size={18} className="shrink-0 text-amber-600" />
           <p className="flex-1 text-sm text-amber-900">
@@ -199,6 +207,13 @@ export function MentorWorkspace({
                   onClick={() => setEditingLinkFor(s)}
                 >
                   {s.meetingLink ? 'Edit link' : 'Add link'}
+                </Button>
+                {/* The fuller editor from PR #37: topic, the real scheduled
+                    timestamp the 6-hour reminder is computed from, and the
+                    link. Kept alongside the shortcut above rather than
+                    replacing it. */}
+                <Button variant="outline" className="!px-3 !py-1.5 !text-xs" onClick={() => onEdit(s)}>
+                  Edit
                 </Button>
                 <Button className="!px-3 !py-1.5 !text-xs" onClick={() => onComplete(s)}>
                   Mark completed

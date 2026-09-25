@@ -413,6 +413,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ durationMinutes, domain }),
     }),
+  /** Mentor edits a session they are hosting. `scheduledAt` is the real
+   *  instant — the server derives the displayed date/time labels from it, so
+   *  what the card shows and when the reminder fires cannot drift apart. */
+  editSession: (
+    id: string,
+    changes: { topic?: string; scheduledAt?: string; meetingLink?: string },
+  ) => http<MentorshipSession>(`/api/mentorship/sessions/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(changes),
+  }),
   getMentorApplications: () => http<string[]>('/api/mentorship/applications'),
   approveMentor: (id: string) =>
     http<{ ok: boolean }>(`/api/mentorship/applications/${id}/approve`, { method: 'POST' }),
