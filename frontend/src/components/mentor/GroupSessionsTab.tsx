@@ -5,10 +5,11 @@ import {
 } from 'lucide-react'
 import { Avatar, Button, Card } from '../ui'
 import { api, isPaymentRequired } from '../../lib/api'
+import { roleLine } from '../../lib/format'
 import { useApp } from '../../store/AppStore'
 import { CompleteSessionModal } from './CompleteSessionModal'
 import { SubscriptionPlans } from '../subscription/SubscriptionPlans'
-import { DOMAINS, type GroupSession } from '../../types'
+import { DOMAINS, type GroupSession, type GroupSessionAttendee } from '../../types'
 
 /**
  * Group sessions: one mentor, many mentees, a capacity and a roster —
@@ -355,7 +356,7 @@ function HostRow({
 }
 
 function RosterModal({ session, onClose }: { session: GroupSession; onClose: () => void }) {
-  const [attendees, setAttendees] = useState<{ id: string; name: string; photo?: string; confirmed: boolean }[] | null>(null)
+  const [attendees, setAttendees] = useState<GroupSessionAttendee[] | null>(null)
 
   useEffect(() => {
     api.getGroupSessionAttendees(session.id).then(setAttendees, () => setAttendees([]))
@@ -382,7 +383,12 @@ function RosterModal({ session, onClose }: { session: GroupSession; onClose: () 
             {attendees.map((a) => (
               <div key={a.id} className="flex items-center gap-2.5 rounded-lg border border-[#edeff1] px-3 py-2">
                 <Avatar name={a.name} src={a.photo} size={32} to={`/profile/${a.id}`} />
-                <span className="flex-1 truncate text-sm font-medium text-[#1c1c1c]">{a.name}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-[#1c1c1c]">{a.name}</span>
+                  {roleLine(a) && (
+                    <span className="block truncate text-[11px] text-[#878a8c]">{roleLine(a)}</span>
+                  )}
+                </span>
                 {a.confirmed && (
                   <span className="flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-semibold text-green-700">
                     <Check size={10} /> Confirmed
@@ -629,10 +635,17 @@ function CreateGroupSessionModal({
                       type="checkbox"
                       checked={inviteeIds.has(u.id)}
                       onChange={() => toggleInvitee(u.id)}
-                      className="h-4 w-4 accent-[#ff4500]"
+                      className="h-4 w-4 shrink-0 accent-[#ff4500]"
                     />
                     <Avatar name={u.name} src={u.photo} size={28} />
-                    <span className="truncate text-sm text-[#1c1c1c]">{u.name}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm text-[#1c1c1c]">{u.name}</span>
+                    {/* Names repeat across an alumni network — the role is
+                        what tells two of the same name apart. */}
+                    {roleLine(u) && (
+                      <span className="max-w-[45%] shrink-0 truncate text-right text-[11px] text-[#878a8c]">
+                        {roleLine(u)}
+                      </span>
+                    )}
                   </label>
                 ))}
               </div>

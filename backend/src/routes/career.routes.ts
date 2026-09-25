@@ -729,7 +729,26 @@ careerRouter.post(
   }),
 )
 
-const serviceUpdateSchema = serviceSchema.partial().extend({ active: z.boolean().optional() })
+// Spelled out rather than derived as `serviceSchema.partial()`.
+//
+// Zod's .partial() makes every key optional but KEEPS its .default(), so a
+// body of `{ active: false }` parsed as
+// `{ title: '', description: '', tags: [], pricingMode: 'free', active: false }`.
+// Those defaults are values, not `undefined`, so the `?? cur.*` fallbacks below
+// never fired and simply pausing a service silently wiped its title,
+// description and tags and reset a paid listing to free — losing the mentor's
+// price. Every field here is optional with no default, so an absent field
+// really is absent and falls back to the stored row.
+const serviceUpdateSchema = z.object({
+  serviceType: z.enum(SERVICE_TYPES).optional(),
+  title: z.string().trim().max(120).optional(),
+  description: z.string().trim().max(1000).optional(),
+  tags: z.array(z.string().trim().max(40)).optional(),
+  pricingMode: z.enum(['free', 'paid', 'custom']).optional(),
+  amount: z.number().int().min(0).max(1_000_000).optional(),
+  pricingUnit: z.enum(['hour', 'session']).optional(),
+  active: z.boolean().optional(),
+})
 
 // PATCH /api/career/services/:id — edit or activate/deactivate my own service.
 careerRouter.patch(
@@ -761,7 +780,7 @@ careerRouter.patch(
     const upd = await query<AlumniServiceRow>(
       `UPDATE alumni_services SET
          title = $2, description = $3, tags = $4, pricing_mode = $5, amount = $6,
-         pricing_unit = $7, active = $8, updated_at = now()
+         pricing_unit = $7, active = $8, service_type = $9, updated_at = now()
        WHERE id = $1 RETURNING *`,
       [
         req.params.id,
@@ -772,9 +791,53 @@ careerRouter.patch(
         pricingMode === 'paid' ? amount : null,
         pricingMode === 'free' ? null : pricingUnit,
         body.active ?? cur.active,
+        // service_type was accepted by the schema but never written, so
+        // re-typing a service from the manage panel silently did nothing.
+        body.serviceType ?? cur.service_type,
       ],
     )
     res.json(mapAlumniService(upd.rows[0]))
+  }),
+)
+
+// DELETE /api/career/services/:id — permanently remove one of my own
+// services.
+//
+// Scoped by user_id in the WHERE clause, so the id in the URL can only ever
+// name a service the caller owns — a mentor can never delete someone else's.
+//
+// Sessions already booked from this service survive: the FK is
+// ON DELETE SET NULL (schema.sql), and mentorship_sessions snapshots its own
+// `is_paid` and `price` at booking time, so unlinking never rewrites what a
+// mentee was quoted. The count of those sessions is returned so the UI can
+// tell the mentor what deleting actually affects instead of guessing.
+//
+// Deactivating (PATCH active:false) stays the reversible option; this is the
+// permanent one.
+careerRouter.delete(
+  '/services/:id',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const result = await withTransaction(async (client) => {
+      const owned = await client.query(
+        `SELECT id FROM alumni_services WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+        [req.params.id, req.user!.sub],
+      )
+      if (!owned.rowCount) throw new ApiError(404, 'Service not found')
+
+      // Live bookings only. The count is shown to the alumnus as "N booked
+      // sessions keep their original price", which is reassurance about money
+      // still owed — a declined session was never a booking, and a past one is
+      // already settled. Counting those overstated their live commitments.
+      const linked = await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM mentorship_sessions
+          WHERE service_id = $1 AND status IN ('requested', 'upcoming')`,
+        [req.params.id],
+      )
+      await client.query(`DELETE FROM alumni_services WHERE id = $1`, [req.params.id])
+      return { unlinkedSessions: linked.rows[0]?.n ?? 0 }
+    })
+    res.json(result)
   }),
 )
 

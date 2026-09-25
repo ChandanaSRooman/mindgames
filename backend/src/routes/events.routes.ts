@@ -10,6 +10,12 @@ import { mapComment, type CommentRow } from '../mappers.js'
 
 export const eventsRouter = Router()
 
+/** How long an event is assumed to run. Events carry a start time but no end
+ *  time, so both sides assume an hour — keep in step with EVENT_DURATION_MS
+ *  in frontend/src/pages/events/EventPhase.tsx, which decides when the UI
+ *  flips an event from "Live now" to "Ended". */
+const EVENT_DURATION_MS = 60 * 60 * 1000
+
 interface Speaker {
   name: string
   bio: string
@@ -258,11 +264,28 @@ eventsRouter.post(
     // near capacity can't both read the same "confirmed count" and both slip
     // in as confirmed — the second transaction blocks until the first commits.
     const joined = await withTransaction(async (client) => {
-      const ev = await client.query<{ creator_id: string; title: string; capacity: number | null }>(
-        `SELECT creator_id, title, capacity FROM events WHERE id = $1 FOR UPDATE`,
+      const ev = await client.query<{
+        creator_id: string; title: string; capacity: number | null
+        status: string; starts_at: Date
+      }>(
+        `SELECT creator_id, title, capacity, status, starts_at FROM events WHERE id = $1 FOR UPDATE`,
         [req.params.id],
       )
       if (!ev.rowCount) throw new ApiError(404, 'Event not found')
+
+      // The listing hides anything not approved; the write path has to agree,
+      // or a shared id lets someone RSVP to an event still awaiting review
+      // (or already rejected) and sit on a roster that should not exist.
+      if (ev.rows[0].status !== 'approved') {
+        throw new ApiError(400, 'This event is not open for RSVPs yet.')
+      }
+      // Signing up after the fact would be self-issued proof of attending
+      // something you did not: the attendance certificate is generated from
+      // this row alone, so an RSVP added once the event is over would mint a
+      // valid certificate for someone who was never there.
+      if (Date.now() >= +new Date(ev.rows[0].starts_at) + EVENT_DURATION_MS) {
+        throw new ApiError(400, 'This event has already ended.')
+      }
 
       const already = await client.query(`SELECT 1 FROM event_rsvps WHERE event_id = $1 AND user_id = $2`, [
         req.params.id,

@@ -727,6 +727,15 @@ export interface MentorshipSession {
   // Beyond the free allowance, a session is paid at the mentor's rate (₹).
   isPaid?: boolean
   price?: number
+  /** Who asked for it. 'mentee' is the usual booking flow (waiting on the
+   *  mentor to accept); 'mentor' is a mentor-offered slot, waiting on the
+   *  mentee instead — which decides who sees Accept/Decline. */
+  requestedBy?: 'mentor' | 'mentee'
+  /** The mutual-confirmation pair. A session only counts toward either
+   *  profile's stats once both are true; these are what tell the UI whose
+   *  confirmation is still outstanding. */
+  menteeConfirmed?: boolean
+  mentorConfirmed?: boolean
 }
 
 // A mentee's first N mentorship sessions are free; the rest are paid.
@@ -1182,7 +1191,12 @@ export interface ProfileStats {
   eventsAttended: number
   likesGiven: number
   likesReceived: number
-  badges: { id: string; name: string; description: string; side: string; earnedAt: string }[]
+  badges: {
+    id: string; name: string; description: string; side: string
+    /** How hard it is to earn, for display: silver/gold/crimson. */
+    tier: 'silver' | 'gold' | 'crimson'
+    earnedAt: string
+  }[]
 }
 
 /** AI briefing a mentor reads before a session — the substance of the
@@ -1308,6 +1322,8 @@ export interface GroupSessionAttendee {
   id: string
   name: string
   photo?: string
+  designation: string
+  company: string
   joinedAt: string
   confirmed: boolean
 }

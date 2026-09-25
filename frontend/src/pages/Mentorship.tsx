@@ -23,11 +23,14 @@ export function Mentorship() {
     userById,
     bookSession,
     acceptSession,
+    acceptSessionOffer,
+    declineSessionOffer,
+    confirmSession,
+    cancelSession,
     rateSession,
     declineSession,
     completeSession,
     editSession,
-    becomeMentor,
     refreshSubscription,
     query,
   } = useApp()
@@ -45,7 +48,6 @@ export function Mentorship() {
     )
   }, [])
   const [booking, setBooking] = useState<User | null>(null)
-  const [showBecome, setShowBecome] = useState(false)
   // Session being marked completed — captures how long it actually ran.
   const [completing, setCompleting] = useState<MentorshipSession | null>(null)
   // Session being rescheduled/renamed by its mentor.
@@ -70,14 +72,22 @@ export function Mentorship() {
   const mentorFinished = asMentor.filter((s) => s.status === 'past' || s.status === 'declined')
 
   // Mentee free-session allowance: the first N booked (non-declined) sessions
-  // are free; beyond that, sessions are paid at the mentor's rate.
-  const freeUsed = sessions.filter((s) => s.menteeId === currentUser.id && s.status !== 'declined').length
+  // are free; beyond that, sessions are paid at the mentor's rate. Sessions a
+  // mentor offered are excluded — they were given, not spent, so they must
+  // not eat an allowance the member never used. Mirrors the same rule in
+  // mentorship.routes.ts.
+  const freeUsed = sessions.filter(
+    (s) => s.menteeId === currentUser.id && s.status !== 'declined' && s.requestedBy !== 'mentor',
+  ).length
   const freeRemaining = Math.max(0, FREE_MENTORSHIP_SESSIONS - freeUsed)
 
-  // Mentors I already have a pending request with (as the mentee).
+  // Mentors I already have a pending request with (as the mentee). A slot a
+  // mentor offered *me* doesn't belong here — "Requested — awaiting
+  // confirmation" would be backwards, and it wrongly blocked booking that
+  // mentor over a request the member never made.
   const pendingMentorRequestIds = new Set(
     sessions
-      .filter((s) => s.status === 'requested' && s.menteeId === currentUser.id)
+      .filter((s) => s.status === 'requested' && s.menteeId === currentUser.id && s.requestedBy !== 'mentor')
       .map((s) => s.mentorId),
   )
 
@@ -90,7 +100,7 @@ export function Mentorship() {
           // call updateProfile({isMentor:true}), which the backend rejects
           // with 403 unless already verified — so every unverified member who
           // pressed it got an error and no way forward.
-          <Link to="/profile">
+          <Link to="/profile#mentor-verification">
             <Button variant="outline">
               <Award size={16} /> Become a Mentor
             </Button>
@@ -179,6 +189,9 @@ export function Mentorship() {
                 {requested.map((s) => {
                   const iAmMentor = s.mentorId === currentUser.id
                   const other = iAmMentor ? s.menteeName : userById(s.mentorId)?.name
+                  // A mentor-offered slot waits on *me* (the mentee) instead
+                  // of the other way round, so this row gets the buttons.
+                  const offeredToMe = !iAmMentor && s.requestedBy === 'mentor'
                   return (
                     <Card key={s.id} className="flex flex-wrap items-center gap-3 p-4">
                       <span className="flex h-11 w-11 items-center justify-center rounded-full bg-amber-100 text-amber-600">
@@ -187,7 +200,11 @@ export function Mentorship() {
                       <div className="min-w-0 flex-1">
                         <p className="font-semibold text-[#1c1c1c]">{s.topic}</p>
                         <p className="text-xs text-[#878a8c]">
-                          {iAmMentor ? `${other} requested this session` : `with ${other}`} · {s.date} · {s.time}
+                          {iAmMentor
+                            ? `${other} requested this session`
+                            : offeredToMe
+                              ? `${other} offered you this session`
+                              : `with ${other}`} · {s.date} · {s.time}
                           {sessionPriceLabel(s) && <span className="font-semibold text-[#ff4500]"> · {sessionPriceLabel(s)}</span>}
                         </p>
                       </div>
@@ -200,10 +217,26 @@ export function Mentorship() {
                             Decline
                           </Button>
                         </div>
+                      ) : offeredToMe ? (
+                        <div className="flex gap-2">
+                          <Button className="!px-3 !py-1.5 text-xs" onClick={() => acceptSessionOffer(s.id)}>
+                            Accept
+                          </Button>
+                          <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => declineSessionOffer(s.id)}>
+                            Decline
+                          </Button>
+                        </div>
                       ) : (
-                        <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
-                          Awaiting confirmation
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
+                            Awaiting confirmation
+                          </span>
+                          {/* Until now a request you sent could not be taken
+                              back — it sat in the mentor's queue forever. */}
+                          <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => cancelSession(s.id)}>
+                            Withdraw
+                          </Button>
+                        </div>
                       )}
                     </Card>
                   )
@@ -230,7 +263,7 @@ export function Mentorship() {
                         {sessionPriceLabel(s) && <span className="font-semibold text-[#ff4500]"> · {sessionPriceLabel(s)}</span>}
                       </p>
                     </div>
-                    {s.meetingLink && (
+                    {s.meetingLink ? (
                       <a
                         href={s.meetingLink}
                         target="_blank"
@@ -239,6 +272,13 @@ export function Mentorship() {
                       >
                         <Video size={12} /> Join <ExternalLink size={10} />
                       </a>
+                    ) : (
+                      // Previously this rendered nothing at all, so a session
+                      // with no link looked identical to one you simply
+                      // couldn't see the link for.
+                      <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-[#878a8c]">
+                        No link yet
+                      </span>
                     )}
                     <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-semibold text-green-700">Confirmed</span>
                     {iAmMentor && (
@@ -246,6 +286,9 @@ export function Mentorship() {
                         Mark completed
                       </Button>
                     )}
+                    <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => cancelSession(s.id)}>
+                      Cancel
+                    </Button>
                   </Card>
                 )
               })}
@@ -272,6 +315,19 @@ export function Mentorship() {
                         {sessionPriceLabel(s) && <span className="font-semibold text-[#ff4500]"> · {sessionPriceLabel(s)}</span>}
                       </p>
                     </div>
+                    {/* The mentee's half of mutual confirmation. Without this
+                        the session never gets confirmed_at, and so never
+                        counts toward either side's stats or badges. */}
+                    {!declined && s.mentorConfirmed && !s.menteeConfirmed && (
+                      <Button className="!px-3 !py-1.5 text-xs" onClick={() => confirmSession(s.id)}>
+                        Confirm it happened
+                      </Button>
+                    )}
+                    {!declined && s.mentorConfirmed && s.menteeConfirmed && (
+                      <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-semibold text-green-700">
+                        Confirmed
+                      </span>
+                    )}
                     {!declined && s.rating && (
                       <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-600">
                         <Star size={11} className="fill-amber-500 text-amber-500" /> {s.rating}
@@ -310,9 +366,10 @@ export function Mentorship() {
         <EditSessionModal
           session={editing}
           onClose={() => setEditing(null)}
-          onSave={(changes) => {
-            editSession(editing.id, changes)
-            setEditing(null)
+          onSave={async (changes) => {
+            // Only dismiss once the PATCH succeeded -- a rejected edit (past
+            // time, malformed link) used to close the modal and lose the input.
+            if (await editSession(editing.id, changes)) setEditing(null)
           }}
         />
       )}
@@ -381,7 +438,6 @@ export function Mentorship() {
           }}
         />
       )}
-      {showBecome && <BecomeMentorModal onClose={() => setShowBecome(false)} onConfirm={(rate) => { becomeMentor(rate); setShowBecome(false) }} />}
     </div>
   )
 }
@@ -465,22 +521,6 @@ function BookModal({
       <Button className="mt-4 w-full" onClick={submit}>
         {isPaid ? 'Request paid session' : 'Request free session'}
       </Button>
-    </Overlay>
-  )
-}
-
-function BecomeMentorModal({ onClose, onConfirm }: { onClose: () => void; onConfirm: (rate: number) => void }) {
-  const [rate, setRate] = useState('1000')
-  return (
-    <Overlay onClose={onClose} title="Become a Mentor">
-      <p className="text-sm text-[#878a8c]">Get listed as a mentor and conduct paid sessions for the network.</p>
-      <label className="mt-4 block text-sm font-medium text-[#1c1c1c]">Your hourly rate (₹)</label>
-      <input
-        value={rate}
-        onChange={(e) => setRate(e.target.value.replace(/\D/g, ''))}
-        className="mt-1 w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
-      />
-      <Button className="mt-4 w-full" onClick={() => onConfirm(Number(rate) || 1000)}>List me as a Mentor</Button>
     </Overlay>
   )
 }

@@ -216,23 +216,29 @@ export function EventCard({
                       <Trash2 size={14} /> Cancel event
                     </Button>
                   )}
-                  <Button
-                    variant={e.rsvpedByMe || e.waitlistedByMe ? 'subtle' : 'primary'}
-                    className="!px-4 !py-1.5 text-sm"
-                    onClick={() => toggleRsvp(e.id)}
-                  >
-                    {e.rsvpedByMe ? (
-                      <>
-                        <Check size={15} /> Going
-                      </>
-                    ) : e.waitlistedByMe ? (
-                      'On waitlist'
-                    ) : e.capacity != null && e.rsvpCount >= e.capacity ? (
-                      'Join waitlist'
-                    ) : (
-                      'RSVP'
-                    )}
-                  </Button>
+                  {/* A host sees their own pending/rejected event, but the RSVP
+                      write path refuses anything not approved, so showing the
+                      button here offered an action that could only ever 400.
+                      Defaults to 'approved' to match the NOT NULL column default. */}
+                  {(e.status ?? 'approved') === 'approved' && (
+                    <Button
+                      variant={e.rsvpedByMe || e.waitlistedByMe ? 'subtle' : 'primary'}
+                      className="!px-4 !py-1.5 text-sm"
+                      onClick={() => toggleRsvp(e.id)}
+                    >
+                      {e.rsvpedByMe ? (
+                        <>
+                          <Check size={15} /> Going
+                        </>
+                      ) : e.waitlistedByMe ? (
+                        'On waitlist'
+                      ) : e.capacity != null && e.rsvpCount >= e.capacity ? (
+                        'Join waitlist'
+                      ) : (
+                        'RSVP'
+                      )}
+                    </Button>
+                  )}
                 </>
               )}
             </div>

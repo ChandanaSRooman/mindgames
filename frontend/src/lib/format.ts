@@ -69,3 +69,41 @@ export function sessionPriceLabel(s: { isPaid?: boolean; price?: number }): stri
   if (!s.isPaid) return null
   return s.price ? `Paid ₹${s.price.toLocaleString('en-IN')}` : 'Paid (price on request)'
 }
+
+// The display labels a session is stored with, derived from a real instant.
+// Must stay byte-identical to labelsFor() in backend/src/routes/mentorship.routes.ts:
+// a session offered here and one edited there are listed side by side, and the
+// server re-derives these same labels whenever the mentor moves a session.
+//
+// Pinned to Asia/Kolkata rather than the viewer's zone. The label carries a
+// literal "IST", so formatting in local time would write "6:00 PM IST" for a
+// mentor in London who meant 6pm their time — disagreeing with the instant
+// stored beside it and with the reminder, which is scheduled in IST.
+export function sessionLabels(when: Date): { dateLabel: string; timeLabel: string } {
+  const opts = { timeZone: 'Asia/Kolkata' } as const
+  return {
+    // en-IN gives "Fri, 20 Nov, 2026"; every label already stored reads
+    // "Fri, 26 Sep 2026", so the comma before the year goes.
+    dateLabel: when
+      .toLocaleDateString('en-IN', { ...opts, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+      .replace(/,(\s\d{4})$/, '$1'),
+    // en-IN gives a lowercase "pm"; existing labels are "8:00 PM IST".
+    timeLabel: `${when
+      .toLocaleTimeString('en-IN', { ...opts, hour: 'numeric', minute: '2-digit' })
+      .toUpperCase()} IST`,
+  }
+}
+
+// Tailwind classes for a mentorship badge pill, by tier. Shared between
+// MentorWorkspace and MentorshipRecord so the two never drift — silver and
+// gold are plain fills; crimson (the badges that take real volume or can't
+// be earned by volume at all, like a rating others give you) gets a
+// diagonal dark-red-to-black gradient via arbitrary-value classes rather
+// than a flat fill, so it reads as red-and-black, not just another pastel.
+export function badgeTierClasses(tier: 'silver' | 'gold' | 'crimson'): string {
+  if (tier === 'silver') return 'border-slate-300 bg-slate-50 text-slate-600'
+  if (tier === 'crimson') {
+    return 'border-red-700 bg-[linear-gradient(135deg,#7f1d1d_0%,#200606_60%,#000_100%)] text-red-200'
+  }
+  return 'border-amber-200 bg-amber-50 text-amber-800'
+}

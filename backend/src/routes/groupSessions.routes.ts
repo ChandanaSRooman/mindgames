@@ -237,9 +237,12 @@ groupSessionsRouter.get(
     if (!owns.rows[0].n) throw new ApiError(404, 'Group session not found (or you are not its host)')
 
     const rows = await query<{
-      mentee_id: string; name: string; photo: string | null; joined_at: Date; mentee_confirmed: boolean
+      mentee_id: string; name: string; photo: string | null; designation: string; company: string
+      joined_at: Date; mentee_confirmed: boolean
     }>(
-      `SELECT a.mentee_id, u.name, u.photo, a.joined_at, a.mentee_confirmed
+      // designation/company travel with the roster: names repeat across an
+      // alumni network, and the host needs to tell two of the same apart.
+      `SELECT a.mentee_id, u.name, u.photo, u.designation, u.company, a.joined_at, a.mentee_confirmed
          FROM group_session_attendees a JOIN users u ON u.id = a.mentee_id
         WHERE a.session_id = $1 ORDER BY a.joined_at`,
       [req.params.id],
@@ -249,6 +252,8 @@ groupSessionsRouter.get(
         id: r.mentee_id,
         name: r.name,
         photo: r.photo ?? undefined,
+        designation: r.designation,
+        company: r.company,
         joinedAt: r.joined_at.toISOString(),
         confirmed: r.mentee_confirmed,
       })),

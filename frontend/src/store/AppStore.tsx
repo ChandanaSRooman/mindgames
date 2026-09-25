@@ -133,6 +133,22 @@ interface AppContextValue {
   // mentorship + startups
   sessions: MentorshipSession[]
   bookSession: (mentorId: string, topic: string, date: string, time: string, serviceId?: string) => void
+  /** Mentor offers a connection a slot; they accept or decline it.
+   *  Same three-way result as acceptSession: 'error' means it genuinely
+   *  failed and has already been reported, so the caller must not close the
+   *  form as though the offer had been made. */
+  offerSession: (
+    menteeId: string, topic: string, date: string, time: string,
+    meetingLink?: string, scheduledAt?: string,
+  ) => Promise<'ok' | 'payment-required' | 'error'>
+  acceptSessionOffer: (id: string) => void
+  declineSessionOffer: (id: string) => void
+  /** Mentee confirms a completed session actually happened. */
+  confirmSession: (id: string) => void
+  /** Either side calls off a requested or upcoming session. */
+  cancelSession: (id: string) => void
+  /** Mentor adds or changes the join link; '' clears it. */
+  setSessionMeetingLink: (id: string, meetingLink: string) => Promise<boolean>
   /** 'payment-required' means the mentor needs a plan and the caller should
    *  open the pricing page; 'error' means it genuinely failed and has already
    *  been reported to the member, so the caller must not treat it as done. */
@@ -144,7 +160,7 @@ interface AppContextValue {
    *  scheduledAt is a real ISO instant — it is what makes the 6-hour
    *  reminder possible, since the date/time a session was booked with are
    *  free text nothing can be computed from. */
-  editSession: (id: string, changes: { topic?: string; scheduledAt?: string; meetingLink?: string }) => void
+  editSession: (id: string, changes: { topic?: string; scheduledAt?: string; meetingLink?: string }) => Promise<boolean>
   becomeMentor: (rate: number) => void
   startups: Startup[]
   submitStartup: (
@@ -848,16 +864,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   // Mentor actions on a session request; each returns the updated session.
+  // Resolves true only when the write actually landed. Callers that own a
+  // dialog need that answer: closing on a rejected promise throws away what
+  // the user typed while the error toast scrolls past. Actions that ignore
+  // the result are unaffected -- a void-typed field accepts any return.
   const sessionAction = useCallback(
-    (call: Promise<MentorshipSession>, successMsg: string) => {
+    (call: Promise<MentorshipSession>, successMsg: string) =>
       call.then(
         (updated) => {
           setSessions((list) => list.map((s) => (s.id === updated.id ? updated : s)))
           notify(successMsg)
+          return true
         },
-        (err) => notify(err instanceof Error ? err.message : 'Could not update the session.', 'error'),
-      )
-    },
+        (err) => {
+          notify(err instanceof Error ? err.message : 'Could not update the session.', 'error')
+          return false
+        },
+      ),
     [notify],
   )
 
@@ -882,6 +905,58 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     },
     [notify],
+  )
+  // A mentor offering a slot is gated by the same plan check as accepting a
+  // request, so this reports 'payment-required' the same way acceptSession
+  // does rather than showing a toast the mentor can't act on.
+  const offerSession = useCallback(
+    async (
+      menteeId: string, topic: string, date: string, time: string,
+      meetingLink?: string, scheduledAt?: string,
+    ): Promise<'ok' | 'payment-required' | 'error'> => {
+      try {
+        const session = await api.offerSession(menteeId, topic, date, time, meetingLink, scheduledAt)
+        setSessions((s) => [session, ...s])
+        notify('Session offered — waiting for them to accept.')
+        return 'ok'
+      } catch (err) {
+        if (isPaymentRequired(err)) return 'payment-required'
+        notify(err instanceof Error ? err.message : 'Could not offer the session.', 'error')
+        // 'error', not 'ok' — the same defect already fixed in acceptSession.
+        // Returning 'ok' told the caller the offer had been made, so the Host
+        // a session form closed and threw away everything the mentor typed
+        // while an error toast went past.
+        return 'error'
+      }
+    },
+    [notify],
+  )
+  const acceptSessionOffer = useCallback(
+    (id: string) => sessionAction(api.acceptSessionOffer(id), 'Session confirmed — see My Sessions.'),
+    [sessionAction],
+  )
+  const declineSessionOffer = useCallback(
+    (id: string) => sessionAction(api.declineSessionOffer(id), 'Offer declined.'),
+    [sessionAction],
+  )
+  // The mentee's half of mutual confirmation. Until both sides confirm, a
+  // session counts toward nobody's stats or badges.
+  const confirmSession = useCallback(
+    (id: string) =>
+      sessionAction(api.confirmSession(id), 'Confirmed — it now counts towards both your records. 🎓'),
+    [sessionAction],
+  )
+  const cancelSession = useCallback(
+    (id: string) => sessionAction(api.cancelSession(id), 'Session cancelled.'),
+    [sessionAction],
+  )
+  const setSessionMeetingLink = useCallback(
+    (id: string, meetingLink: string) =>
+      sessionAction(
+        api.setSessionMeetingLink(id, meetingLink),
+        meetingLink ? 'Meeting link saved — your mentee has been notified.' : 'Meeting link removed.',
+      ),
+    [sessionAction],
   )
   const rateSession = useCallback(
     (id: string, rating: number, review?: string) =>
@@ -1247,6 +1322,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     createCommunity,
     sessions,
     bookSession,
+    offerSession,
+    acceptSessionOffer,
+    declineSessionOffer,
+    confirmSession,
+    cancelSession,
+    setSessionMeetingLink,
     acceptSession,
     rateSession,
     declineSession,

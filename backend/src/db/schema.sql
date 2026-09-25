@@ -1122,6 +1122,11 @@ ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DE
 ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS mentee_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS mentor_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
+-- Who asked for this session — the mentee booking a mentor (the only way
+-- this worked until now), or the mentor proactively offering a connection a
+-- slot. Decides which side is the one who has to accept/decline: a mentee
+-- request waits on the mentor, a mentor offer waits on the mentee.
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS requested_by TEXT NOT NULL DEFAULT 'mentee' CHECK (requested_by IN ('mentor', 'mentee'));
 
 CREATE INDEX IF NOT EXISTS idx_sessions_mentor_confirmed
   ON mentorship_sessions (mentor_id, confirmed_at DESC) WHERE confirmed_at IS NOT NULL;

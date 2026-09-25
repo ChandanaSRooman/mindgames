@@ -52,8 +52,18 @@ export function MentorVerification({ user }: { user: User }) {
   const [application, setApplication] = useState<MentorApplication | null>(null)
   const [loading, setLoading] = useState(true)
   const [open, setOpen] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const requirements = mentorEligibility(user).requirements
+
+  // Arriving from a "Become a Mentor" button elsewhere in the app: bring the
+  // panel into view and open the form, so the destination is obvious rather
+  // than something to hunt for down the page.
+  useEffect(() => {
+    if (window.location.hash !== '#mentor-verification') return
+    panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setOpen(true)
+  }, [loading])
 
   useEffect(() => {
     let live = true
@@ -90,7 +100,10 @@ export function MentorVerification({ user }: { user: User }) {
   const declined = application?.status === 'declined'
 
   return (
-    <div className="mt-3 border-t border-[#edeff1] pt-3">
+    // Anchor target: "Become a Mentor" elsewhere in the app links to
+    // /profile#mentor-verification, since dropping someone on a long profile
+    // page with no idea which part of it they were sent for is a dead end.
+    <div id="mentor-verification" ref={panelRef} className="mt-3 scroll-mt-24 border-t border-[#edeff1] pt-3">
       <p className="flex items-center gap-1.5 text-xs font-semibold text-[#1c1c1c]">
         <Lock size={12} className="text-[#878a8c]" />
         To offer mentorship, submit proof of any one of these

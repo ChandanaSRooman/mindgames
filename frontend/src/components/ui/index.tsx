@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type Ref } from 'react'
 import { Link } from 'react-router-dom'
 import { BadgeCheck, Eye, EyeOff, Loader2 } from 'lucide-react'
 import { avatarGradient, initials } from '../../lib/format'
@@ -222,13 +222,17 @@ export function Card({
   children,
   className = '',
   id,
+  ref,
 }: {
   children: ReactNode
   className?: string
   id?: string
+  /** Optional, for callers that need to measure or scroll the card into
+   *  view. React 19 passes ref straight through as a prop. */
+  ref?: Ref<HTMLDivElement>
 }) {
   return (
-    <div id={id} className={`rounded-xl border border-[#edeff1] bg-white shadow-sm ${className}`}>
+    <div ref={ref} id={id} className={`rounded-xl border border-[#edeff1] bg-white shadow-sm ${className}`}>
       {children}
     </div>
   )

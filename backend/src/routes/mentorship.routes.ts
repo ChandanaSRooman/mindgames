@@ -28,10 +28,13 @@ interface SessionRow {
   is_paid: boolean
   price: number
   service_id: string | null
+  requested_by: 'mentor' | 'mentee'
+  mentee_confirmed: boolean
+  mentor_confirmed: boolean
 }
 
 const SESSION_SELECT = `
-  SELECT s.id, s.mentor_id, s.mentee_id, u.name AS mentee_name, s.topic, s.date_label, s.time_label, s.status, s.meeting_link, s.rating, s.is_paid, s.price, s.service_id
+  SELECT s.id, s.mentor_id, s.mentee_id, u.name AS mentee_name, s.topic, s.date_label, s.time_label, s.status, s.meeting_link, s.rating, s.is_paid, s.price, s.service_id, s.requested_by, s.mentee_confirmed, s.mentor_confirmed
   FROM mentorship_sessions s
   JOIN users u ON u.id = s.mentee_id`
 
@@ -50,6 +53,12 @@ function mapSession(r: SessionRow) {
     isPaid: r.is_paid,
     price: r.price,
     serviceId: r.service_id ?? undefined,
+    requestedBy: r.requested_by,
+    // Both halves of the mutual-confirmation pair, so the UI can show whose
+    // turn it is — without these the mentee had no way to see (or act on) a
+    // session waiting for their confirmation.
+    menteeConfirmed: r.mentee_confirmed,
+    mentorConfirmed: r.mentor_confirmed,
   }
 }
 
@@ -137,8 +146,12 @@ mentorshipRouter.post(
       } else {
         // Free allowance: the mentee's first FREE_SESSIONS non-declined sessions
         // are free; beyond that the session is paid at the mentor's rate.
+        // Only sessions this member asked for count against their own free
+        // allowance. A mentor offering their time for free must not burn the
+        // mentee's allowance — they never spent it.
         const used = await client.query<{ n: number }>(
-          `SELECT count(*)::int AS n FROM mentorship_sessions WHERE mentee_id = $1 AND status <> 'declined'`,
+          `SELECT count(*)::int AS n FROM mentorship_sessions
+            WHERE mentee_id = $1 AND status <> 'declined' AND requested_by = 'mentee'`,
           [req.user!.sub],
         )
         isPaid = used.rows[0].n >= FREE_SESSIONS
@@ -165,10 +178,119 @@ mentorshipRouter.post(
   }),
 )
 
+const offerSchema = z.object({
+  menteeId: z.string().min(1, 'menteeId is required'),
+  topic: z.string().trim().min(1, 'topic is required'),
+  date: z.string().trim().min(1, 'date is required'),
+  time: z.string().trim().min(1, 'time is required'),
+  // The offering mentor sets the link up front: unlike a mentee's request,
+  // there is no later "accept" step on the mentor's side to attach one at,
+  // so without this an offered session could never get a join link at all.
+  meetingLink: z.string().trim().url().optional().or(z.literal('')),
+  scheduledAt: z.string().datetime({ offset: true }).or(z.string().datetime()).optional(),
+})
+
+// POST /api/mentorship/sessions/offer — a mentor proactively offers a
+// specific connection a 1:1 session, the reverse of the usual booking flow
+// (mentee picks a mentor and requests). Restricted to connections, same rule
+// invite-only group sessions use, so this can't become a way to cold-message
+// anyone. Free — a mentor giving their own time away is a different thing
+// from a mentee's paid-after-the-free-allowance booking, and mixing the two
+// would tangle this into FREE_SESSIONS accounting that doesn't apply here.
+mentorshipRouter.post(
+  '/sessions/offer',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = offerSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
+    const { menteeId, topic, date, time, meetingLink, scheduledAt } = parsed.data
+    const when = scheduledAt ? new Date(scheduledAt) : null
+    // Same guard the PATCH edit route applies. The schema only proves the
+    // string is a datetime, not that it is ahead of now -- and a past
+    // scheduled_at never falls inside the reminder window
+    // (now() .. now() + 6h), so the reminder silently never fires.
+    if (when) {
+      if (Number.isNaN(+when)) throw new ApiError(400, 'A valid date and time is required')
+      if (+when < Date.now()) throw new ApiError(400, 'That time is in the past')
+    }
+    if (menteeId === req.user!.sub) throw new ApiError(400, 'Cannot offer yourself a session')
+
+    const me = await query<{ name: string; is_mentor: boolean }>(`SELECT name, is_mentor FROM users WHERE id = $1`, [req.user!.sub])
+    if (!me.rows[0]?.is_mentor) throw new ApiError(403, 'Only approved mentors can host a session')
+
+    // The paywall gate lands here rather than on the mentee's later
+    // acceptance: offering the slot is the mentor's commitment, the same
+    // moment accepting a mentee's request would be gated.
+    const sub = await getSubscription(req.user!.sub)
+    if (!sub.canAcceptSessions) {
+      throw new ApiError(402, sub.blockedReason ?? 'Hosting a session needs an active plan.')
+    }
+
+    const target = await query('SELECT 1 FROM users WHERE id = $1', [menteeId])
+    if (!target.rowCount) throw new ApiError(404, 'Member not found')
+
+    const connected = await query(
+      `SELECT 1 FROM connections
+        WHERE status = 'accepted'
+          AND ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))`,
+      [req.user!.sub, menteeId],
+    )
+    if (!connected.rowCount) throw new ApiError(403, 'You can only offer a session to a connection.')
+
+    // Only a pending offer the MENTOR made blocks another one. Without the
+    // requested_by filter a mentee's own pending request to this mentor counted
+    // as a duplicate, so the mentor was refused with a message about an offer
+    // they never made — and the way to clear it was to accept or decline the
+    // mentee's request, which is a different action entirely.
+    // The duplicate check and the insert used to be two separate statements,
+    // so two rapid submits could both pass the check and each create a pending
+    // offer. A transaction-scoped advisory lock keyed on this mentor+mentee
+    // pair serialises them -- the second waits for the first to commit, then
+    // sees its row and gets the 409. The lock releases with the transaction.
+    const ins = await withTransaction(async (client) => {
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        `mentorship:offer:${req.user!.sub}:${menteeId}`,
+      ])
+      const dup = await client.query(
+        `SELECT 1 FROM mentorship_sessions
+          WHERE mentor_id = $1 AND mentee_id = $2 AND status = 'requested' AND requested_by = 'mentor'`,
+        [req.user!.sub, menteeId],
+      )
+      if (dup.rowCount) throw new ApiError(409, 'You already have a pending offer with them.')
+
+      return client.query<{ id: string }>(
+        `INSERT INTO mentorship_sessions
+           (mentor_id, mentee_id, topic, date_label, time_label, status, is_paid, price,
+            requested_by, meeting_link, scheduled_at)
+         VALUES ($1, $2, $3, $4, $5, 'requested', FALSE, 0, 'mentor', $6, $7) RETURNING id`,
+        [
+          req.user!.sub, menteeId, topic, date, time,
+          meetingLink || null,
+          when && !Number.isNaN(when.getTime()) ? when : null,
+        ],
+      )
+    })
+    void pushNotification(
+      menteeId,
+      'mentorship',
+      `${me.rows[0].name} offered you a mentorship session: "${topic}" on ${date} at ${time}.`,
+      req.user!.sub,
+      { type: 'session', id: ins.rows[0].id },
+    )
+
+    const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [ins.rows[0].id])
+    res.status(201).json(mapSession(full.rows[0]))
+  }),
+)
+
 // Fetch a session and assert the caller is its mentor.
 async function sessionForMentor(id: string, me: string) {
-  const r = await query<{ mentee_id: string; topic: string; status: string; date_label: string; time_label: string }>(
-    `SELECT mentee_id, topic, status, date_label, time_label FROM mentorship_sessions WHERE id = $1 AND mentor_id = $2`,
+  const r = await query<{
+    mentee_id: string; topic: string; status: string; date_label: string; time_label: string
+    requested_by: 'mentor' | 'mentee'
+  }>(
+    `SELECT mentee_id, topic, status, date_label, time_label, requested_by
+       FROM mentorship_sessions WHERE id = $1 AND mentor_id = $2`,
     [id, me],
   )
   if (!r.rowCount) throw new ApiError(404, 'Session not found (or you are not its mentor)')
@@ -182,6 +304,11 @@ mentorshipRouter.post(
   asyncHandler(async (req, res) => {
     const s = await sessionForMentor(req.params.id, req.user!.sub)
     if (s.status !== 'requested') throw new ApiError(400, `Session is already ${s.status}`)
+    // A slot this mentor offered is waiting on the *mentee* — accepting it
+    // here would confirm a session the other side never agreed to.
+    if (s.requested_by === 'mentor') {
+      throw new ApiError(400, "That's a slot you offered — it's waiting for them to accept it.")
+    }
 
     // The subscription gate. Giving a session is what a mentor pays for, so
     // it is checked here rather than at booking — a mentee is never blocked
@@ -227,7 +354,11 @@ const editSchema = z.object({
   // A real instant, which is the whole point of this route: date_label and
   // time_label are text a human typed and nothing can be computed from them.
   scheduledAt: z.string().datetime({ offset: true }).or(z.string().datetime()).optional(),
-  meetingLink: z.string().trim().max(500).optional(),
+  // .url() to match the two other meeting-link schemas in this file. Without
+  // it a scheme-less "meet.google.com/abc" was stored and rendered as an
+  // app-relative href, so the join link led to a 404 inside the app. The
+  // empty string is allowed so the mentor can clear the link.
+  meetingLink: z.string().trim().url().max(500).optional().or(z.literal('')),
 })
 
 /** The free-text labels the existing UI renders, derived from the real
@@ -355,7 +486,177 @@ mentorshipRouter.post(
     void pushNotification(
       s.mentee_id,
       'mentorship',
-      `${me.rows[0].name} declined your session request "${s.topic}". You can request another slot.`,
+      // The same action means two different things depending on who asked:
+      // declining a request, or withdrawing a slot you offered.
+      s.requested_by === 'mentor'
+        ? `${me.rows[0].name} withdrew the session they offered you: "${s.topic}".`
+        : `${me.rows[0].name} declined your session request "${s.topic}". You can request another slot.`,
+      req.user!.sub,
+      { type: 'session', id: req.params.id },
+    )
+    const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
+    res.json(mapSession(full.rows[0]))
+  }),
+)
+
+const linkSchema = z.object({
+  meetingLink: z.string().trim().url().or(z.literal('')),
+})
+
+// POST /api/mentorship/sessions/:id/meeting-link — the mentor adds or
+// changes where the session actually happens.
+//
+// Until now a link could only be attached in the one instant the mentor
+// accepted a request, and only for requests — a mentor who confirmed without
+// one, or who offered the slot themselves, left the other side with a
+// "Confirmed" session and no way to join it. Passing '' clears the link.
+mentorshipRouter.post(
+  '/sessions/:id/meeting-link',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = linkSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, 'A valid https:// link is required')
+
+    const s = await sessionForMentor(req.params.id, req.user!.sub)
+    if (s.status !== 'requested' && s.status !== 'upcoming') {
+      throw new ApiError(400, `A ${s.status} session's link cannot be changed`)
+    }
+
+    await query(`UPDATE mentorship_sessions SET meeting_link = $2 WHERE id = $1`, [
+      req.params.id,
+      parsed.data.meetingLink || null,
+    ])
+    if (parsed.data.meetingLink) {
+      const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
+      void pushNotification(
+        s.mentee_id,
+        'mentorship',
+        `${me.rows[0].name} added a meeting link for "${s.topic}" — see My Sessions.`,
+        req.user!.sub,
+        { type: 'session', id: req.params.id },
+      )
+    }
+    const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
+    res.json(mapSession(full.rows[0]))
+  }),
+)
+
+// POST /api/mentorship/sessions/:id/cancel — either side calls off a session
+// that hasn't happened. Until now nothing could: a mentee couldn't withdraw a
+// request, and neither side could call off a confirmed slot, so a session
+// nobody intended to attend sat in both queues forever.
+//
+// It lands on 'declined' rather than a new status: that is already the
+// "didn't happen" state the UI renders and the free-allowance count skips,
+// and adding a fifth status would mean touching every filter and query that
+// reads one, for no behavioural gain.
+mentorshipRouter.post(
+  '/sessions/:id/cancel',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const me = req.user!.sub
+    const r = await query<{ mentor_id: string; mentee_id: string; topic: string; status: string }>(
+      `SELECT mentor_id, mentee_id, topic, status FROM mentorship_sessions
+        WHERE id = $1 AND (mentor_id = $2 OR mentee_id = $2)`,
+      [req.params.id, me],
+    )
+    if (!r.rowCount) throw new ApiError(404, 'Session not found (or you are not part of it)')
+    const s = r.rows[0]
+    if (s.status !== 'requested' && s.status !== 'upcoming') {
+      throw new ApiError(400, `A ${s.status} session cannot be cancelled`)
+    }
+
+    // The status above was read in a separate statement, so an accept landing
+    // in between would be silently overwritten here -- after it had already
+    // consumed a slot from the mentor's monthly cap. Re-asserting the
+    // precondition inside the WHERE lets the database settle the race:
+    // zero rows updated means we lost it, and nothing gets clobbered.
+    const cancelled = await query(
+      `UPDATE mentorship_sessions SET status = 'declined'
+        WHERE id = $1 AND status IN ('requested', 'upcoming')`,
+      [req.params.id],
+    )
+    if (!cancelled.rowCount) {
+      throw new ApiError(409, 'That session was just updated by the other side. Refresh and try again.')
+    }
+
+    const other = s.mentor_id === me ? s.mentee_id : s.mentor_id
+    const mine = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [me])
+    void pushNotification(
+      other,
+      'mentorship',
+      s.status === 'requested'
+        ? `${mine.rows[0].name} withdrew the session "${s.topic}".`
+        : `${mine.rows[0].name} cancelled your upcoming session "${s.topic}".`,
+      me,
+      { type: 'session', id: req.params.id },
+    )
+    const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
+    res.json(mapSession(full.rows[0]))
+  }),
+)
+
+// Fetch a session and assert the caller is its mentee, and that it's an
+// offer (requested_by = 'mentor') — an ordinary mentee-initiated request
+// waiting on the mentor must not be silently no-op'd through this path.
+async function sessionForOfferedMentee(id: string, me: string) {
+  const r = await query<{ mentor_id: string; topic: string; status: string; date_label: string; time_label: string; requested_by: string }>(
+    `SELECT mentor_id, topic, status, date_label, time_label, requested_by FROM mentorship_sessions WHERE id = $1 AND mentee_id = $2`,
+    [id, me],
+  )
+  if (!r.rowCount) throw new ApiError(404, 'Session not found (or you are not its mentee)')
+  if (r.rows[0].requested_by !== 'mentor') throw new ApiError(400, 'That session was not offered by a mentor')
+  return r.rows[0]
+}
+
+// POST /api/mentorship/sessions/:id/accept-offer — mentee accepts a
+// mentor-initiated offer. No subscription gate: the mentor already committed
+// (and was gated) when they made the offer; a mentee accepting one was
+// never billed for anything, same as before this flow existed.
+mentorshipRouter.post(
+  '/sessions/:id/accept-offer',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const s = await sessionForOfferedMentee(req.params.id, req.user!.sub)
+    if (s.status !== 'requested') throw new ApiError(400, `Session is already ${s.status}`)
+
+    await query(
+      `UPDATE mentorship_sessions
+          SET status = 'upcoming', accepted_at = now()
+        WHERE id = $1 AND requested_by = 'mentor'`,
+      [req.params.id],
+    )
+    const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
+    void pushNotification(
+      s.mentor_id,
+      'mentorship',
+      `${me.rows[0].name} accepted your session offer "${s.topic}" — ${s.date_label} at ${s.time_label}.`,
+      req.user!.sub,
+      { type: 'session', id: req.params.id },
+    )
+    const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
+    res.json(mapSession(full.rows[0]))
+  }),
+)
+
+// POST /api/mentorship/sessions/:id/decline-offer — mentee declines a
+// mentor-initiated offer.
+mentorshipRouter.post(
+  '/sessions/:id/decline-offer',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const s = await sessionForOfferedMentee(req.params.id, req.user!.sub)
+    if (s.status !== 'requested') throw new ApiError(400, `Session is already ${s.status}`)
+
+    await query(
+      `UPDATE mentorship_sessions SET status = 'declined' WHERE id = $1 AND requested_by = 'mentor'`,
+      [req.params.id],
+    )
+    const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
+    void pushNotification(
+      s.mentor_id,
+      'mentorship',
+      `${me.rows[0].name} declined your session offer "${s.topic}".`,
       req.user!.sub,
       { type: 'session', id: req.params.id },
     )
@@ -925,6 +1226,12 @@ export function startSessionReminderScheduler(): void {
           timeZone: 'Asia/Kolkata',
           weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
         })
+        // The claim window is 0–6 hours, not exactly 6: a session booked or
+        // moved to 25 minutes out is claimed by the very next tick. Saying
+        // "in 6 hours" in the subject told that person it could wait.
+        const mins = Math.max(0, Math.round((+new Date(s.scheduled_at) - Date.now()) / 60000))
+        const lead =
+          mins < 90 ? `in ${mins} min` : `in ${Math.round(mins / 60)} hours`
         // One row, two people, opposite wording — each is told who they are
         // meeting rather than reading their own name back.
         const sides = [
@@ -934,7 +1241,7 @@ export function startSessionReminderScheduler(): void {
         for (const side of sides) {
           void sendEmail(
             side.email,
-            `Reminder: "${s.topic}" in 6 hours — ${when} IST`,
+            `Reminder: "${s.topic}" ${lead} — ${when} IST`,
             `Hi ${side.name},\n\n` +
               `A reminder that your session "${s.topic}" starts at ${when} IST.\n` +
               `You're ${side.role} ${side.other}.\n\n` +
