@@ -3,6 +3,8 @@ import { ArrowLeft, ArrowRight, Check, Sparkles } from 'lucide-react'
 import { Button, Card } from '../ui'
 import { api, type CareerAssessmentInput } from '../../lib/api'
 import { useApp } from '../../store/AppStore'
+import { diffAssessment } from '../../lib/careerDiff'
+import { ChangeSummary } from './ChangeSummary'
 import {
   CAREER_GOALS,
   CURRENT_SITUATIONS,
@@ -41,10 +43,17 @@ const EMPTY: CareerAssessmentInput = {
  *  always regenerates the roadmap (a retake is a new version, not an edit). */
 export function CareerAssessmentWizard({
   initial,
+  previous = null,
   onCancel,
   onDone,
 }: {
   initial: CareerAssessment | null
+  /** The last *submitted* assessment, when there is one. Used only to show a
+   *  before/after summary on the review step, so someone retaking the
+   *  assessment can see what their answers change before the roadmap is
+   *  rebuilt. `initial` may be an unfinished draft, which is why this is a
+   *  separate prop rather than reusing it. */
+  previous?: CareerAssessment | null
   onCancel: () => void
   onDone: (roadmap: CareerRoadmap) => void
 }) {
@@ -282,6 +291,17 @@ export function CareerAssessmentWizard({
             className="w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
           />
         </Question>
+      )}
+
+      {isReview && previous && (
+        <div className="mb-5">
+          <ChangeSummary
+            title="What this changes"
+            hint="Compared with the assessment your current roadmap was built from."
+            rows={diffAssessment(previous, a)}
+            emptyText="Your answers match your last assessment — the roadmap will be rebuilt from the same inputs."
+          />
+        </div>
       )}
 
       {isReview && (

@@ -1,0 +1,58 @@
+import { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { ArrowLeft, Briefcase } from 'lucide-react'
+import { useApp } from '../store/AppStore'
+import { ManageServicesPanel } from '../components/career/ManageServicesPanel'
+
+/**
+ * Managing the services you offer, on its own route
+ * (/career-guidance/services).
+ *
+ * Same reasoning as the assessment and roadmap screens: adding, editing and
+ * deleting a listing is its own job, and stacking it on top of the roadmap
+ * meant the thing you were editing and the thing you were reading shared a
+ * column.
+ *
+ * The panel component is unchanged and still renders inline inside Mentor
+ * Space — this page just wraps it, so both surfaces stay in step.
+ */
+export function ManageServicesPage() {
+  const { currentUser } = useApp()
+  const navigate = useNavigate()
+
+  const back = () => navigate('/career-guidance')
+
+  // Listing a service is gated on being an approved mentor (the server
+  // enforces it too). Replace rather than push, so Back from the roadmap
+  // page doesn't land here again.
+  useEffect(() => {
+    if (!currentUser.isMentor) navigate('/career-guidance', { replace: true })
+  }, [currentUser.isMentor, navigate])
+
+  if (!currentUser.isMentor) return null
+
+  return (
+    <div className="flex flex-col gap-4 pb-4">
+      <div className="flex items-start gap-2">
+        <button
+          onClick={back}
+          className="mt-1 rounded-full p-1 text-[#878a8c] hover:bg-gray-100"
+          aria-label="Back to your roadmap"
+        >
+          <ArrowLeft size={20} />
+        </button>
+        <span className="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-orange-50 text-[#ff4500]">
+          <Briefcase size={20} />
+        </span>
+        <div>
+          <h1 className="text-2xl font-bold text-[#1c1c1c]">Services you offer</h1>
+          <p className="text-sm text-[#878a8c]">
+            Add, edit, pause or remove what you provide to other members.
+          </p>
+        </div>
+      </div>
+
+      <ManageServicesPanel hideHeading onClose={back} />
+    </div>
+  )
+}

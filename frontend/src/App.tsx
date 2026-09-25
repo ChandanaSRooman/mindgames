@@ -32,6 +32,9 @@ import { StartupVarsity } from './pages/StartupVarsity'
 import { News } from './pages/News'
 import { ExploreCommunities } from './pages/ExploreCommunities'
 import { CareerGuidance } from './pages/CareerGuidance'
+import { CareerAssessmentPage } from './pages/CareerAssessmentPage'
+import { EditRoadmapPage } from './pages/EditRoadmapPage'
+import { ManageServicesPage } from './pages/ManageServicesPage'
 import { CommunityPage } from './pages/CommunityPage'
 import { Profile } from './pages/Profile'
 import { Settings } from './pages/Settings'
@@ -129,6 +132,11 @@ export default function App() {
             <Route path="/news" element={<News />} />
             <Route path="/explore" element={<ExploreCommunities />} />
             <Route path="/career-guidance" element={<CareerGuidance />} />
+            {/* The edit flows are their own screens, not panels stacked on the
+                roadmap page — each gets its own history entry so Back works. */}
+            <Route path="/career-guidance/assessment" element={<CareerAssessmentPage />} />
+            <Route path="/career-guidance/roadmap/edit" element={<EditRoadmapPage />} />
+            <Route path="/career-guidance/services" element={<ManageServicesPage />} />
             <Route path="/community/:id" element={<CommunityPage />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/profile/:id" element={<Profile />} />

@@ -741,6 +741,10 @@ export const api = {
     http<AlumniService>('/api/career/services', { method: 'POST', body: JSON.stringify(body) }),
   updateService: (id: string, body: Partial<ServiceInput> & { active?: boolean }) =>
     http<AlumniService>(`/api/career/services/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  // Permanent removal. Returns how many already-booked sessions were unlinked
+  // from the service, so the panel can report the real consequence.
+  deleteService: (id: string) =>
+    http<{ unlinkedSessions: number }>(`/api/career/services/${id}`, { method: 'DELETE' }),
 }
 
 export interface CareerAssessmentInput {

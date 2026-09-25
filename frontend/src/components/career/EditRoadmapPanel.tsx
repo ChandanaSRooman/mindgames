@@ -3,6 +3,8 @@ import { ArrowDown, ArrowUp, Pause, Play, Plus, Trash2, X } from 'lucide-react'
 import { Button, Card } from '../ui'
 import { api } from '../../lib/api'
 import { useApp } from '../../store/AppStore'
+import { diffRoadmap } from '../../lib/careerDiff'
+import { ChangeSummary } from './ChangeSummary'
 import type { CareerRoadmap, CareerStage, CareerStageStatus } from '../../types'
 
 type EditableStage = Pick<CareerStage, 'stepKey' | 'title' | 'status' | 'durationWeeks'>
@@ -14,10 +16,14 @@ export function EditRoadmapPanel({
   roadmap,
   onClose,
   onSaved,
+  hideHeading = false,
 }: {
   roadmap: CareerRoadmap
   onClose: () => void
   onSaved: (r: CareerRoadmap) => void
+  /** Set when the surrounding screen already carries the title and a way out,
+   *  so the panel doesn't repeat "Edit your roadmap" and offer a second close. */
+  hideHeading?: boolean
 }) {
   const { notify } = useApp()
   const [stages, setStages] = useState<EditableStage[]>(
@@ -29,6 +35,17 @@ export function EditRoadmapPanel({
     })),
   )
   const [saving, setSaving] = useState(false)
+
+  // The saved plan, captured once from the roadmap prop. Everything the member
+  // does below is compared against this, so the panel can say exactly what
+  // "Save" is about to change.
+  const original: EditableStage[] = roadmap.stages.map((s) => ({
+    stepKey: s.stepKey,
+    title: s.title,
+    status: s.status,
+    durationWeeks: s.durationWeeks,
+  }))
+  const changes = diffRoadmap(original, stages)
 
   const update = (i: number, patch: Partial<EditableStage>) =>
     setStages((list) => list.map((s, idx) => (idx === i ? { ...s, ...patch } : s)))
@@ -61,6 +78,10 @@ export function EditRoadmapPanel({
       notify('Every stage needs a title.', 'error')
       return
     }
+    if (changes.length === 0) {
+      notify('Nothing to save — your plan is unchanged.', 'info')
+      return
+    }
     setSaving(true)
     try {
       onSaved(await api.editCareerRoadmap(stages))
@@ -77,15 +98,17 @@ export function EditRoadmapPanel({
     <Card className="p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-bold text-[#1c1c1c]">Edit your roadmap</h2>
+          {!hideHeading && <h2 className="text-lg font-bold text-[#1c1c1c]">Edit your roadmap</h2>}
           <p className="text-sm text-[#878a8c]">
             Rename, reorder, pause or remove stages. To change your goal, timeline or hours, edit
             your assessment instead — that rebuilds the plan as a new version.
           </p>
         </div>
-        <button onClick={onClose} className="rounded-full p-1 text-[#878a8c] hover:bg-gray-100" aria-label="Close">
-          <X size={18} />
-        </button>
+        {!hideHeading && (
+          <button onClick={onClose} className="rounded-full p-1 text-[#878a8c] hover:bg-gray-100" aria-label="Close">
+            <X size={18} />
+          </button>
+        )}
       </div>
 
       <div className="flex flex-col gap-2">
@@ -129,6 +152,18 @@ export function EditRoadmapPanel({
         ))}
       </div>
 
+      <div className="mt-4">
+        <ChangeSummary
+          hint="Compared with the plan you have saved right now."
+          rows={changes.map((c) => ({
+            label: c.stage,
+            before: c.before,
+            after: c.after,
+            tag: c.kind,
+          }))}
+        />
+      </div>
+
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-[#edeff1] pt-4">
         <Button variant="outline" icon={<Plus size={14} />} onClick={add}>
           Add a stage
@@ -137,7 +172,7 @@ export function EditRoadmapPanel({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={saving} onClick={save}>
+          <Button loading={saving} disabled={changes.length === 0} onClick={save}>
             Save roadmap
           </Button>
         </div>

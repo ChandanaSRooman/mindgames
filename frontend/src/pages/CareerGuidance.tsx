@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Briefcase, Compass, Pencil, Route, SlidersHorizontal, Sparkles } from 'lucide-react'
+import {
+  ArrowLeft, Briefcase, Compass, HelpCircle, Pencil, Route, SlidersHorizontal, Sparkles,
+} from 'lucide-react'
 import { Button, Card } from '../components/ui'
 import { api } from '../lib/api'
 import { useApp } from '../store/AppStore'
-import { CareerAssessmentWizard } from '../components/career/CareerAssessmentWizard'
 import { CareerGoalSummary } from '../components/career/CareerGoalSummary'
 import { CareerRoadmapTimeline } from '../components/career/CareerRoadmapTimeline'
 import { AlumniHelpSection } from '../components/career/AlumniHelpSection'
 import { MatchedServices } from '../components/career/MatchedServices'
 import { NextStepCard, QuickAccessCard } from '../components/career/NextStepCard'
-import { ManageServicesPanel } from '../components/career/ManageServicesPanel'
-import { EditRoadmapPanel } from '../components/career/EditRoadmapPanel'
+import { CareerGuidanceIntro } from '../components/career/CareerGuidanceIntro'
 import { serviceName } from '../lib/careerServices'
+import { CAREER_INTRO_SEEN_KEY } from '../lib/careerIntro'
 import type {
   AlumniHelper,
   AlumniService,
@@ -44,10 +45,36 @@ export function CareerGuidance() {
   const [allServices, setAllServices] = useState<AlumniService[] | null>(null)
   const [showingAll, setShowingAll] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [wizard, setWizard] = useState(false)
-  const [editingRoadmap, setEditingRoadmap] = useState(false)
-  const [managing, setManaging] = useState(false)
   const [booking, setBooking] = useState<BookingTarget | null>(null)
+  const [showIntro, setShowIntro] = useState(false)
+
+  // Editing happens on its own routes rather than in panels stacked on this
+  // page — see CareerAssessmentPage and EditRoadmapPage.
+  const goToAssessment = useCallback(() => navigate('/career-guidance/assessment'), [navigate])
+  const goToRoadmapEdit = useCallback(() => navigate('/career-guidance/roadmap/edit'), [navigate])
+  const goToServices = useCallback(() => navigate('/career-guidance/services'), [navigate])
+
+  // The walkthrough opens by itself the first time someone lands here, because
+  // the page otherwise starts with a form and no explanation of what the
+  // feature is for. After that it is on demand only.
+  // localStorage throws in some privacy modes, so a failed read must not take
+  // the page down with it — worst case the tour opens once more than needed.
+  const markIntroSeen = useCallback(() => {
+    setShowIntro(false)
+    try {
+      window.localStorage.setItem(CAREER_INTRO_SEEN_KEY, '1')
+    } catch {
+      /* ignore — the tour is still reachable from "How this works" */
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      if (!window.localStorage.getItem(CAREER_INTRO_SEEN_KEY)) setShowIntro(true)
+    } catch {
+      /* ignore */
+    }
+  }, [])
 
   const loadRoadmapExtras = useCallback(() => {
     Promise.all([api.getCareerAlumniHelp(), api.getMatchedServices()])
@@ -111,26 +138,6 @@ export function CareerGuidance() {
     )
   }
 
-  if (wizard) {
-    return (
-      <div className="flex flex-col gap-4">
-        <PageHeader onBack={() => setWizard(false)} />
-        <CareerAssessmentWizard
-          initial={draft ?? assessment}
-          onCancel={() => setWizard(false)}
-          onDone={(r) => {
-            setRoadmap(r)
-            setDraft(null)
-            setWizard(false)
-            loadRoadmapExtras()
-            api.getLastCareerAssessment().then(setAssessment).catch(() => {})
-            notify('Your roadmap is ready.', 'success')
-          }}
-        />
-      </div>
-    )
-  }
-
   if (!roadmap) {
     return (
       <div className="flex flex-col gap-4">
@@ -140,15 +147,30 @@ export function CareerGuidance() {
         <PageHeader
           onBack={() => navigate(-1)}
           actions={
-            currentUser.isMentor ? (
-              <Button variant="outline" icon={<Briefcase size={14} />} onClick={() => setManaging((v) => !v)}>
-                My services
+            <>
+              <Button
+                variant="ghost"
+                icon={<HelpCircle size={14} />}
+                onClick={() => setShowIntro(true)}
+              >
+                How this works
               </Button>
-            ) : undefined
+              {currentUser.isMentor && (
+                <Button variant="outline" icon={<Briefcase size={14} />} onClick={goToServices}>
+                  My services
+                </Button>
+              )}
+            </>
           }
         />
-        {managing && <ManageServicesPanel onClose={() => setManaging(false)} />}
-        <EmptyState hasDraft={!!draft} onStart={() => setWizard(true)} />
+        <EmptyState hasDraft={!!draft} onStart={goToAssessment} />
+        {showIntro && (
+          <CareerGuidanceIntro
+            onClose={markIntroSeen}
+            onStart={goToAssessment}
+            startLabel={draft ? 'Resume my assessment' : 'Start my assessment'}
+          />
+        )}
       </div>
     )
   }
@@ -162,37 +184,27 @@ export function CareerGuidance() {
         onBack={() => navigate(-1)}
         actions={
           <>
-            <Button variant="outline" icon={<Pencil size={14} />} onClick={() => setWizard(true)}>
+            <Button
+              variant="ghost"
+              icon={<HelpCircle size={14} />}
+              onClick={() => setShowIntro(true)}
+            >
+              How this works
+            </Button>
+            <Button variant="outline" icon={<Pencil size={14} />} onClick={goToAssessment}>
               Edit assessment
             </Button>
-            <Button
-              variant="outline"
-              icon={<SlidersHorizontal size={14} />}
-              onClick={() => setEditingRoadmap((v) => !v)}
-            >
+            <Button variant="outline" icon={<SlidersHorizontal size={14} />} onClick={goToRoadmapEdit}>
               Edit roadmap
             </Button>
             {currentUser.isMentor && (
-              <Button variant="outline" icon={<Briefcase size={14} />} onClick={() => setManaging((v) => !v)}>
+              <Button variant="outline" icon={<Briefcase size={14} />} onClick={goToServices}>
                 My services
               </Button>
             )}
           </>
         }
       />
-
-      {editingRoadmap && (
-        <EditRoadmapPanel
-          roadmap={roadmap}
-          onClose={() => setEditingRoadmap(false)}
-          onSaved={(r) => {
-            setRoadmap(r)
-            loadRoadmapExtras()
-          }}
-        />
-      )}
-
-      {managing && <ManageServicesPanel onClose={() => setManaging(false)} />}
 
       <CareerGoalSummary roadmap={roadmap} supportPreference={assessment?.supportPreference ?? ''} />
 
@@ -251,6 +263,14 @@ export function CareerGuidance() {
           </span>
         </span>
       </div>
+
+      {showIntro && (
+        <CareerGuidanceIntro
+          onClose={markIntroSeen}
+          onStart={goToRoadmapEdit}
+          startLabel="Shape my roadmap"
+        />
+      )}
 
       {booking && (
         <BookModal
