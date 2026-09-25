@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import { Avatar, Button, Card } from '../ui'
 import { api } from '../../lib/api'
-import { badgeTierClasses, roleLine } from '../../lib/format'
+import { badgeTierClasses, roleLine, sessionLabels } from '../../lib/format'
 import { useApp } from '../../store/AppStore'
 import { ManageServicesPanel } from '../career/ManageServicesPanel'
 import { MenteeRoadmapModal } from './MenteeRoadmapModal'
@@ -449,12 +449,10 @@ function OfferSessionModal({ onClose, onNeedsPlan }: { onClose: () => void; onNe
     if (!topic.trim()) return notify('Add what the session will cover.', 'error')
     if (!date || !time) return notify('Pick a date and time.', 'error')
     // Same human-readable labels the booking flow stores, so both kinds of
-    // session render identically everywhere they're listed.
-    const dateLabel = new Date(`${date}T00:00:00`).toLocaleDateString('en-IN', {
-      weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
-    })
-    const timeLabel =
-      new Date(`${date}T${time}`).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) + ' IST'
+    // session render identically everywhere they're listed. Derived from the
+    // one instant below, so the label and the timestamp cannot disagree.
+    const when = new Date(`${date}T${time}`)
+    const { dateLabel, timeLabel } = sessionLabels(when)
 
     setSaving(true)
     // The real timestamp travels alongside the display labels: there is no
@@ -462,10 +460,13 @@ function OfferSessionModal({ onClose, onNeedsPlan }: { onClose: () => void; onNe
     const result = await offerSession(
       menteeId, topic.trim(), dateLabel, timeLabel,
       meetingLink.trim() || undefined,
-      new Date(`${date}T${time}`).toISOString(),
+      when.toISOString(),
     )
     setSaving(false)
     if (result === 'payment-required') return onNeedsPlan()
+    // Keep the form open on a genuine failure so the mentor can retry —
+    // closing would discard everything they just typed.
+    if (result === 'error') return
     onClose()
   }
 

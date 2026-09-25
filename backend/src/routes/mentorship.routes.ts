@@ -229,8 +229,14 @@ mentorshipRouter.post(
     )
     if (!connected.rowCount) throw new ApiError(403, 'You can only offer a session to a connection.')
 
+    // Only a pending offer the MENTOR made blocks another one. Without the
+    // requested_by filter a mentee's own pending request to this mentor counted
+    // as a duplicate, so the mentor was refused with a message about an offer
+    // they never made — and the way to clear it was to accept or decline the
+    // mentee's request, which is a different action entirely.
     const dup = await query(
-      `SELECT 1 FROM mentorship_sessions WHERE mentor_id = $1 AND mentee_id = $2 AND status = 'requested'`,
+      `SELECT 1 FROM mentorship_sessions
+        WHERE mentor_id = $1 AND mentee_id = $2 AND status = 'requested' AND requested_by = 'mentor'`,
       [req.user!.sub, menteeId],
     )
     if (dup.rowCount) throw new ApiError(409, 'You already have a pending offer with them.')
@@ -330,7 +336,11 @@ const editSchema = z.object({
   // A real instant, which is the whole point of this route: date_label and
   // time_label are text a human typed and nothing can be computed from them.
   scheduledAt: z.string().datetime({ offset: true }).or(z.string().datetime()).optional(),
-  meetingLink: z.string().trim().max(500).optional(),
+  // .url() to match the two other meeting-link schemas in this file. Without
+  // it a scheme-less "meet.google.com/abc" was stored and rendered as an
+  // app-relative href, so the join link led to a 404 inside the app. The
+  // empty string is allowed so the mentor can clear the link.
+  meetingLink: z.string().trim().url().max(500).optional().or(z.literal('')),
 })
 
 /** The free-text labels the existing UI renders, derived from the real
@@ -1186,6 +1196,12 @@ export function startSessionReminderScheduler(): void {
           timeZone: 'Asia/Kolkata',
           weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
         })
+        // The claim window is 0–6 hours, not exactly 6: a session booked or
+        // moved to 25 minutes out is claimed by the very next tick. Saying
+        // "in 6 hours" in the subject told that person it could wait.
+        const mins = Math.max(0, Math.round((+new Date(s.scheduled_at) - Date.now()) / 60000))
+        const lead =
+          mins < 90 ? `in ${mins} min` : `in ${Math.round(mins / 60)} hours`
         // One row, two people, opposite wording — each is told who they are
         // meeting rather than reading their own name back.
         const sides = [
@@ -1195,7 +1211,7 @@ export function startSessionReminderScheduler(): void {
         for (const side of sides) {
           void sendEmail(
             side.email,
-            `Reminder: "${s.topic}" in 6 hours — ${when} IST`,
+            `Reminder: "${s.topic}" ${lead} — ${when} IST`,
             `Hi ${side.name},\n\n` +
               `A reminder that your session "${s.topic}" starts at ${when} IST.\n` +
               `You're ${side.role} ${side.other}.\n\n` +

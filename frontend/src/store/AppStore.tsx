@@ -133,11 +133,14 @@ interface AppContextValue {
   // mentorship + startups
   sessions: MentorshipSession[]
   bookSession: (mentorId: string, topic: string, date: string, time: string, serviceId?: string) => void
-  /** Mentor offers a connection a slot; they accept or decline it. */
+  /** Mentor offers a connection a slot; they accept or decline it.
+   *  Same three-way result as acceptSession: 'error' means it genuinely
+   *  failed and has already been reported, so the caller must not close the
+   *  form as though the offer had been made. */
   offerSession: (
     menteeId: string, topic: string, date: string, time: string,
     meetingLink?: string, scheduledAt?: string,
-  ) => Promise<'ok' | 'payment-required'>
+  ) => Promise<'ok' | 'payment-required' | 'error'>
   acceptSessionOffer: (id: string) => void
   declineSessionOffer: (id: string) => void
   /** Mentee confirms a completed session actually happened. */
@@ -903,7 +906,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (
       menteeId: string, topic: string, date: string, time: string,
       meetingLink?: string, scheduledAt?: string,
-    ): Promise<'ok' | 'payment-required'> => {
+    ): Promise<'ok' | 'payment-required' | 'error'> => {
       try {
         const session = await api.offerSession(menteeId, topic, date, time, meetingLink, scheduledAt)
         setSessions((s) => [session, ...s])
@@ -912,7 +915,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       } catch (err) {
         if (isPaymentRequired(err)) return 'payment-required'
         notify(err instanceof Error ? err.message : 'Could not offer the session.', 'error')
-        return 'ok'
+        // 'error', not 'ok' — the same defect already fixed in acceptSession.
+        // Returning 'ok' told the caller the offer had been made, so the Host
+        // a session form closed and threw away everything the mentor typed
+        // while an error toast went past.
+        return 'error'
       }
     },
     [notify],

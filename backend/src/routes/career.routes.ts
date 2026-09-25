@@ -825,8 +825,13 @@ careerRouter.delete(
       )
       if (!owned.rowCount) throw new ApiError(404, 'Service not found')
 
+      // Live bookings only. The count is shown to the alumnus as "N booked
+      // sessions keep their original price", which is reassurance about money
+      // still owed — a declined session was never a booking, and a past one is
+      // already settled. Counting those overstated their live commitments.
       const linked = await client.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM mentorship_sessions WHERE service_id = $1`,
+        `SELECT count(*)::int AS n FROM mentorship_sessions
+          WHERE service_id = $1 AND status IN ('requested', 'upcoming')`,
         [req.params.id],
       )
       await client.query(`DELETE FROM alumni_services WHERE id = $1`, [req.params.id])

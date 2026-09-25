@@ -20,10 +20,16 @@ export function ManageServicesPage() {
   const { currentUser } = useApp()
   const navigate = useNavigate()
 
-  // `replace`, not a push: leaving an edit screen should take its history entry
-  // with it, otherwise the browser's Back button walks straight back into the
-  // editor the member just left.
-  const back = () => navigate('/career-guidance', { replace: true })
+  // Leaving an edit screen takes its history entry with it, otherwise the
+  // browser's Back button walks straight back into the editor just left.
+  // Popped rather than replaced: replacing left /career-guidance in history
+  // twice in a row, so the first browser Back appeared to do nothing. See the
+  // same handler in CareerAssessmentPage for the full reasoning.
+  const back = () => {
+    const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0
+    if (idx > 0) navigate(-1)
+    else navigate('/career-guidance', { replace: true })
+  }
 
   // Listing a service is gated on being an approved mentor (the server
   // enforces it too). Replace rather than push, so Back from the roadmap

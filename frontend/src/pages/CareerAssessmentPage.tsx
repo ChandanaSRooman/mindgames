@@ -37,10 +37,20 @@ export function CareerAssessmentPage() {
       .finally(() => setLoading(false))
   }, [notify])
 
-  // `replace`, not a push: leaving an edit screen should take its history entry
-  // with it, otherwise the browser's Back button walks straight back into the
-  // editor the member just left.
-  const back = () => navigate('/career-guidance', { replace: true })
+  // Leaving an edit screen takes its history entry with it, otherwise the
+  // browser's Back button walks straight back into the editor just left.
+  //
+  // Popping is not the same as replacing here. Replacing put /career-guidance
+  // in the editor's slot while the hub was already the entry underneath, so
+  // history held it twice and the first browser Back appeared to do nothing.
+  // The hub is the only route that links here, so going back one entry always
+  // lands there. idx 0 means the editor was opened directly in a fresh tab —
+  // nothing to pop, so the hub takes that slot instead.
+  const back = () => {
+    const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0
+    if (idx > 0) navigate(-1)
+    else navigate('/career-guidance', { replace: true })
+  }
 
   if (loading) {
     return (
