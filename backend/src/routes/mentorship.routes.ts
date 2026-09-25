@@ -282,8 +282,14 @@ mentorshipRouter.patch(
     const labels = when ? labelsFor(when) : null
 
     const s = await withTransaction(async (client) => {
-      const r = await client.query<{ mentee_id: string; topic: string; status: string; scheduled_at: Date | null }>(
-        `SELECT mentee_id, topic, status, scheduled_at FROM mentorship_sessions
+      const r = await client.query<{
+        mentee_id: string
+        topic: string
+        status: string
+        scheduled_at: Date | null
+        meeting_link: string | null
+      }>(
+        `SELECT mentee_id, topic, status, scheduled_at, meeting_link FROM mentorship_sessions
           WHERE id = $1 AND mentor_id = $2 FOR UPDATE`,
         [req.params.id, req.user!.sub],
       )
@@ -312,18 +318,25 @@ mentorshipRouter.patch(
     })
 
     const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
+    // Only mention what actually changed — compared against the pre-edit row,
+    // not just against which fields the request happened to include.
+    const moved = when !== null && +when !== +new Date(s.scheduled_at ?? NaN)
+    const renamed = topic !== undefined && topic !== s.topic
+    const linkChanged = meetingLink !== undefined && meetingLink !== (s.meeting_link ?? '')
     const changed = [
-      when ? `moved to ${labels!.dateLabel}, ${labels!.timeLabel}` : null,
-      topic ? `renamed to "${topic}"` : null,
-      meetingLink !== undefined ? 'joining link updated' : null,
+      moved ? `moved to ${labels!.dateLabel}, ${labels!.timeLabel}` : null,
+      renamed ? `renamed to "${topic}"` : null,
+      linkChanged ? 'joining link updated' : null,
     ].filter(Boolean)
-    void pushNotification(
-      s.mentee_id,
-      'mentorship',
-      `${me.rows[0].name} updated your session "${s.topic}" — ${changed.join(', ')}.`,
-      req.user!.sub,
-      { type: 'session', id: req.params.id },
-    )
+    if (changed.length) {
+      void pushNotification(
+        s.mentee_id,
+        'mentorship',
+        `${me.rows[0].name} updated your session "${renamed ? topic : s.topic}" — ${changed.join(', ')}.`,
+        req.user!.sub,
+        { type: 'session', id: req.params.id },
+      )
+    }
 
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
     res.json(mapSession(full.rows[0]))
