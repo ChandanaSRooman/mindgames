@@ -31,7 +31,10 @@ export function EditRoadmapPage() {
       .finally(() => setLoading(false))
   }, [notify])
 
-  const back = () => navigate('/career-guidance')
+  // `replace`, not a push: leaving an edit screen should take its history entry
+  // with it, otherwise the browser's Back button walks straight back into the
+  // editor the member just left.
+  const back = () => navigate('/career-guidance', { replace: true })
 
   // There is nothing to edit before the assessment has been taken. Replace
   // rather than push, so Back from the roadmap page doesn't bounce straight

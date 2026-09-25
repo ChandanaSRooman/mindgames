@@ -729,7 +729,26 @@ careerRouter.post(
   }),
 )
 
-const serviceUpdateSchema = serviceSchema.partial().extend({ active: z.boolean().optional() })
+// Spelled out rather than derived as `serviceSchema.partial()`.
+//
+// Zod's .partial() makes every key optional but KEEPS its .default(), so a
+// body of `{ active: false }` parsed as
+// `{ title: '', description: '', tags: [], pricingMode: 'free', active: false }`.
+// Those defaults are values, not `undefined`, so the `?? cur.*` fallbacks below
+// never fired and simply pausing a service silently wiped its title,
+// description and tags and reset a paid listing to free — losing the mentor's
+// price. Every field here is optional with no default, so an absent field
+// really is absent and falls back to the stored row.
+const serviceUpdateSchema = z.object({
+  serviceType: z.enum(SERVICE_TYPES).optional(),
+  title: z.string().trim().max(120).optional(),
+  description: z.string().trim().max(1000).optional(),
+  tags: z.array(z.string().trim().max(40)).optional(),
+  pricingMode: z.enum(['free', 'paid', 'custom']).optional(),
+  amount: z.number().int().min(0).max(1_000_000).optional(),
+  pricingUnit: z.enum(['hour', 'session']).optional(),
+  active: z.boolean().optional(),
+})
 
 // PATCH /api/career/services/:id — edit or activate/deactivate my own service.
 careerRouter.patch(
