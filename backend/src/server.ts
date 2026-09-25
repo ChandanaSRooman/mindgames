@@ -9,7 +9,7 @@ import { postsRouter } from './routes/posts.routes.js'
 import { connectionsRouter } from './routes/connections.routes.js'
 import { messagesRouter } from './routes/messages.routes.js'
 import { communitiesRouter } from './routes/communities.routes.js'
-import { mentorshipRouter } from './routes/mentorship.routes.js'
+import { mentorshipRouter, startSessionReminderScheduler } from './routes/mentorship.routes.js'
 import { startupsRouter } from './routes/startups.routes.js'
 import { notificationsRouter } from './routes/notifications.routes.js'
 import { inviteesRouter } from './routes/invitees.routes.js'
@@ -79,6 +79,7 @@ app.use(errorHandler)
 
 startDigestScheduler()
 startEventReminderScheduler()
+startSessionReminderScheduler()
 
 // Resolve the address for email links BEFORE accepting requests. Awaiting it
 // is what makes that guarantee true: fire-and-forget left a window in which a

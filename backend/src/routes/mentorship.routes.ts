@@ -4,6 +4,7 @@ import { query, withTransaction } from '../db/pool.js'
 import { requireAdmin, requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { pushNotification } from '../notify.js'
+import { sendEmail } from '../email.js'
 import { getSubscription } from '../subscription.js'
 import { getProfileStats, refreshBadges, stampMutualConfirmation } from '../sessionStats.js'
 
@@ -216,6 +217,127 @@ mentorshipRouter.post(
       req.user!.sub,
       { type: 'session', id: req.params.id },
     )
+    const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
+    res.json(mapSession(full.rows[0]))
+  }),
+)
+
+const editSchema = z.object({
+  topic: z.string().trim().min(1).max(200).optional(),
+  // A real instant, which is the whole point of this route: date_label and
+  // time_label are text a human typed and nothing can be computed from them.
+  scheduledAt: z.string().datetime({ offset: true }).or(z.string().datetime()).optional(),
+  meetingLink: z.string().trim().max(500).optional(),
+})
+
+/** The free-text labels the existing UI renders, derived from the real
+ *  timestamp so the two can never disagree. If the card said "Thu 12 Jun"
+ *  while scheduled_at pointed at Friday, the reminder would fire on the day
+ *  nobody was expecting. Formatted in IST because that is what every label
+ *  already in the table says, and what the audience is in. */
+function labelsFor(when: Date): { dateLabel: string; timeLabel: string } {
+  const opts = { timeZone: 'Asia/Kolkata' } as const
+  return {
+    // en-IN renders "Fri, 20 Nov, 2026" — the comma before the year is not
+    // how every label already in this table is written ("Fri, 26 Sep 2026"),
+    // and an edited session sitting next to an unedited one would look broken.
+    dateLabel: when
+      .toLocaleDateString('en-IN', { ...opts, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+      .replace(/,(\s\d{4})$/, '$1'),
+    // en-IN gives a lowercase "pm"; existing labels are "8:00 PM IST".
+    timeLabel: `${when
+      .toLocaleTimeString('en-IN', { ...opts, hour: 'numeric', minute: '2-digit' })
+      .toUpperCase()} IST`,
+  }
+}
+
+// PATCH /api/mentorship/sessions/:id — the mentor edits a session they are
+// hosting: move it, rename the topic, or change the joining link.
+//
+// Only the mentor can edit. The mentee asked for a slot; agreeing and running
+// it is the mentor's side, and a two-sided negotiation would need its own
+// proposal/accept states. The mentee is notified of every change instead, so
+// nothing moves silently under them.
+//
+// Restricted to 'upcoming'. A 'requested' session has not been agreed yet
+// (accept is where those details are set), and a 'past' or 'declined' one is
+// a record rather than a booking.
+mentorshipRouter.patch(
+  '/sessions/:id',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = editSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
+    const { topic, scheduledAt, meetingLink } = parsed.data
+    if (topic === undefined && scheduledAt === undefined && meetingLink === undefined) {
+      throw new ApiError(400, 'Nothing to change')
+    }
+
+    let when: Date | null = null
+    if (scheduledAt !== undefined) {
+      when = new Date(scheduledAt)
+      if (Number.isNaN(+when)) throw new ApiError(400, 'A valid date and time is required')
+      if (+when < Date.now()) throw new ApiError(400, 'That time is in the past')
+    }
+    const labels = when ? labelsFor(when) : null
+
+    const s = await withTransaction(async (client) => {
+      const r = await client.query<{
+        mentee_id: string
+        topic: string
+        status: string
+        scheduled_at: Date | null
+        meeting_link: string | null
+      }>(
+        `SELECT mentee_id, topic, status, scheduled_at, meeting_link FROM mentorship_sessions
+          WHERE id = $1 AND mentor_id = $2 FOR UPDATE`,
+        [req.params.id, req.user!.sub],
+      )
+      if (!r.rowCount) throw new ApiError(404, 'Session not found (or you are not its mentor)')
+      if (r.rows[0].status !== 'upcoming') {
+        throw new ApiError(400, 'Only a confirmed upcoming session can be edited')
+      }
+
+      await client.query(
+        `UPDATE mentorship_sessions
+            SET topic        = COALESCE($2, topic),
+                scheduled_at = COALESCE($3, scheduled_at),
+                date_label   = COALESCE($4, date_label),
+                time_label   = COALESCE($5, time_label),
+                meeting_link = COALESCE($6, meeting_link),
+                -- Moving the session clears the reminder claim so the new time
+                -- gets its own reminder. Without this, a session already
+                -- reminded for its old slot would move and nobody would be
+                -- told again — the reschedule would arrive as a surprise.
+                reminded     = CASE WHEN $3::timestamptz IS NOT NULL AND $3::timestamptz IS DISTINCT FROM scheduled_at
+                                    THEN FALSE ELSE reminded END
+          WHERE id = $1`,
+        [req.params.id, topic ?? null, when, labels?.dateLabel ?? null, labels?.timeLabel ?? null, meetingLink ?? null],
+      )
+      return r.rows[0]
+    })
+
+    const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
+    // Only mention what actually changed — compared against the pre-edit row,
+    // not just against which fields the request happened to include.
+    const moved = when !== null && +when !== +new Date(s.scheduled_at ?? NaN)
+    const renamed = topic !== undefined && topic !== s.topic
+    const linkChanged = meetingLink !== undefined && meetingLink !== (s.meeting_link ?? '')
+    const changed = [
+      moved ? `moved to ${labels!.dateLabel}, ${labels!.timeLabel}` : null,
+      renamed ? `renamed to "${topic}"` : null,
+      linkChanged ? 'joining link updated' : null,
+    ].filter(Boolean)
+    if (changed.length) {
+      void pushNotification(
+        s.mentee_id,
+        'mentorship',
+        `${me.rows[0].name} updated your session "${renamed ? topic : s.topic}" — ${changed.join(', ')}.`,
+        req.user!.sub,
+        { type: 'session', id: req.params.id },
+      )
+    }
+
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
     res.json(mapSession(full.rows[0]))
   }),
@@ -758,3 +880,87 @@ mentorshipRouter.get(
     res.send(row.data)
   }),
 )
+
+/**
+ * Reminds both sides six hours before a session starts.
+ *
+ * Only sessions with a real `scheduled_at` can ever be due — which is what the
+ * mentor's edit screen exists to set. A session still carrying only the
+ * free-text labels it was booked with is skipped rather than guessed at.
+ *
+ * The email carries the details but deliberately NOT the meeting link: the
+ * link lives on the platform, so the reminder tells you when and the app
+ * gives you the door. That is the same reasoning as the mutually-confirmed
+ * session record — the platform stays the place the mentorship happens.
+ */
+export function startSessionReminderScheduler(): void {
+  const tick = async () => {
+    try {
+      // UPDATE … RETURNING claims the rows: each due session is handed to
+      // exactly one caller even if two instances tick together, so nobody is
+      // emailed twice. Same guard events.reminded uses.
+      const due = await query<{
+        id: string; topic: string; scheduled_at: Date
+        mentor_id: string; mentor_name: string; mentor_email: string
+        mentee_id: string; mentee_name: string; mentee_email: string
+      }>(
+        `WITH claimed AS (
+           UPDATE mentorship_sessions SET reminded = TRUE
+            WHERE NOT reminded
+              AND status = 'upcoming'
+              AND scheduled_at IS NOT NULL
+              AND scheduled_at BETWEEN now() AND now() + interval '6 hours'
+            RETURNING id, topic, scheduled_at, mentor_id, mentee_id
+         )
+         SELECT c.id, c.topic, c.scheduled_at,
+                c.mentor_id, mentor.name AS mentor_name, mentor.email AS mentor_email,
+                c.mentee_id, mentee.name AS mentee_name, mentee.email AS mentee_email
+           FROM claimed c
+           JOIN users mentor ON mentor.id = c.mentor_id
+           JOIN users mentee ON mentee.id = c.mentee_id`,
+      )
+
+      for (const s of due.rows) {
+        const when = new Date(s.scheduled_at).toLocaleString('en-IN', {
+          timeZone: 'Asia/Kolkata',
+          weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
+        })
+        // One row, two people, opposite wording — each is told who they are
+        // meeting rather than reading their own name back.
+        const sides = [
+          { userId: s.mentor_id, email: s.mentor_email, name: s.mentor_name, other: s.mentee_name, role: 'mentoring' },
+          { userId: s.mentee_id, email: s.mentee_email, name: s.mentee_name, other: s.mentor_name, role: 'meeting with' },
+        ]
+        for (const side of sides) {
+          void sendEmail(
+            side.email,
+            `Reminder: "${s.topic}" in 6 hours — ${when} IST`,
+            `Hi ${side.name},\n\n` +
+              `A reminder that your session "${s.topic}" starts at ${when} IST.\n` +
+              `You're ${side.role} ${side.other}.\n\n` +
+              `Open Root Connect to join — the meeting link is on the session.\n\n` +
+              `— Root Connect`,
+          ).catch(() => {})
+          // In-app as well as email, same as the event reminder: whichever
+          // one they happen to look at, the reminder is there.
+          void pushNotification(
+            side.userId,
+            'mentorship',
+            `Reminder: "${s.topic}" with ${side.other} starts at ${when} IST.`,
+            undefined,
+            { type: 'session', id: s.id },
+          )
+        }
+      }
+      if (due.rowCount) console.log(`Session reminders sent for ${due.rowCount} session(s)`)
+    } catch (err) {
+      console.error('session reminder scheduler failed:', err instanceof Error ? err.message : err)
+    }
+  }
+  // setInterval only — deliberately NO immediate tick on boot. The event
+  // reminder does `void tick()` at startup, which means every local or CI boot
+  // pointed at a production database emails real people before the server has
+  // served a request. A reminder six hours out loses nothing by waiting for
+  // the first interval.
+  setInterval(tick, 15 * 60 * 1000)
+}

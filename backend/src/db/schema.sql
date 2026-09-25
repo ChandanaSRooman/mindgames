@@ -1274,3 +1274,26 @@ UPDATE mentorship_sessions
    AND confirmed_at IS NULL
    AND NOT mentor_confirmed
    AND NOT mentee_confirmed;
+
+-- ---------------------------------------------------------------------------
+-- Session reminders
+--
+-- `reminded` is the claim flag for the 6-hour reminder. The scheduler sets it
+-- with UPDATE … RETURNING, so a row is handed to exactly one caller even if
+-- two backend instances tick at the same moment — the same pattern
+-- events.reminded already uses. Without it a restart mid-tick re-emails
+-- everyone the reminder was already sent to.
+--
+-- Reminders can only fire for a session with a real scheduled_at. Sessions
+-- booked before the edit screen existed have only the free-text date_label /
+-- time_label, so they simply never become due — deliberately, since guessing
+-- a timestamp out of text a human typed would send reminders at the wrong
+-- hour or on the wrong day.
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS reminded BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Partial index: the scheduler's query only ever looks at upcoming sessions
+-- that have a timestamp and have not been reminded yet, which stays a tiny
+-- slice of the table however large it grows.
+CREATE INDEX IF NOT EXISTS idx_sessions_reminder_due
+  ON mentorship_sessions (scheduled_at)
+  WHERE NOT reminded AND scheduled_at IS NOT NULL AND status = 'upcoming';

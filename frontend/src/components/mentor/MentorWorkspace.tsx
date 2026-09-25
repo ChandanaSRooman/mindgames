@@ -28,6 +28,7 @@ export function MentorWorkspace({
   onAccept,
   onDecline,
   onComplete,
+  onEdit,
 }: {
   requests: MentorshipSession[]
   upcoming: MentorshipSession[]
@@ -37,6 +38,7 @@ export function MentorWorkspace({
   onAccept: (id: string) => void
   onDecline: (id: string) => void
   onComplete: (session: MentorshipSession) => void
+  onEdit: (session: MentorshipSession) => void
 }) {
   const { currentUser, subscription } = useApp()
   const [mentees, setMentees] = useState<Mentee[]>([])
@@ -166,6 +168,9 @@ export function MentorWorkspace({
                     Join
                   </a>
                 )}
+                <Button variant="outline" className="!px-3 !py-1.5 !text-xs" onClick={() => onEdit(s)}>
+                  Edit
+                </Button>
                 <Button className="!px-3 !py-1.5 !text-xs" onClick={() => onComplete(s)}>
                   Mark completed
                 </Button>
