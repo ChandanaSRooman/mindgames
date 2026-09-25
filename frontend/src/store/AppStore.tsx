@@ -148,7 +148,7 @@ interface AppContextValue {
   /** Either side calls off a requested or upcoming session. */
   cancelSession: (id: string) => void
   /** Mentor adds or changes the join link; '' clears it. */
-  setSessionMeetingLink: (id: string, meetingLink: string) => void
+  setSessionMeetingLink: (id: string, meetingLink: string) => Promise<boolean>
   /** 'payment-required' means the mentor needs a plan and the caller should
    *  open the pricing page; 'error' means it genuinely failed and has already
    *  been reported to the member, so the caller must not treat it as done. */
@@ -160,7 +160,7 @@ interface AppContextValue {
    *  scheduledAt is a real ISO instant — it is what makes the 6-hour
    *  reminder possible, since the date/time a session was booked with are
    *  free text nothing can be computed from. */
-  editSession: (id: string, changes: { topic?: string; scheduledAt?: string; meetingLink?: string }) => void
+  editSession: (id: string, changes: { topic?: string; scheduledAt?: string; meetingLink?: string }) => Promise<boolean>
   becomeMentor: (rate: number) => void
   startups: Startup[]
   submitStartup: (
@@ -864,16 +864,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   // Mentor actions on a session request; each returns the updated session.
+  // Resolves true only when the write actually landed. Callers that own a
+  // dialog need that answer: closing on a rejected promise throws away what
+  // the user typed while the error toast scrolls past. Actions that ignore
+  // the result are unaffected -- a void-typed field accepts any return.
   const sessionAction = useCallback(
-    (call: Promise<MentorshipSession>, successMsg: string) => {
+    (call: Promise<MentorshipSession>, successMsg: string) =>
       call.then(
         (updated) => {
           setSessions((list) => list.map((s) => (s.id === updated.id ? updated : s)))
           notify(successMsg)
+          return true
         },
-        (err) => notify(err instanceof Error ? err.message : 'Could not update the session.', 'error'),
-      )
-    },
+        (err) => {
+          notify(err instanceof Error ? err.message : 'Could not update the session.', 'error')
+          return false
+        },
+      ),
     [notify],
   )
 

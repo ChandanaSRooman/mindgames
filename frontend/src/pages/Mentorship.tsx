@@ -366,9 +366,10 @@ export function Mentorship() {
         <EditSessionModal
           session={editing}
           onClose={() => setEditing(null)}
-          onSave={(changes) => {
-            editSession(editing.id, changes)
-            setEditing(null)
+          onSave={async (changes) => {
+            // Only dismiss once the PATCH succeeded -- a rejected edit (past
+            // time, malformed link) used to close the modal and lose the input.
+            if (await editSession(editing.id, changes)) setEditing(null)
           }}
         />
       )}

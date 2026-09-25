@@ -205,6 +205,14 @@ mentorshipRouter.post(
     if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
     const { menteeId, topic, date, time, meetingLink, scheduledAt } = parsed.data
     const when = scheduledAt ? new Date(scheduledAt) : null
+    // Same guard the PATCH edit route applies. The schema only proves the
+    // string is a datetime, not that it is ahead of now -- and a past
+    // scheduled_at never falls inside the reminder window
+    // (now() .. now() + 6h), so the reminder silently never fires.
+    if (when) {
+      if (Number.isNaN(+when)) throw new ApiError(400, 'A valid date and time is required')
+      if (+when < Date.now()) throw new ApiError(400, 'That time is in the past')
+    }
     if (menteeId === req.user!.sub) throw new ApiError(400, 'Cannot offer yourself a session')
 
     const me = await query<{ name: string; is_mentor: boolean }>(`SELECT name, is_mentor FROM users WHERE id = $1`, [req.user!.sub])
@@ -234,24 +242,34 @@ mentorshipRouter.post(
     // as a duplicate, so the mentor was refused with a message about an offer
     // they never made — and the way to clear it was to accept or decline the
     // mentee's request, which is a different action entirely.
-    const dup = await query(
-      `SELECT 1 FROM mentorship_sessions
-        WHERE mentor_id = $1 AND mentee_id = $2 AND status = 'requested' AND requested_by = 'mentor'`,
-      [req.user!.sub, menteeId],
-    )
-    if (dup.rowCount) throw new ApiError(409, 'You already have a pending offer with them.')
+    // The duplicate check and the insert used to be two separate statements,
+    // so two rapid submits could both pass the check and each create a pending
+    // offer. A transaction-scoped advisory lock keyed on this mentor+mentee
+    // pair serialises them -- the second waits for the first to commit, then
+    // sees its row and gets the 409. The lock releases with the transaction.
+    const ins = await withTransaction(async (client) => {
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        `mentorship:offer:${req.user!.sub}:${menteeId}`,
+      ])
+      const dup = await client.query(
+        `SELECT 1 FROM mentorship_sessions
+          WHERE mentor_id = $1 AND mentee_id = $2 AND status = 'requested' AND requested_by = 'mentor'`,
+        [req.user!.sub, menteeId],
+      )
+      if (dup.rowCount) throw new ApiError(409, 'You already have a pending offer with them.')
 
-    const ins = await query<{ id: string }>(
-      `INSERT INTO mentorship_sessions
-         (mentor_id, mentee_id, topic, date_label, time_label, status, is_paid, price,
-          requested_by, meeting_link, scheduled_at)
-       VALUES ($1, $2, $3, $4, $5, 'requested', FALSE, 0, 'mentor', $6, $7) RETURNING id`,
-      [
-        req.user!.sub, menteeId, topic, date, time,
-        meetingLink || null,
-        when && !Number.isNaN(when.getTime()) ? when : null,
-      ],
-    )
+      return client.query<{ id: string }>(
+        `INSERT INTO mentorship_sessions
+           (mentor_id, mentee_id, topic, date_label, time_label, status, is_paid, price,
+            requested_by, meeting_link, scheduled_at)
+         VALUES ($1, $2, $3, $4, $5, 'requested', FALSE, 0, 'mentor', $6, $7) RETURNING id`,
+        [
+          req.user!.sub, menteeId, topic, date, time,
+          meetingLink || null,
+          when && !Number.isNaN(when.getTime()) ? when : null,
+        ],
+      )
+    })
     void pushNotification(
       menteeId,
       'mentorship',
@@ -548,7 +566,19 @@ mentorshipRouter.post(
       throw new ApiError(400, `A ${s.status} session cannot be cancelled`)
     }
 
-    await query(`UPDATE mentorship_sessions SET status = 'declined' WHERE id = $1`, [req.params.id])
+    // The status above was read in a separate statement, so an accept landing
+    // in between would be silently overwritten here -- after it had already
+    // consumed a slot from the mentor's monthly cap. Re-asserting the
+    // precondition inside the WHERE lets the database settle the race:
+    // zero rows updated means we lost it, and nothing gets clobbered.
+    const cancelled = await query(
+      `UPDATE mentorship_sessions SET status = 'declined'
+        WHERE id = $1 AND status IN ('requested', 'upcoming')`,
+      [req.params.id],
+    )
+    if (!cancelled.rowCount) {
+      throw new ApiError(409, 'That session was just updated by the other side. Refresh and try again.')
+    }
 
     const other = s.mentor_id === me ? s.mentee_id : s.mentor_id
     const mine = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [me])

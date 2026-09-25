@@ -410,7 +410,7 @@ function MeetingLinkModal({ session, onClose }: { session: MentorshipSession; on
           {session.meetingLink && (
             <Button
               variant="ghost"
-              onClick={() => { setSessionMeetingLink(session.id, ''); onClose() }}
+              onClick={async () => { if (await setSessionMeetingLink(session.id, '')) onClose() }}
             >
               Remove
             </Button>
@@ -418,7 +418,7 @@ function MeetingLinkModal({ session, onClose }: { session: MentorshipSession; on
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button
             disabled={!link.trim()}
-            onClick={() => { setSessionMeetingLink(session.id, link.trim()); onClose() }}
+            onClick={async () => { if (await setSessionMeetingLink(session.id, link.trim())) onClose() }}
           >
             Save link
           </Button>
