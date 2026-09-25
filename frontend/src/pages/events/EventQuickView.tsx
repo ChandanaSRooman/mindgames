@@ -119,9 +119,15 @@ export function EventQuickView({ eventId, onClose }: { eventId: string; onClose:
             </span>
           </div>
 
-          <Button variant={event.rsvpedByMe || event.waitlistedByMe ? 'subtle' : 'primary'} onClick={() => toggleRsvp(event.id)}>
-            {rsvpLabel}
-          </Button>
+          {/* Same guard as EventCard: the creator is shown their own pending or
+              rejected event, but the RSVP write path refuses anything not
+              approved, so the button could only ever return a 400 here.
+              Defaults to 'approved' to match the NOT NULL column default. */}
+          {(event.status ?? 'approved') === 'approved' && (
+            <Button variant={event.rsvpedByMe || event.waitlistedByMe ? 'subtle' : 'primary'} onClick={() => toggleRsvp(event.id)}>
+              {rsvpLabel}
+            </Button>
+          )}
 
           {event.description && (
             <div>
