@@ -11,6 +11,7 @@ import {
   normalizeRole,
 } from '../careerPaths.js'
 import { startYearOf } from '../mappers.js'
+import { refreshBadges } from '../sessionStats.js'
 import {
   mapCareerAssessment,
   mapCareerRoadmap,
@@ -530,6 +531,13 @@ careerRouter.patch(
              END`,
       [active.rows[0].id, req.params.stepKey, parsed.data.status],
     )
+
+    // Completing a stage can be the thing that finishes the roadmap, and the
+    // timeline says so immediately. Refresh here so the 'Goal Reached' badge
+    // lands with that message instead of waiting for the member to happen to
+    // open their own profile. Fire-and-forget on purpose: a badge is not
+    // worth failing the member's save for, same as posts.routes.ts does.
+    void refreshBadges(req.user!.sub)
     res.json(await loadActiveRoadmap(req.user!.sub))
   }),
 )

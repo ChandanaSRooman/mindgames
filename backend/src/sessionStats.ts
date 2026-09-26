@@ -1,6 +1,7 @@
 import type pg from 'pg'
 import { query } from './db/pool.js'
 import { pushNotification } from './notify.js'
+import { roadmapCompletion, type RoadmapStageLike } from './careerProgress.js'
 
 /**
  * Profile stats and badges, derived from sessions BOTH parties confirmed.
@@ -177,14 +178,21 @@ export async function getProfileStats(userId: string): Promise<ProfileStats> {
   )
   let roadmapProgress: ProfileStats['roadmapProgress'] = null
   if (roadmap.rowCount) {
-    const stages = ((roadmap.rows[0].data as { stages?: { stepKey?: string }[] })?.stages ?? [])
-    const done = await query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM career_roadmap_step_state st
+    const stages = (roadmap.rows[0].data as { stages?: RoadmapStageLike[] })?.stages ?? []
+    // The rows themselves, not count(*): the first and last stage have no
+    // completion control in the timeline, so a count of every 'completed'
+    // row cannot be measured against a total that includes them. Which
+    // stage each row belongs to is exactly what decides whether it counts.
+    const saved = await query<{ step_key: string; status: string }>(
+      `SELECT st.step_key, st.status FROM career_roadmap_step_state st
          JOIN career_roadmaps r ON r.id = st.roadmap_id
-        WHERE r.user_id = $1 AND r.status = 'active' AND st.status = 'completed'`,
+        WHERE r.user_id = $1 AND r.status = 'active'`,
       [userId],
     )
-    roadmapProgress = { total: stages.length, completed: done.rows[0]?.n ?? 0 }
+    roadmapProgress = roadmapCompletion(
+      stages,
+      new Map(saved.rows.map((r) => [r.step_key, r.status])),
+    )
   }
 
   const badgeRows = await query<{ badge: string; side: string; earned_at: Date | string }>(
