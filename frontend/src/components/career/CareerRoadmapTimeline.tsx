@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { BookOpen, Check, CircleDashed, Flag, Map, Target, Users } from 'lucide-react'
+import { BookOpen, Check, CircleDashed, Flag, Lock, Map, Target, Users } from 'lucide-react'
 import { Card } from '../ui'
 import { AlumniListModal } from './AlumniListModal'
+import { blockedBy } from '../../lib/careerProgress'
 import type { AlumniHelper, CareerRoadmap, CareerStage, CareerStageStatus } from '../../types'
 
 const BADGE: Record<CareerStageStatus, string> = {
@@ -64,6 +65,7 @@ export function CareerRoadmapTimeline({
               index={i}
               isFirst={i === 0}
               isLast={i === roadmap.stages.length - 1}
+              blockedBy={blockedBy(roadmap.stages, stage.stepKey)}
               onStepStatus={onStepStatus}
               onShowPeople={() => setOpenFor(stage.stepKey)}
             />
@@ -107,6 +109,7 @@ function StageCard({
   index,
   isFirst,
   isLast,
+  blockedBy,
   onStepStatus,
   onShowPeople,
 }: {
@@ -114,11 +117,17 @@ function StageCard({
   index: number
   isFirst: boolean
   isLast: boolean
+  /** Title of the earlier stage that still has to be finished, or null when
+   *  this stage is open. The server enforces the same rule. */
+  blockedBy: string | null
   onStepStatus: (stepKey: string, status: CareerStageStatus) => void
   onShowPeople: () => void
 }) {
   const Icon = isFirst ? Flag : isLast ? Target : stage.status === 'completed' ? Check : BookOpen
   const helpers = stage.relevantAlumniIds.length
+  // An already-completed stage is never locked — reopening it stays available
+  // so a member can correct a mistake.
+  const locked = blockedBy !== null && stage.status !== 'completed'
 
   return (
     <div
@@ -167,17 +176,30 @@ function StageCard({
       ) : null}
 
       {/* Progress control — the plan is the member's to drive, not a fixed
-          script, so every non-bookend stage can be ticked off or paused. */}
+          script, so every non-bookend stage can be ticked off or paused.
+          A stage whose predecessors are unfinished is locked instead: the
+          server refuses it either way, so showing a live button here would
+          only produce an error toast. */}
       {!isFirst && !isLast && (
-        <button
-          onClick={() =>
-            onStepStatus(stage.stepKey, stage.status === 'completed' ? 'upcoming' : 'completed')
-          }
-          className="mt-2 flex items-center gap-1 text-[11px] font-semibold text-[#ff4500] hover:underline"
-        >
-          {stage.status === 'completed' ? <CircleDashed size={11} /> : <Check size={11} />}
-          {stage.status === 'completed' ? 'Reopen' : 'Mark done'}
-        </button>
+        locked ? (
+          <span
+            title={`Finish "${blockedBy}" first — stages are completed in order.`}
+            className="mt-2 flex cursor-not-allowed items-center gap-1 text-[11px] font-semibold text-[#c9ccce]"
+          >
+            <Lock size={11} />
+            Locked
+          </span>
+        ) : (
+          <button
+            onClick={() =>
+              onStepStatus(stage.stepKey, stage.status === 'completed' ? 'upcoming' : 'completed')
+            }
+            className="mt-2 flex items-center gap-1 text-[11px] font-semibold text-[#ff4500] hover:underline"
+          >
+            {stage.status === 'completed' ? <CircleDashed size={11} /> : <Check size={11} />}
+            {stage.status === 'completed' ? 'Reopen' : 'Mark done'}
+          </button>
+        )
       )}
 
       {isFirst && <p className="mt-1.5 text-[11px] text-[#878a8c]">You’re here</p>}

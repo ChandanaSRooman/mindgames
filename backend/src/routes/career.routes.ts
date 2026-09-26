@@ -11,6 +11,7 @@ import {
   normalizeRole,
 } from '../careerPaths.js'
 import { startYearOf } from '../mappers.js'
+import { refreshBadges } from '../sessionStats.js'
 import {
   mapCareerAssessment,
   mapCareerRoadmap,
@@ -478,9 +479,46 @@ careerRouter.patch(
     // The step must be one this roadmap actually has. Without the check any
     // string in the URL created a row, so a typo (or a loop) could fill the
     // table with state for steps that don't exist.
-    const roadmapData = (active.rows[0].data ?? {}) as { stages?: { stepKey?: string }[] }
-    const known = (roadmapData.stages ?? []).some((s) => s.stepKey === req.params.stepKey)
-    if (!known) throw new ApiError(404, 'No such step in your roadmap')
+    const roadmapData = (active.rows[0].data ?? {}) as {
+      stages?: { stepKey?: string; title?: string; status?: string }[]
+    }
+    const stages = roadmapData.stages ?? []
+    const index = stages.findIndex((s) => s.stepKey === req.params.stepKey)
+    if (index === -1) throw new ApiError(404, 'No such step in your roadmap')
+
+    // A stage is only finishable once everything before it is finished.
+    //
+    // Enforced here rather than only in the UI: greying out a button stops a
+    // click, not a request. Without this, a member (or a stale tab) could
+    // PATCH the last stage straight to 'completed' and "finish" a roadmap
+    // they never walked, which would also make the completion score
+    // meaningless.
+    //
+    // A stage's effective status is its row in career_roadmap_step_state when
+    // one exists, and otherwise whatever the roadmap JSON was generated with
+    // — the same merge loadActiveRoadmap does when it reads the plan back.
+    if (parsed.data.status === 'completed' && index > 0) {
+      const saved = await query<{ step_key: string; status: string }>(
+        `SELECT step_key, status FROM career_roadmap_step_state WHERE roadmap_id = $1`,
+        [active.rows[0].id],
+      )
+      const savedByKey = new Map(saved.rows.map((r) => [r.step_key, r.status]))
+      const effective = (st: { stepKey?: string; status?: string }) =>
+        savedByKey.get(String(st.stepKey)) ?? st.status
+
+      // From index 1, never 0. Stage 0 is the "you are here" marker: it has no
+      // completion control in the timeline, and the generator is allowed to
+      // emit it as 'in_progress' rather than 'completed'
+      // (see the prompt in ai.ts). Requiring it would deadlock the whole plan
+      // with no way for the member to unstick it.
+      const blocker = stages.slice(1, index).find((st) => effective(st) !== 'completed')
+      if (blocker) {
+        throw new ApiError(
+          400,
+          `Finish "${blocker.title ?? 'the earlier stage'}" first — stages are completed in order.`,
+        )
+      }
+    }
 
     await query(
       `INSERT INTO career_roadmap_step_state (roadmap_id, step_key, status, completed_at)
@@ -493,6 +531,13 @@ careerRouter.patch(
              END`,
       [active.rows[0].id, req.params.stepKey, parsed.data.status],
     )
+
+    // Completing a stage can be the thing that finishes the roadmap, and the
+    // timeline says so immediately. Refresh here so the 'Goal Reached' badge
+    // lands with that message instead of waiting for the member to happen to
+    // open their own profile. Fire-and-forget on purpose: a badge is not
+    // worth failing the member's save for, same as posts.routes.ts does.
+    void refreshBadges(req.user!.sub)
     res.json(await loadActiveRoadmap(req.user!.sub))
   }),
 )

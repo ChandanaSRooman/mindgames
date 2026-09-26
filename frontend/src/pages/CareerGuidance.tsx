@@ -12,6 +12,7 @@ import { AlumniHelpSection } from '../components/career/AlumniHelpSection'
 import { MatchedServices } from '../components/career/MatchedServices'
 import { NextStepCard, QuickAccessCard } from '../components/career/NextStepCard'
 import { CareerGuidanceIntro } from '../components/career/CareerGuidanceIntro'
+import { RoadmapProgressBanner } from '../components/career/RoadmapProgressBanner'
 import { serviceName } from '../lib/careerServices'
 import { CAREER_INTRO_SEEN_KEY } from '../lib/careerIntro'
 import type {
@@ -204,6 +205,15 @@ export function CareerGuidance() {
             )}
           </>
         }
+      />
+
+      <RoadmapProgressBanner
+        roadmap={roadmap}
+        onFindAlumni={() => {
+          const el = document.getElementById('career-alumni-help')
+          if (el) el.scrollIntoView({ behavior: 'smooth' })
+          else navigate('/network/matches')
+        }}
       />
 
       <CareerGoalSummary roadmap={roadmap} supportPreference={assessment?.supportPreference ?? ''} />
