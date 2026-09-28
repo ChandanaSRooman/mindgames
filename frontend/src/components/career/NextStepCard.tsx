@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Briefcase, ChevronRight, Flag, Users, Zap, GraduationCap } from 'lucide-react'
+import { Briefcase, BookOpen, ChevronRight, Flag, Users, Zap, GraduationCap } from 'lucide-react'
 import { Button, Card } from '../ui'
 import type { CareerStage } from '../../types'
 
@@ -25,8 +25,8 @@ export function NextStepCard({ stage, onFindAlumni }: { stage?: CareerStage; onF
             <Button icon={<Users size={14} />} onClick={onFindAlumni}>
               Find alumni
             </Button>
-            <Link to="/news">
-              <Button variant="outline">View learning resources</Button>
+            <Link to="/learning-resources">
+              <Button variant="outline" icon={<BookOpen size={14} />}>View learning resources</Button>
             </Link>
           </div>
         </div>
@@ -35,9 +35,10 @@ export function NextStepCard({ stage, onFindAlumni }: { stage?: CareerStage; onF
   )
 }
 
-/** Links out to the features that already exist — Career Guidance points at
- *  them rather than rebuilding People/Jobs/Mentors inside itself. */
-export function QuickAccessCard() {
+/** Shortcuts to what a member reaches for most: their saved resources (a
+ *  Career Guidance feature), plus links out to People/Jobs/Mentors, which
+ *  Career Guidance points at rather than rebuilding inside itself. */
+export function QuickAccessCard({ resourceCount }: { resourceCount: number }) {
   return (
     <Card className="p-5">
       <div className="mb-3 flex items-start gap-2.5">
@@ -51,6 +52,16 @@ export function QuickAccessCard() {
       </div>
 
       <div className="flex flex-col">
+        <QuickLink
+          to="/learning-resources"
+          icon={<BookOpen size={16} />}
+          title="Learning Resources"
+          subtitle={
+            resourceCount > 0
+              ? `${resourceCount} saved — yours and what mentors shared`
+              : 'Save articles, videos and more'
+          }
+        />
         <QuickLink
           to="/network/matches"
           icon={<Users size={16} />}

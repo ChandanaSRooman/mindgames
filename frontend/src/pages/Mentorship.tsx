@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ExternalLink, Video, Award, Calendar, GraduationCap, Star, X } from 'lucide-react'
+import { BookOpen, ExternalLink, Video, Award, Calendar, GraduationCap, Star, X } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { SubscriptionPlans } from '../components/subscription/SubscriptionPlans'
 import { MentorWorkspace } from '../components/mentor/MentorWorkspace'
 import { GroupSessionsTab } from '../components/mentor/GroupSessionsTab'
 import { CompleteSessionModal } from '../components/mentor/CompleteSessionModal'
 import { EditSessionModal } from '../components/mentor/EditSessionModal'
+import { SessionResourcesModal } from '../components/career/SessionResourcesModal'
 import { api } from '../lib/api'
 import { roleLine, sessionPriceLabel } from '../lib/format'
 import { isBookableMentor } from '../lib/profileCompleteness'
@@ -52,6 +53,7 @@ export function Mentorship() {
   const [completing, setCompleting] = useState<MentorshipSession | null>(null)
   // Session being rescheduled/renamed by its mentor.
   const [editing, setEditing] = useState<MentorshipSession | null>(null)
+  const [resourcesFor, setResourcesFor] = useState<MentorshipSession | null>(null)
 
   const q = query.trim().toLowerCase()
   const mentors = users
@@ -286,6 +288,12 @@ export function Mentorship() {
                         Mark completed
                       </Button>
                     )}
+                    {/* Both parties can share links against a session. Shown on
+                        upcoming sessions only — a finished session's resources
+                        stay readable from the Learning resources page. */}
+                    <Button variant="subtle" className="!px-3 !py-1.5 text-xs" icon={<BookOpen size={12} />} onClick={() => setResourcesFor(s)}>
+                      Resources
+                    </Button>
                     <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => cancelSession(s.id)}>
                       Cancel
                     </Button>
@@ -341,6 +349,16 @@ export function Mentorship() {
                     <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${declined ? 'bg-red-50 text-red-500' : 'bg-gray-100 text-[#878a8c]'}`}>
                       {declined ? 'Declined' : 'Completed'}
                     </span>
+                    {/* A declined session never happened, so there is nothing
+                        to attach reading material to. Every other past
+                        session keeps this — a mentor sending follow-up notes
+                        once a session is actually over is the common case,
+                        not an edge one. */}
+                    {!declined && (
+                      <Button variant="subtle" className="!px-3 !py-1.5 text-xs" icon={<BookOpen size={12} />} onClick={() => setResourcesFor(s)}>
+                        Resources
+                      </Button>
+                    )}
                   </Card>
                 )
               })}
@@ -357,9 +375,18 @@ export function Mentorship() {
           onDecline={declineSession}
           onComplete={(session) => setCompleting(session)}
           onEdit={(session) => setEditing(session)}
+          onResources={(session) => setResourcesFor(session)}
         />
       ) : (
         <GroupSessionsTab />
+      )}
+
+      {resourcesFor && (
+        <SessionResourcesModal
+          sessionId={resourcesFor.id}
+          topic={resourcesFor.topic}
+          onClose={() => setResourcesFor(null)}
+        />
       )}
 
       {editing && (

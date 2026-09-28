@@ -19,6 +19,7 @@ import { EditProfileModal } from '../components/profile/EditProfileModal'
 import { ProfilePhoto } from '../components/profile/ProfilePhoto'
 import { ProfileBadges } from '../components/profile/ProfileBadges'
 import { MentorshipRecord } from '../components/profile/MentorshipRecord'
+import { PublicResourcesSection } from '../components/profile/PublicResourcesSection'
 import { ProfileCompletenessMeter } from '../components/profile/ProfileCompletenessMeter'
 import {
   AboutSection,
@@ -206,6 +207,10 @@ export function Profile() {
               of it — additive to the tiles above, not a replacement. */}
           <div className="mt-3">
             <MentorshipRecord userId={user.id} />
+          </div>
+
+          <div className="mt-3">
+            <PublicResourcesSection userId={user.id} />
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-2">

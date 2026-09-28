@@ -1356,3 +1356,59 @@ export interface AlumniHelper {
   reason: string
   similarPath: boolean
 }
+
+// Learning resources — what a member is learning from on the way through
+// their roadmap. Mirrors mapCareerResource in backend/src/mappers.ts.
+//
+// `roadmapId`/`stepKey` and `sessionId` are independent and both optional: a
+// resource can name a stage, a session, both, or neither.
+export type CareerResourceKind = 'article' | 'video' | 'course' | 'book' | 'doc' | 'other'
+export type CareerResourceStatus = 'saved' | 'in_progress' | 'done'
+
+export interface CareerResource {
+  id: string
+  userId: string
+  title: string
+  url?: string
+  note?: string
+  kind: CareerResourceKind
+  status: CareerResourceStatus
+  roadmapId?: string
+  stepKey?: string
+  sessionId?: string
+  /** Visible to any signed-in member on the owner's profile, independent of
+   *  the stage/session links above — those stay private either way, since
+   *  they name the other party to that link. */
+  isPublic: boolean
+  createdAt: string
+  updatedAt: string
+  /** Who saved it — only meaningful for a resource shared into a session,
+   *  where the other party did not create it themselves. */
+  ownerName?: string
+  ownerPhoto?: string
+  sessionTopic?: string
+}
+
+/** A resource as shown on someone ELSE's profile — public only, and
+ *  deliberately missing the stage/session/status fields above. Mirrors
+ *  mapPublicCareerResource in backend/src/mappers.ts. */
+export interface PublicCareerResource {
+  id: string
+  title: string
+  url?: string
+  note?: string
+  kind: CareerResourceKind
+  createdAt: string
+}
+
+export interface CareerResourceInput {
+  title: string
+  url?: string
+  note?: string
+  kind?: CareerResourceKind
+  status?: CareerResourceStatus
+  roadmapId?: string
+  stepKey?: string
+  sessionId?: string
+  isPublic?: boolean
+}

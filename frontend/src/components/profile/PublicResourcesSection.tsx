@@ -1,0 +1,70 @@
+import { useEffect, useState } from 'react'
+import { Book, BookOpen, ExternalLink, FileText, GraduationCap, Link2, Video } from 'lucide-react'
+import { api } from '../../lib/api'
+import type { CareerResourceKind, PublicCareerResource } from '../../types'
+
+/**
+ * The resources a member has chosen to show on their profile.
+ *
+ * Same pattern as MentorshipRecord above it: visible on anyone's profile,
+ * fetched on mount, renders nothing when there is nothing to show. What comes
+ * back is deliberately the small PublicCareerResource shape — no stage, no
+ * session, no status — because a resource being public never means the
+ * roadmap stage or session it also happens to be filed under becomes public
+ * too. Those name the other party to that link.
+ */
+
+const KIND_ICON: Record<CareerResourceKind, typeof BookOpen> = {
+  article: FileText,
+  video: Video,
+  course: GraduationCap,
+  book: Book,
+  doc: BookOpen,
+  other: Link2,
+}
+
+export function PublicResourcesSection({ userId }: { userId: string }) {
+  const [items, setItems] = useState<PublicCareerResource[] | null>(null)
+
+  useEffect(() => {
+    let live = true
+    api.getPublicCareerResources(userId).then(
+      (r) => { if (live) setItems(r) },
+      () => { if (live) setItems([]) },
+    )
+    return () => { live = false }
+  }, [userId])
+
+  if (!items || items.length === 0) return null
+
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs font-bold uppercase tracking-wide text-[#878a8c]">
+        Recommended resources
+      </p>
+      <div className="flex flex-col gap-1.5">
+        {items.map((r) => {
+          const Icon = KIND_ICON[r.kind] ?? Link2
+          return (
+            <div key={r.id} className="flex items-center gap-2 rounded-lg bg-[#f6f7f8] px-3 py-2">
+              <Icon size={14} className="shrink-0 text-[#878a8c]" />
+              {r.url ? (
+                <a
+                  href={r.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex min-w-0 items-center gap-1 truncate text-sm font-medium text-[#1c1c1c] hover:text-[#ff4500] hover:underline"
+                >
+                  <span className="truncate">{r.title}</span>
+                  <ExternalLink size={10} className="shrink-0" />
+                </a>
+              ) : (
+                <span className="truncate text-sm font-medium text-[#1c1c1c]">{r.title}</span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}

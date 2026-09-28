@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import {
-  Award, BadgeCheck, CalendarClock, Clock, Crown, Flame, GraduationCap, Lock,
+  Award, BadgeCheck, BookOpen, CalendarClock, Clock, Crown, Flame, GraduationCap, Lock,
   Map as MapIcon, Plus, Star, Users, Wrench, X,
 } from 'lucide-react'
 import { Avatar, Button, Card } from '../ui'
@@ -31,6 +31,7 @@ export function MentorWorkspace({
   onDecline,
   onComplete,
   onEdit,
+  onResources,
 }: {
   requests: MentorshipSession[]
   upcoming: MentorshipSession[]
@@ -41,6 +42,9 @@ export function MentorWorkspace({
   onDecline: (id: string) => void
   onComplete: (session: MentorshipSession) => void
   onEdit: (session: MentorshipSession) => void
+  /** Open the shared-resources modal for this session. Optional so the
+   *  workspace still renders anywhere it is not wired up. */
+  onResources?: (session: MentorshipSession) => void
 }) {
   const { currentUser, subscription } = useApp()
   const [mentees, setMentees] = useState<Mentee[]>([])
@@ -212,6 +216,11 @@ export function MentorWorkspace({
                     timestamp the 6-hour reminder is computed from, and the
                     link. Kept alongside the shortcut above rather than
                     replacing it. */}
+                {onResources && (
+                  <Button variant="outline" className="!px-3 !py-1.5 !text-xs" icon={<BookOpen size={12} />} onClick={() => onResources(s)}>
+                    Resources
+                  </Button>
+                )}
                 <Button variant="outline" className="!px-3 !py-1.5 !text-xs" onClick={() => onEdit(s)}>
                   Edit
                 </Button>
@@ -257,6 +266,11 @@ export function MentorWorkspace({
                   <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${declined ? 'bg-red-50 text-red-500' : 'bg-gray-100 text-[#878a8c]'}`}>
                     {declined ? 'Declined' : 'Completed'}
                   </span>
+                  {!declined && onResources && (
+                    <Button variant="outline" className="!px-3 !py-1.5 !text-xs" icon={<BookOpen size={12} />} onClick={() => onResources(s)}>
+                      Resources
+                    </Button>
+                  )}
                 </div>
               )
             })}
