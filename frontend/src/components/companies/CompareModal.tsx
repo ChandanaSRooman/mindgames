@@ -1,3 +1,4 @@
+import { alumniCount } from '../../lib/format'
 import {
   Briefcase,
   Building2,
@@ -159,7 +160,7 @@ export function CompareModal({
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-bold text-[#1c1c1c]">{company.name}</p>
                   <p className="truncate text-xs text-[#878a8c]">
-                    {company.industry} · {company.alumniCount} alumni · {match.confidence} confidence
+                    {company.industry} · {alumniCount(company.alumniCount)} · {match.confidence} confidence
                   </p>
                 </div>
                 <MatchScoreRing score={match.score} confidence={match.confidence} size={44} />

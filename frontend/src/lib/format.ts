@@ -111,3 +111,10 @@ export function badgeTierClasses(tier: 'silver' | 'gold' | 'crimson'): string {
   }
   return 'border-amber-200 bg-amber-50 text-amber-800'
 }
+
+/** "1 alum" / "3 alumni". "Alumni" is plural, so a count of one needs the
+ *  singular; "alum" rather than "alumnus"/"alumna" so it assumes nobody's
+ *  gender. */
+export function alumniCount(n: number): string {
+  return n === 1 ? '1 alum' : `${n} alumni`
+}

@@ -5,6 +5,7 @@ import { Button, Card } from '../ui'
 import { AlumniListModal } from './AlumniListModal'
 import { blockedBy, nextStageAfter } from '../../lib/careerProgress'
 import { SERVICE_ICONS, serviceName, servicePrice, servicesForStage } from '../../lib/careerServices'
+import { alumniCount } from '../../lib/format'
 import type { AlumniHelper, AlumniService, CareerRoadmap, CareerStage, CareerStageStatus } from '../../types'
 
 const BADGE: Record<CareerStageStatus, string> = {
@@ -194,7 +195,7 @@ function NextUpStrip({
       <p className="min-w-0 flex-1 text-sm text-[#1c1c1c]">
         <span className="font-semibold">“{doneTitle}” done.</span> Next up:{' '}
         <span className="font-semibold">{next.title}</span>
-        {helpers > 0 ? ` — ${helpers} alumni can help.` : '.'}
+        {helpers > 0 ? ` — ${alumniCount(helpers)} can help.` : '.'}
       </p>
       {/* People first — the network is the point. Services only when there's
           nobody to ask. */}
@@ -293,7 +294,7 @@ function StageCard({
               title={`See who: ${stage.title}`}
             >
               <Users size={11} />
-              {helpers} alumni can help
+              {alumniCount(helpers)} can help
             </button>
           )}
           {serviceCount > 0 && (

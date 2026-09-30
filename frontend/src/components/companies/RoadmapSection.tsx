@@ -1,3 +1,4 @@
+import { alumniCount } from '../../lib/format'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { BookOpen, Check, Handshake, MessageCircleQuestion, Route, Users } from 'lucide-react'
@@ -67,7 +68,7 @@ export function RoadmapSection({
       const res = await api.requestCompanyRoadmaps(companyId)
       notify(
         res.notified > 0
-          ? `Asked ${res.notified} alumni at ${companyName} to share how they got in.`
+          ? `Asked ${alumniCount(res.notified)} at ${companyName} to share how they got in.`
           : `No one at ${companyName} is available to ask right now.`,
         res.notified > 0 ? 'success' : 'info',
       )
@@ -108,7 +109,7 @@ export function RoadmapSection({
                 onClick={askAlumni}
                 disabled={asking}
               >
-                {asking ? 'Asking…' : `Ask ${data.eligibleToAsk} alumni`}
+                {asking ? 'Asking…' : `Ask ${alumniCount(data.eligibleToAsk)}`}
               </Button>
             )}
           </div>
@@ -189,7 +190,7 @@ export function RoadmapSection({
                     <li key={s.skill} className="flex flex-wrap items-center gap-2 text-sm">
                       <span className="font-medium text-[#1c1c1c]">{s.skill}</span>
                       <span className="text-[11px] text-[#878a8c]">
-                        {s.holders} alumni here have it
+                        {alumniCount(s.holders)} here {s.holders === 1 ? 'has' : 'have'} it
                       </span>
                       <a
                         href={LMS_URL}

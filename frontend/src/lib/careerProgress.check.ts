@@ -3,6 +3,7 @@
 import assert from 'node:assert'
 import { blockedBy, nextStageAfter, roadmapProgress, workableStages } from './careerProgress'
 import { servicesForStage } from './careerServices'
+import { alumniCount } from './format'
 import type { CareerStage, CareerStageStatus } from '../types'
 
 const stage = (key: string, title: string, status: CareerStageStatus): CareerStage =>
@@ -108,5 +109,10 @@ assert.strictEqual(blockedBy(plan('upcoming', 'upcoming', 'upcoming'), 'nope'), 
   assert.deepStrictEqual(servicesForStage(['a', 'a'], loaded).map((s) => s.id), ['a'])
   assert.deepStrictEqual(servicesForStage([], loaded), [])
 }
+
+// --- alumniCount: singular for one, plural otherwise ---------------------
+assert.strictEqual(alumniCount(1), '1 alum')
+assert.strictEqual(alumniCount(2), '2 alumni')
+assert.strictEqual(alumniCount(0), '0 alumni')
 
 console.log('careerProgress.check.ts — all assertions passed')

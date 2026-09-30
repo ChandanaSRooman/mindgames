@@ -1,3 +1,4 @@
+import { alumniCount } from '../lib/format'
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 import { ArrowLeft, MessageCircleQuestion, Route } from 'lucide-react'
@@ -38,7 +39,7 @@ export function CompanyRoadmaps() {
       const res = await api.requestCompanyRoadmaps(id)
       notify(
         res.notified > 0
-          ? `Asked ${res.notified} alumni at ${company.name} to share how they got in.`
+          ? `Asked ${alumniCount(res.notified)} at ${company.name} to share how they got in.`
           : `No one at ${company.name} is available to ask right now.`,
         res.notified > 0 ? 'success' : 'info',
       )
@@ -90,7 +91,7 @@ export function CompanyRoadmaps() {
               onClick={askAlumni}
               disabled={asking}
             >
-              {asking ? 'Asking…' : `Ask ${data.eligibleToAsk} alumni`}
+              {asking ? 'Asking…' : `Ask ${alumniCount(data.eligibleToAsk)}`}
             </Button>
           )}
         </div>
