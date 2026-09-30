@@ -1,26 +1,11 @@
 import { Router } from 'express'
-import { query, withTransaction } from '../db/pool.js'
+import { query } from '../db/pool.js'
 import { requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { pushNotification } from '../notify.js'
-
-// Mark a pending request (requester → addressee) accepted and bump both
-// users' connection counts atomically. Returns false if no pending row.
-async function acceptPending(requester: string, addressee: string): Promise<boolean> {
-  return withTransaction(async (client) => {
-    const upd = await client.query(
-      `UPDATE connections SET status = 'accepted', updated_at = now()
-       WHERE requester_id = $1 AND addressee_id = $2 AND status = 'pending'`,
-      [requester, addressee],
-    )
-    if (!upd.rowCount) return false
-    await client.query(
-      `UPDATE users SET connections_count = connections_count + 1 WHERE id = ANY($1)`,
-      [[requester, addressee]],
-    )
-    return true
-  })
-}
+// Every connection write goes through connectionGraph, under one per-pair
+// lock shared with the mentorship routes — see that file for why.
+import { acceptPendingRequest, requestConnection } from '../connectionGraph.js'
 
 export const connectionsRouter = Router()
 
@@ -93,28 +78,14 @@ connectionsRouter.post(
     const meRow = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [me])
     const myName = meRow.rows[0].name
 
-    // Already connected in either direction? No-op.
-    const accepted = await query(
-      `SELECT 1 FROM connections
-       WHERE status = 'accepted'
-         AND ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))`,
-      [me, other],
-    )
-    if (accepted.rowCount) return res.json({ ok: true, state: 'connected' })
-
-    // Reverse pending → auto-accept.
-    if (await acceptPending(other, me)) {
+    // Already connected is a no-op; if they had already asked me, this
+    // accepts that; otherwise my request is left waiting on them.
+    const result = await requestConnection(me, other, note || null)
+    if (result === 'already') return res.json({ ok: true, state: 'connected' })
+    if (result === 'accepted') {
       void pushNotification(other, 'connection', `${myName} accepted your connection request.`, me)
       return res.json({ ok: true, state: 'connected' })
     }
-
-    await query(
-      `INSERT INTO connections (requester_id, addressee_id, status, note)
-       VALUES ($1, $2, 'pending', $3)
-       ON CONFLICT (requester_id, addressee_id)
-       DO UPDATE SET status = 'pending', note = $3, updated_at = now()`,
-      [me, other, note || null],
-    )
     void pushNotification(other, 'connection', `${myName} sent you a connection request.`, me)
     res.status(201).json({ ok: true, state: 'pending' })
   }),
@@ -127,7 +98,7 @@ connectionsRouter.post(
   requireAuth,
   asyncHandler(async (req, res) => {
     const me = req.user!.sub
-    if (!(await acceptPending(req.params.id, me))) {
+    if (!(await acceptPendingRequest(req.params.id, me))) {
       throw new ApiError(404, 'No pending request from this user')
     }
     const meRow = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [me])

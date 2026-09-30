@@ -38,3 +38,19 @@ export function servicePrice(s: AlumniService): string {
   if (s.pricingMode === 'custom') return 'On request'
   return `₹${s.amount ?? 0}${s.pricingUnit ? `/${s.pricingUnit}` : ''}`
 }
+
+/**
+ * The services the roadmap matched to one stage, picked by id out of a loaded
+ * list (the roadmap's own stageServices, which the server has already cut to
+ * live ones). An id with no match — a paused or deleted service — is skipped
+ * rather than shown as a blank, and a repeated id is only returned once.
+ */
+export function servicesForStage(serviceIds: string[], loaded: AlumniService[]): AlumniService[] {
+  const byId = new Map(loaded.map((s) => [s.id, s]))
+  const out: AlumniService[] = []
+  for (const id of new Set(serviceIds)) {
+    const s = byId.get(id)
+    if (s) out.push(s)
+  }
+  return out
+}

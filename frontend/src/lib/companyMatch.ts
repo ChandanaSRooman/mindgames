@@ -27,6 +27,7 @@
 //    already has, so the rules stay readable and testable in one file
 //    (see companyMatch.check.ts).
 
+import { alumniCount } from './format'
 import type { CompanySignals, CompanyWithSignals, NamedFrequency, SkillFrequency, User } from '../types'
 
 export type CompanyFactorKey =
@@ -218,7 +219,7 @@ function locationFactor(me: User, sig: CompanySignals): CompanyMatchFactor {
   const wanted = [me.city, ...(me.preferredLocations ?? [])].filter((c) => c && c.trim())
   const hit = sig.cities.find((c) => includesNorm(wanted, c.city))
   if (hit) {
-    return { ...base, ratio: 1, detail: `${hit.count} alumni in ${hit.city}` }
+    return { ...base, ratio: 1, detail: `${alumniCount(hit.count)} in ${hit.city}` }
   }
   // Willing to move is a real, partial answer — not the same as a mismatch.
   if (me.openToRelocate) {
@@ -267,11 +268,11 @@ function confidenceOf(sig: CompanySignals, skillCount: number): {
     }
   }
   if (sig.sampleSize >= 8 && skillCount >= 5) {
-    return { confidence: 'high', confidenceNote: `Based on ${sig.sampleSize} alumni here` }
+    return { confidence: 'high', confidenceNote: `Based on ${alumniCount(sig.sampleSize)} here` }
   }
   return {
     confidence: 'medium',
-    confidenceNote: `Based on only ${sig.sampleSize} alumni here`,
+    confidenceNote: `Based on only ${alumniCount(sig.sampleSize)} here`,
   }
 }
 

@@ -10,6 +10,7 @@ import { getProfileStats, refreshBadges, stampMutualConfirmation } from '../sess
 import { mapPendingConfirmation, type PendingConfirmationRow } from '../mappers.js'
 import { labelsFor } from '../sessionLabels.js'
 import { HTTP_URL, HTTP_URL_MESSAGE, isHttpUrl } from '../validation.js'
+import { ensureConnected } from '../connectionGraph.js'
 
 export const mentorshipRouter = Router()
 
@@ -382,13 +383,26 @@ mentorshipRouter.post(
     if (resourceLink && !isHttpUrl(resourceLink)) {
       throw new ApiError(400, 'That resource link does not look like a valid URL')
     }
-    await query(
-      `UPDATE mentorship_sessions
-          SET status = 'upcoming', meeting_link = $2, scheduled_at = COALESCE($3, scheduled_at),
-              accepted_at = now()
-        WHERE id = $1`,
-      [req.params.id, link || null, scheduledAt],
-    )
+    // One transaction: the session becoming agreed and the two people
+    // becoming connected (they then show in each other's My Network) succeed
+    // or fail together. The status re-check matters — `s` was read before
+    // the plan check, and a mentee withdrawing the request in that gap used
+    // to be overwritten back to 'upcoming' and confirmed anyway.
+    const agreed = await withTransaction(async (client) => {
+      const upd = await client.query(
+        `UPDATE mentorship_sessions
+            SET status = 'upcoming', meeting_link = $2, scheduled_at = COALESCE($3, scheduled_at),
+                accepted_at = now()
+          WHERE id = $1 AND status = 'requested'`,
+        [req.params.id, link || null, scheduledAt],
+      )
+      if (!upd.rowCount) return false
+      await ensureConnected(req.user!.sub, s.mentee_id, client)
+      return true
+    })
+    if (!agreed) {
+      throw new ApiError(409, 'This request changed while you were accepting it — it may have been withdrawn. Refresh to see where it stands.')
+    }
     const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
     void pushNotification(
       s.mentee_id,
@@ -664,12 +678,19 @@ mentorshipRouter.post(
     const s = await sessionForOfferedMentee(req.params.id, req.user!.sub)
     if (s.status !== 'requested') throw new ApiError(400, `Session is already ${s.status}`)
 
-    await query(
+    // Status re-checked in the UPDATE: `s` was read a statement earlier, and a
+    // mentor withdrawing the offer in between used to be overwritten, turning
+    // a withdrawn offer into a confirmed session. No auto-connect here —
+    // /sessions/offer only allows offering to an existing connection.
+    const upd = await query(
       `UPDATE mentorship_sessions
           SET status = 'upcoming', accepted_at = now()
-        WHERE id = $1 AND requested_by = 'mentor'`,
+        WHERE id = $1 AND requested_by = 'mentor' AND status = 'requested'`,
       [req.params.id],
     )
+    if (!upd.rowCount) {
+      throw new ApiError(409, 'This offer changed — it may have been withdrawn. Refresh to see where it stands.')
+    }
     const me = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [req.user!.sub])
     void pushNotification(
       s.mentor_id,

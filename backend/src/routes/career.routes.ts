@@ -361,7 +361,33 @@ async function loadActiveRoadmap(userId: string) {
     ...s,
     status: byKey.get(String(s.stepKey)) ?? s.status,
   }))
-  return mapped
+
+  // The services the roadmap matched to its stages, for each stage card's
+  // "N services" list. Live ones only: a service paused or deleted since the
+  // roadmap was built drops out here rather than showing as something the
+  // member can't book. Fetched by id rather than taken from the page's
+  // matched list, which is a top-N across all services and missed most of
+  // them. The member's own services are left out, same as /services/matched.
+  const serviceIds = [
+    ...new Set(
+      mapped.stages.flatMap((s: Record<string, unknown>) =>
+        Array.isArray(s.relevantServiceIds) ? (s.relevantServiceIds as string[]) : [],
+      ),
+    ),
+  ]
+  const stageServices = serviceIds.length
+    ? (
+        await query<AlumniServiceRow>(
+          `SELECT s.*, u.name AS provider_name, u.photo AS provider_photo,
+                  u.designation AS provider_designation, u.company AS provider_company
+             FROM alumni_services s JOIN users u ON u.id = s.user_id
+            WHERE s.active AND s.id = ANY($1::text[]) AND s.user_id <> $2`,
+          [serviceIds, userId],
+        )
+      ).rows.map(mapAlumniService)
+    : []
+
+  return { ...mapped, stageServices }
 }
 
 // GET /api/career/roadmap — the member's current active roadmap, or null if
