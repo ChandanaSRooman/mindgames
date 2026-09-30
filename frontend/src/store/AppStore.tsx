@@ -140,6 +140,7 @@ interface AppContextValue {
   offerSession: (
     menteeId: string, topic: string, date: string, time: string,
     meetingLink?: string, scheduledAt?: string,
+    resourceLink?: string, resourceRequiresSubmission?: boolean,
   ) => Promise<'ok' | 'payment-required' | 'error'>
   acceptSessionOffer: (id: string) => void
   declineSessionOffer: (id: string) => void
@@ -152,7 +153,10 @@ interface AppContextValue {
   /** 'payment-required' means the mentor needs a plan and the caller should
    *  open the pricing page; 'error' means it genuinely failed and has already
    *  been reported to the member, so the caller must not treat it as done. */
-  acceptSession: (id: string, meetingLink?: string) => Promise<'ok' | 'payment-required' | 'error'>
+  acceptSession: (
+    id: string, meetingLink?: string,
+    resourceLink?: string, resourceRequiresSubmission?: boolean,
+  ) => Promise<'ok' | 'payment-required' | 'error'>
   rateSession: (id: string, rating: number, review?: string) => void
   declineSession: (id: string) => void
   completeSession: (id: string, durationMinutes?: number, domain?: string) => void
@@ -888,9 +892,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // mentor needs a plan, and the caller opens the pricing page instead of
   // showing a toast the member cannot act on.
   const acceptSession = useCallback(
-    async (id: string, meetingLink?: string): Promise<'ok' | 'payment-required' | 'error'> => {
+    async (
+      id: string, meetingLink?: string,
+      resourceLink?: string, resourceRequiresSubmission?: boolean,
+    ): Promise<'ok' | 'payment-required' | 'error'> => {
       try {
-        const updated = await api.acceptSession(id, meetingLink)
+        const updated = await api.acceptSession(id, meetingLink, resourceLink, resourceRequiresSubmission)
         setSessions((list) => list.map((s) => (s.id === updated.id ? updated : s)))
         notify('Session confirmed. The mentee has been notified.')
         return 'ok'
@@ -913,9 +920,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (
       menteeId: string, topic: string, date: string, time: string,
       meetingLink?: string, scheduledAt?: string,
+      resourceLink?: string, resourceRequiresSubmission?: boolean,
     ): Promise<'ok' | 'payment-required' | 'error'> => {
       try {
-        const session = await api.offerSession(menteeId, topic, date, time, meetingLink, scheduledAt)
+        const session = await api.offerSession(
+          menteeId, topic, date, time, meetingLink, scheduledAt,
+          resourceLink, resourceRequiresSubmission,
+        )
         setSessions((s) => [session, ...s])
         notify('Session offered — waiting for them to accept.')
         return 'ok'

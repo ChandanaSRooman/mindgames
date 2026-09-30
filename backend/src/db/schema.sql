@@ -1372,3 +1372,15 @@ ALTER TABLE career_resources ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL
 CREATE INDEX IF NOT EXISTS idx_career_resources_public
   ON career_resources (user_id, created_at DESC)
   WHERE is_public;
+
+-- career_resources: mentor-assigned submissions.
+--
+-- A resource attached to a session is normally just "read this" — nothing
+-- else required. requires_submission marks the other case: the mentor wants
+-- the mentee to come back with a link proving they did it. Who the mentee is
+-- comes from the session this resource is already attached to (session_id),
+-- so no separate "assigned to" column is needed. submission_url/at are set
+-- once by the session's mentee via POST /:id/submit, never by the owner.
+ALTER TABLE career_resources ADD COLUMN IF NOT EXISTS requires_submission BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE career_resources ADD COLUMN IF NOT EXISTS submission_url TEXT;
+ALTER TABLE career_resources ADD COLUMN IF NOT EXISTS submission_at TIMESTAMPTZ;

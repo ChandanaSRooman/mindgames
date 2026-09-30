@@ -15,7 +15,8 @@ import { mapCareerResource, mapPublicCareerResource, type CareerResourceRow } fr
  *
  *   - a roadmap stage, so the Resources page can group by stage
  *   - a mentorship session, which is how a mentor hands their mentee
- *     "read this before we meet", and how the mentee hands one back
+ *     "read this before we meet" (only the mentor attaches; the mentee
+ *     answers via POST /:id/submit when a submission is required)
  *
  * Visibility follows from the session link: you see a resource if you own it,
  * or if it is attached to a session you are a party to. That rule lives here
@@ -55,6 +56,17 @@ async function assertInSession(sessionId: string, me: string) {
   if (!r.rowCount) throw new ApiError(404, 'Session not found (or you are not part of it)')
 }
 
+/** Attaching to a session is the mentor's job; the mentee's side is POST
+ *  /:id/submit. Enforced here, not just by hiding the form in the UI, so a
+ *  direct API call can't get around it. */
+async function assertMentorOfSession(sessionId: string, me: string) {
+  const r = await query(
+    `SELECT 1 FROM mentorship_sessions WHERE id = $1 AND mentor_id = $2`,
+    [sessionId, me],
+  )
+  if (!r.rowCount) throw new ApiError(404, 'Session not found (or you are not its mentor)')
+}
+
 /** Confirms the roadmap is the caller's own and really has that stage.
  *
  *  Mirrors the step-key check the roadmap step-status route already does: an
@@ -83,6 +95,9 @@ const createSchema = z.object({
   stepKey: z.string().optional(),
   sessionId: z.string().optional(),
   isPublic: z.boolean().optional().default(false),
+  // Only meaningful alongside sessionId: the mentor marking "come back with
+  // proof you did this" on a resource they're attaching to the session.
+  requiresSubmission: z.boolean().optional().default(false),
 })
 
 // Spelled out rather than createSchema.partial(), for the reason documented on
@@ -149,15 +164,16 @@ careerResourcesRouter.post(
     // other is a request that cannot be stored coherently.
     if (d.stepKey && !d.roadmapId) throw new ApiError(400, 'A stage needs its roadmap')
     if (d.roadmapId) await assertOwnStage(d.roadmapId, d.stepKey, me)
-    if (d.sessionId) await assertInSession(d.sessionId, me)
+    if (d.sessionId) await assertMentorOfSession(d.sessionId, me)
 
     const ins = await query<{ id: string }>(
-      `INSERT INTO career_resources (user_id, title, url, note, kind, status, roadmap_id, step_key, session_id, is_public)
-       VALUES ($1, $2, $3, $4, COALESCE($5, 'article'), COALESCE($6, 'saved'), $7, $8, $9, $10)
+      `INSERT INTO career_resources (user_id, title, url, note, kind, status, roadmap_id, step_key, session_id, is_public, requires_submission)
+       VALUES ($1, $2, $3, $4, COALESCE($5, 'article'), COALESCE($6, 'saved'), $7, $8, $9, $10, $11)
        RETURNING id`,
       [
         me, d.title, d.url ?? null, d.note ?? null, d.kind ?? null, d.status ?? null,
         d.roadmapId ?? null, d.stepKey ?? null, d.sessionId ?? null, d.isPublic,
+        d.sessionId ? d.requiresSubmission : false,
       ],
     )
 
@@ -217,6 +233,52 @@ careerResourcesRouter.patch(
         d.isPublic ?? c.is_public,
       ],
     )
+    const full = await query<CareerResourceRow>(`${SELECT} WHERE r.id = $1`, [req.params.id])
+    res.json(mapCareerResource(full.rows[0]))
+  }),
+)
+
+const submitSchema = z.object({
+  url: z.string().trim().url().max(2000),
+})
+
+// POST /api/career-resources/:id/submit — the session's MENTEE proves they
+// did an assigned resource, by pasting a link (a doc, a repo, a deployed
+// site). Deliberately not the owner: the mentor who assigned it is the one
+// who set requires_submission, and the mentee is who has to answer it. Who
+// "the mentee" is comes from the session this resource is attached to, not a
+// separate assignment field.
+careerResourcesRouter.post(
+  '/:id/submit',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = submitSchema.safeParse(req.body)
+    if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
+    const me = req.user!.sub
+
+    const cur = await query<{ requires_submission: boolean; title: string; user_id: string; mentee_id: string | null }>(
+      `SELECT r.requires_submission, r.title, r.user_id, s.mentee_id
+         FROM career_resources r
+         JOIN mentorship_sessions s ON s.id = r.session_id
+        WHERE r.id = $1 AND s.mentee_id = $2`,
+      [req.params.id, me],
+    )
+    if (!cur.rowCount) throw new ApiError(404, 'Resource not found (or not assigned to you)')
+    if (!cur.rows[0].requires_submission) throw new ApiError(400, 'This resource does not ask for a submission')
+
+    await query(
+      `UPDATE career_resources SET submission_url = $2, submission_at = now(), updated_at = now() WHERE id = $1`,
+      [req.params.id, parsed.data.url],
+    )
+    const who = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [me])
+    void pushNotification(
+      cur.rows[0].user_id,
+      'mentorship',
+      `${who.rows[0].name} submitted "${cur.rows[0].title}".`,
+      me,
+      { type: 'session', id: req.params.id },
+    )
+
     const full = await query<CareerResourceRow>(`${SELECT} WHERE r.id = $1`, [req.params.id])
     res.json(mapCareerResource(full.rows[0]))
   }),

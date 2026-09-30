@@ -844,6 +844,9 @@ export interface CareerResourceRow {
   step_key: string | null
   session_id: string | null
   is_public: boolean
+  requires_submission: boolean
+  submission_url: string | null
+  submission_at: Date | string | null
   created_at: Date | string
   updated_at: Date | string
   owner_name?: string | null
@@ -866,6 +869,9 @@ export function mapCareerResource(r: CareerResourceRow) {
     stepKey: r.step_key ?? undefined,
     sessionId: r.session_id ?? undefined,
     isPublic: r.is_public,
+    requiresSubmission: r.requires_submission,
+    submissionUrl: r.submission_url ?? undefined,
+    submissionAt: r.submission_at ? new Date(r.submission_at).toISOString() : undefined,
     createdAt: new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at).toISOString(),
     ownerName: r.owner_name ?? undefined,

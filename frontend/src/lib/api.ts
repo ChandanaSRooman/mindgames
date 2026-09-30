@@ -377,10 +377,14 @@ export const api = {
   offerSession: (
     menteeId: string, topic: string, date: string, time: string,
     meetingLink?: string, scheduledAt?: string,
+    resourceLink?: string, resourceRequiresSubmission?: boolean,
   ) =>
     http<MentorshipSession>('/api/mentorship/sessions/offer', {
       method: 'POST',
-      body: JSON.stringify({ menteeId, topic, date, time, meetingLink, scheduledAt }),
+      body: JSON.stringify({
+        menteeId, topic, date, time, meetingLink, scheduledAt,
+        resourceLink, resourceRequiresSubmission,
+      }),
     }),
   /** Either side calls off a requested or upcoming session. */
   cancelSession: (id: string) =>
@@ -395,10 +399,13 @@ export const api = {
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/accept-offer`, { method: 'POST' }),
   declineSessionOffer: (id: string) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/decline-offer`, { method: 'POST' }),
-  acceptSession: (id: string, meetingLink?: string) =>
+  acceptSession: (
+    id: string, meetingLink?: string,
+    resourceLink?: string, resourceRequiresSubmission?: boolean,
+  ) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/accept`, {
       method: 'POST',
-      body: JSON.stringify({ meetingLink }),
+      body: JSON.stringify({ meetingLink, resourceLink, resourceRequiresSubmission }),
     }),
   rateSession: (id: string, rating: number, review?: string) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/rate`, {
@@ -786,6 +793,13 @@ export const api = {
     }),
   deleteCareerResource: (id: string) =>
     http<void>(`/api/career-resources/${id}`, { method: 'DELETE' }),
+  // The session's mentee proving they did a resource the mentor marked
+  // requiresSubmission — a link, not a file upload (no storage for that yet).
+  submitCareerResource: (id: string, url: string) =>
+    http<CareerResource>(`/api/career-resources/${id}/submit`, {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
 }
 
 export interface CareerAssessmentInput {

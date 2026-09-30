@@ -453,6 +453,8 @@ function OfferSessionModal({ onClose, onNeedsPlan }: { onClose: () => void; onNe
   const [date, setDate] = useState('')
   const [time, setTime] = useState('')
   const [meetingLink, setMeetingLink] = useState('')
+  const [resourceLink, setResourceLink] = useState('')
+  const [resourceRequiresSubmission, setResourceRequiresSubmission] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const connections = users.filter((u) => u.id !== currentUser.id && connectionState(u.id) === 'connected')
@@ -475,6 +477,8 @@ function OfferSessionModal({ onClose, onNeedsPlan }: { onClose: () => void; onNe
       menteeId, topic.trim(), dateLabel, timeLabel,
       meetingLink.trim() || undefined,
       when.toISOString(),
+      resourceLink.trim() || undefined,
+      resourceRequiresSubmission,
     )
     setSaving(false)
     if (result === 'payment-required') return onNeedsPlan()
@@ -566,6 +570,25 @@ function OfferSessionModal({ onClose, onNeedsPlan }: { onClose: () => void; onNe
           placeholder="https://meet.google.com/…"
           className={field}
         />
+
+        <label className="mt-3 block text-sm font-medium text-[#1c1c1c]">Assign a resource (optional)</label>
+        <input
+          value={resourceLink}
+          onChange={(e) => setResourceLink(e.target.value)}
+          placeholder="A link for them to read or watch before you meet"
+          className={field}
+        />
+        {resourceLink.trim() && (
+          <label className="mt-2 flex items-center gap-2 text-xs text-[#878a8c]">
+            <input
+              type="checkbox"
+              checked={resourceRequiresSubmission}
+              onChange={(e) => setResourceRequiresSubmission(e.target.checked)}
+              className="h-3.5 w-3.5 accent-[#ff4500]"
+            />
+            They need to submit proof they did it
+          </label>
+        )}
 
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>

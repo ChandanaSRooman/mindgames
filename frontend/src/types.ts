@@ -736,6 +736,10 @@ export interface MentorshipSession {
    *  confirmation is still outstanding. */
   menteeConfirmed?: boolean
   mentorConfirmed?: boolean
+  /** How many career_resources rows are attached to this session — lets a
+   *  session list decide whether to show a "Resources" button at all,
+   *  without a per-session fetch. */
+  resourceCount?: number
 }
 
 // A mentee's first N mentorship sessions are free; the rest are paid.
@@ -1380,6 +1384,11 @@ export interface CareerResource {
    *  the stage/session links above — those stay private either way, since
    *  they name the other party to that link. */
   isPublic: boolean
+  /** Set by a mentor attaching this resource to a session: the mentee must
+   *  come back with a link proving they did it, via submissionUrl below. */
+  requiresSubmission?: boolean
+  submissionUrl?: string
+  submissionAt?: string
   createdAt: string
   updatedAt: string
   /** Who saved it — only meaningful for a resource shared into a session,
@@ -1411,4 +1420,5 @@ export interface CareerResourceInput {
   stepKey?: string
   sessionId?: string
   isPublic?: boolean
+  requiresSubmission?: boolean
 }
