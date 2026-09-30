@@ -1,6 +1,5 @@
 import { useCallback, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
-import { MailWarning, X } from 'lucide-react'
 import { api } from '../../lib/api'
 import { useApp } from '../../store/AppStore'
 import { Navbar } from './Navbar'
@@ -11,6 +10,7 @@ import { ChatPanel } from './ChatPanel'
 import { AskRoo } from './AskRoo'
 import { PostCreateModal } from '../feed/PostCreateModal'
 import { LayoutContext } from './LayoutContext'
+import { VerifyEmailNotice } from './VerifyEmailNotice'
 import type { PostType } from '../../types'
 
 export function AppLayout() {
@@ -53,7 +53,13 @@ export function AppLayout() {
   return (
     <LayoutContext.Provider value={{ openComposer, toggleChat, openChatWith, sidebarOpen, toggleSidebar }}>
       <Navbar />
-      <LeftSidebar />
+      <LeftSidebar
+        verifyNotice={
+          showVerifyBanner
+            ? { resending, onResend: resendVerification, onDismiss: () => setVerifyDismissed(true) }
+            : undefined
+        }
+      />
       {/* Career Guidance is a full-width workspace: its roadmap runs
           horizontally across the page, so it renders no right rail at all. */}
       {isFullWidth ? null : pathname === '/home' ? <HomeRightSidebar /> : <RightSidebar />}
@@ -80,26 +86,16 @@ export function AppLayout() {
         <div className={`mx-auto w-full px-4 py-5 transition-all duration-200 ${
           isFullWidth ? 'max-w-[1180px]' : sidebarOpen ? 'max-w-[720px]' : 'max-w-[1100px]'
         }`}>
+          {/* The left sidebar carries a small version of this on wide screens.
+              It isn't on screen below lg or when collapsed, so the full banner
+              stays for those cases — otherwise the prompt would vanish. */}
           {showVerifyBanner && (
-            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
-              <MailWarning size={16} className="shrink-0" />
-              <span className="flex-1">
-                Please verify your email address — it keeps your account recoverable.
-              </span>
-              <button
-                onClick={resendVerification}
-                disabled={resending}
-                className="font-bold text-amber-900 underline hover:no-underline disabled:opacity-50"
-              >
-                {resending ? 'Sending…' : 'Resend link'}
-              </button>
-              <button
-                onClick={() => setVerifyDismissed(true)}
-                className="rounded-full p-1 hover:bg-amber-100"
-                aria-label="Dismiss"
-              >
-                <X size={14} />
-              </button>
+            <div className={sidebarOpen ? 'lg:hidden' : undefined}>
+              <VerifyEmailNotice
+                resending={resending}
+                onResend={resendVerification}
+                onDismiss={() => setVerifyDismissed(true)}
+              />
             </div>
           )}
           <Outlet />

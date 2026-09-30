@@ -852,6 +852,7 @@ export interface CareerResourceRow {
   owner_name?: string | null
   owner_photo?: string | null
   session_topic?: string | null
+  session_status?: string | null
 }
 
 export function mapCareerResource(r: CareerResourceRow) {
@@ -877,6 +878,10 @@ export function mapCareerResource(r: CareerResourceRow) {
     ownerName: r.owner_name ?? undefined,
     ownerPhoto: r.owner_photo ?? undefined,
     sessionTopic: r.session_topic ?? undefined,
+    // Lets the UI hide edit/delete on a finished session's resources, which
+    // the server refuses anyway (they're a record of what was assigned).
+    // Only 'past' locks — mirrors isSessionLocked in careerResources.routes.ts.
+    sessionLocked: r.session_id ? r.session_status === 'past' : false,
   }
 }
 
@@ -897,5 +902,35 @@ export function mapPublicCareerResource(r: CareerResourceRow) {
     note: r.note ?? undefined,
     kind: r.kind,
     createdAt: new Date(r.created_at).toISOString(),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Admin: sessions a mentor has completed that are still waiting on the
+// mentee's "it happened". Until then they count toward nobody's stats.
+// ---------------------------------------------------------------------------
+export interface PendingConfirmationRow {
+  id: string
+  topic: string
+  mentor_id: string
+  mentor_name: string
+  mentee_id: string
+  mentee_name: string
+  date_label: string
+  ended_at: Date | string | null
+  confirm_reminded_at: Date | string | null
+}
+
+export function mapPendingConfirmation(r: PendingConfirmationRow) {
+  return {
+    id: r.id,
+    topic: r.topic,
+    mentorId: r.mentor_id,
+    mentorName: r.mentor_name,
+    menteeId: r.mentee_id,
+    menteeName: r.mentee_name,
+    date: r.date_label,
+    completedAt: r.ended_at ? new Date(r.ended_at).toISOString() : undefined,
+    remindedAt: r.confirm_reminded_at ? new Date(r.confirm_reminded_at).toISOString() : undefined,
   }
 }

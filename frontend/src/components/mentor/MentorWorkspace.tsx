@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import {
-  Award, BadgeCheck, BookOpen, CalendarClock, Clock, Crown, Flame, GraduationCap, Lock,
+  Award, BadgeCheck, BookOpen, CalendarClock, CheckCircle2, Clock, Crown, Flame, GraduationCap, Lock,
   Map as MapIcon, Plus, Star, Users, Wrench, X,
 } from 'lucide-react'
 import { Avatar, Button, Card } from '../ui'
 import { api } from '../../lib/api'
 import { badgeTierClasses, roleLine, sessionLabels } from '../../lib/format'
+import { isHttpUrl } from '../../lib/links'
 import { useApp } from '../../store/AppStore'
 import { ManageServicesPanel } from '../career/ManageServicesPanel'
 import { MenteeRoadmapModal } from './MenteeRoadmapModal'
@@ -53,7 +54,6 @@ export function MentorWorkspace({
   const [showServices, setShowServices] = useState(false)
   const [showPlans, setShowPlans] = useState(false)
   const [showOfferSession, setShowOfferSession] = useState(false)
-  const [editingLinkFor, setEditingLinkFor] = useState<MentorshipSession | null>(null)
 
   const isMentor = currentUser.isMentor
 
@@ -192,41 +192,37 @@ export function MentorWorkspace({
                     {s.menteeName} · {s.date} at {s.time}
                   </p>
                 </div>
-                {s.meetingLink && (
-                  <a
-                    href={s.meetingLink}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="shrink-0 text-xs font-semibold text-[#ff4500] hover:underline"
-                  >
-                    Join
-                  </a>
-                )}
-                {/* Without this a confirmed session could have no way in:
-                    the link could only ever be set in the instant of
-                    accepting, and never for a slot the mentor offered. */}
-                <Button
-                  variant="outline"
-                  className="!px-3 !py-1.5 !text-xs"
-                  onClick={() => setEditingLinkFor(s)}
-                >
-                  {s.meetingLink ? 'Edit link' : 'Add link'}
-                </Button>
-                {/* The fuller editor from PR #37: topic, the real scheduled
-                    timestamp the 6-hour reminder is computed from, and the
-                    link. Kept alongside the shortcut above rather than
-                    replacing it. */}
-                {onResources && (
-                  <Button variant="outline" className="!px-3 !py-1.5 !text-xs" icon={<BookOpen size={12} />} onClick={() => onResources(s)}>
-                    Resources
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {s.meetingLink ? (
+                    <a
+                      href={s.meetingLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Join the meeting"
+                      className="rounded-full bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-100"
+                    >
+                      Join
+                    </a>
+                  ) : (
+                    <span title="Add a meeting link with Edit" className="px-1 text-xs text-[#878a8c]">
+                      No link
+                    </span>
+                  )}
+                  {/* One editor for topic, time and the meeting link — the
+                      separate link shortcut was a second door to the same
+                      field. */}
+                  <Button variant="outline" className="!px-3 !py-1.5 !text-xs" title="Edit topic, time or meeting link" onClick={() => onEdit(s)}>
+                    Edit
                   </Button>
-                )}
-                <Button variant="outline" className="!px-3 !py-1.5 !text-xs" onClick={() => onEdit(s)}>
-                  Edit
-                </Button>
-                <Button className="!px-3 !py-1.5 !text-xs" onClick={() => onComplete(s)}>
-                  Mark completed
-                </Button>
+                  {onResources && (
+                    <Button variant="outline" className="!px-3 !py-1.5 !text-xs" icon={<BookOpen size={12} />} onClick={() => onResources(s)}>
+                      Resources{s.resourceCount ? ` · ${s.resourceCount}` : ''}
+                    </Button>
+                  )}
+                  <Button className="!px-3 !py-1.5 !text-xs" onClick={() => onComplete(s)}>
+                    Complete
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
@@ -251,11 +247,24 @@ export function MentorWorkspace({
                     <p className="truncate text-sm font-semibold text-[#1c1c1c]">{s.topic}</p>
                     <p className="text-xs text-[#878a8c]">{s.menteeName} · {s.date}</p>
                   </div>
-                  {/* Says why a completed session isn't in the stats yet:
-                      it only counts once the mentee confirms it too. */}
+                  {/* Why a completed session isn't in the stats yet: it counts
+                      once the mentee confirms too. Neutral grey, not amber —
+                      the mentor has nothing to do here, so it isn't a warning.
+                      Names who it's waiting on; the hover says why it matters. */}
                   {!declined && s.mentorConfirmed && !s.menteeConfirmed && (
-                    <span className="shrink-0 rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700">
-                      Awaiting their confirmation
+                    <span
+                      title={`Counts toward your hours and badges once ${s.menteeName} confirms it happened.`}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-semibold text-[#5f6368]"
+                    >
+                      <Clock size={11} /> {s.menteeName} to confirm
+                    </span>
+                  )}
+                  {!declined && s.mentorConfirmed && s.menteeConfirmed && (
+                    <span
+                      title="Both of you confirmed it — it counts toward your record."
+                      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-green-100 px-2.5 py-0.5 text-[11px] font-semibold text-green-700"
+                    >
+                      <CheckCircle2 size={11} /> Confirmed
                     </span>
                   )}
                   {!declined && s.rating && (
@@ -263,12 +272,16 @@ export function MentorWorkspace({
                       <Star size={11} className="fill-amber-500 text-amber-500" /> {s.rating}
                     </span>
                   )}
-                  <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${declined ? 'bg-red-50 text-red-500' : 'bg-gray-100 text-[#878a8c]'}`}>
-                    {declined ? 'Declined' : 'Completed'}
-                  </span>
-                  {!declined && onResources && (
+                  {/* Everything under Past is completed, so only the
+                      exception gets a badge. */}
+                  {declined && (
+                    <span className="shrink-0 rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-500">Declined</span>
+                  )}
+                  {/* Past is a read-only record, so there's nothing to open
+                      when nothing was assigned. */}
+                  {!declined && onResources && !!s.resourceCount && (
                     <Button variant="outline" className="!px-3 !py-1.5 !text-xs" icon={<BookOpen size={12} />} onClick={() => onResources(s)}>
-                      Resources
+                      Resources · {s.resourceCount}
                     </Button>
                   )}
                 </div>
@@ -380,9 +393,6 @@ export function MentorWorkspace({
       {showPlans && (
         <SubscriptionPlans reason="You need a subscription to accept sessions" onClose={() => setShowPlans(false)} />
       )}
-      {editingLinkFor && (
-        <MeetingLinkModal session={editingLinkFor} onClose={() => setEditingLinkFor(null)} />
-      )}
       {showOfferSession && (
         <OfferSessionModal
           onClose={() => setShowOfferSession(false)}
@@ -390,56 +400,6 @@ export function MentorWorkspace({
         />
       )}
     </div>
-  )
-}
-
-/** Add or change where a confirmed session actually happens. The link could
- *  previously only be set in the single instant of accepting a request, so a
- *  mentor who skipped it — or who offered the slot themselves — left the
- *  other side looking at a "Confirmed" session with no way to join. */
-function MeetingLinkModal({ session, onClose }: { session: MentorshipSession; onClose: () => void }) {
-  const { setSessionMeetingLink } = useApp()
-  const [link, setLink] = useState(session.meetingLink ?? '')
-
-  return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-bold text-[#1c1c1c]">Meeting link</h2>
-            <p className="text-sm text-[#878a8c]">{session.topic} · {session.menteeName}</p>
-          </div>
-          <button onClick={onClose} className="rounded-full p-1 text-[#878a8c] hover:bg-gray-100" aria-label="Close">
-            <X size={18} />
-          </button>
-        </div>
-        <input
-          value={link}
-          onChange={(e) => setLink(e.target.value)}
-          placeholder="https://meet.google.com/…"
-          className="w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
-        />
-        <p className="mt-1.5 text-xs text-[#878a8c]">They'll be notified as soon as you save it.</p>
-        <div className="mt-4 flex justify-end gap-2">
-          {session.meetingLink && (
-            <Button
-              variant="ghost"
-              onClick={async () => { if (await setSessionMeetingLink(session.id, '')) onClose() }}
-            >
-              Remove
-            </Button>
-          )}
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button
-            disabled={!link.trim()}
-            onClick={async () => { if (await setSessionMeetingLink(session.id, link.trim())) onClose() }}
-          >
-            Save link
-          </Button>
-        </div>
-      </div>
-    </div>,
-    document.body,
   )
 }
 
@@ -454,7 +414,7 @@ function OfferSessionModal({ onClose, onNeedsPlan }: { onClose: () => void; onNe
   const [time, setTime] = useState('')
   const [meetingLink, setMeetingLink] = useState('')
   const [resourceLink, setResourceLink] = useState('')
-  const [resourceRequiresSubmission, setResourceRequiresSubmission] = useState(false)
+  const [resourceTitle, setResourceTitle] = useState('')
   const [saving, setSaving] = useState(false)
 
   const connections = users.filter((u) => u.id !== currentUser.id && connectionState(u.id) === 'connected')
@@ -464,6 +424,13 @@ function OfferSessionModal({ onClose, onNeedsPlan }: { onClose: () => void; onNe
     if (!menteeId) return notify('Pick who the session is for.', 'error')
     if (!topic.trim()) return notify('Add what the session will cover.', 'error')
     if (!date || !time) return notify('Pick a date and time.', 'error')
+    if (!meetingLink.trim()) return notify('Add a meeting link so they know where to join.', 'error')
+    if (!isHttpUrl(meetingLink.trim())) {
+      return notify('The meeting link must be a full link, starting with https://', 'error')
+    }
+    if (resourceLink.trim() && !isHttpUrl(resourceLink.trim())) {
+      return notify('The prep link must be a full link, starting with https://', 'error')
+    }
     // Same human-readable labels the booking flow stores, so both kinds of
     // session render identically everywhere they're listed. Derived from the
     // one instant below, so the label and the timestamp cannot disagree.
@@ -475,10 +442,10 @@ function OfferSessionModal({ onClose, onNeedsPlan }: { onClose: () => void; onNe
     // later mentor-side accept step on an offer to attach one at.
     const result = await offerSession(
       menteeId, topic.trim(), dateLabel, timeLabel,
-      meetingLink.trim() || undefined,
+      meetingLink.trim(),
       when.toISOString(),
       resourceLink.trim() || undefined,
-      resourceRequiresSubmission,
+      resourceTitle.trim() || undefined,
     )
     setSaving(false)
     if (result === 'payment-required') return onNeedsPlan()
@@ -563,7 +530,9 @@ function OfferSessionModal({ onClose, onNeedsPlan }: { onClose: () => void; onNe
           </div>
         </div>
 
-        <label className="mt-3 block text-sm font-medium text-[#1c1c1c]">Meeting link (optional)</label>
+        <label className="mt-3 block text-sm font-medium text-[#1c1c1c]">
+          Meeting link <span className="text-red-500">*</span>
+        </label>
         <input
           value={meetingLink}
           onChange={(e) => setMeetingLink(e.target.value)}
@@ -571,23 +540,23 @@ function OfferSessionModal({ onClose, onNeedsPlan }: { onClose: () => void; onNe
           className={field}
         />
 
-        <label className="mt-3 block text-sm font-medium text-[#1c1c1c]">Assign a resource (optional)</label>
+        <label className="mt-3 block text-sm font-medium text-[#1c1c1c]">Prep for them (optional)</label>
         <input
           value={resourceLink}
           onChange={(e) => setResourceLink(e.target.value)}
-          placeholder="A link for them to read or watch before you meet"
+          placeholder="A link for them to go through before you meet"
           className={field}
         />
+        {/* Only once there's a link — a title on its own has nothing to name. */}
         {resourceLink.trim() && (
-          <label className="mt-2 flex items-center gap-2 text-xs text-[#878a8c]">
-            <input
-              type="checkbox"
-              checked={resourceRequiresSubmission}
-              onChange={(e) => setResourceRequiresSubmission(e.target.checked)}
-              className="h-3.5 w-3.5 accent-[#ff4500]"
-            />
-            They need to submit proof they did it
-          </label>
+          <input
+            value={resourceTitle}
+            onChange={(e) => setResourceTitle(e.target.value)}
+            placeholder="What is it? e.g. Read chapter 4 on rate limiters (optional)"
+            maxLength={160}
+            aria-label="Prep title"
+            className={`${field} mt-2`}
+          />
         )}
 
         <div className="mt-4 flex justify-end gap-2">

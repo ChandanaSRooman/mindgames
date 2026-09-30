@@ -79,6 +79,8 @@ export function sessionPriceLabel(s: { isPaid?: boolean; price?: number }): stri
 // literal "IST", so formatting in local time would write "6:00 PM IST" for a
 // mentor in London who meant 6pm their time — disagreeing with the instant
 // stored beside it and with the reminder, which is scheduled in IST.
+// Same formatter as backend/src/sessionLabels.ts (labelsFor) — the two apps
+// can't share code, so keep them in step.
 export function sessionLabels(when: Date): { dateLabel: string; timeLabel: string } {
   const opts = { timeZone: 'Asia/Kolkata' } as const
   return {
@@ -86,7 +88,9 @@ export function sessionLabels(when: Date): { dateLabel: string; timeLabel: strin
     // "Fri, 26 Sep 2026", so the comma before the year goes.
     dateLabel: when
       .toLocaleDateString('en-IN', { ...opts, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
-      .replace(/,(\s\d{4})$/, '$1'),
+      .replace(/,(\s\d{4})$/, '$1')
+      // Newer ICU data spells September "Sept" in en-IN; stored labels say "Sep".
+      .replace('Sept', 'Sep'),
     // en-IN gives a lowercase "pm"; existing labels are "8:00 PM IST".
     timeLabel: `${when
       .toLocaleTimeString('en-IN', { ...opts, hour: 'numeric', minute: '2-digit' })

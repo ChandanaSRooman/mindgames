@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import { useLayout } from './LayoutContext'
+import { VerifyEmailNotice } from './VerifyEmailNotice'
 
 const NAV = [
   { to: '/home', label: 'Home', icon: Home },
@@ -34,7 +35,12 @@ const NAV = [
   { to: '/explore', label: 'Explore Communities', icon: Compass },
 ]
 
-export function LeftSidebar() {
+export function LeftSidebar({
+  verifyNotice,
+}: {
+  /** Set while the member's email is unverified and the prompt isn't dismissed. */
+  verifyNotice?: { resending: boolean; onResend: () => void; onDismiss: () => void }
+} = {}) {
   const { communities, currentUser } = useApp()
   const { sidebarOpen, toggleSidebar } = useLayout()
   const joined = communities.filter((c) => c.joined)
@@ -60,7 +66,7 @@ export function LeftSidebar() {
       </button>
 
       {/* Sidebar — slides fully off-screen when closed */}
-      <aside className={`fixed bottom-0 top-14 z-40 hidden w-[260px] overflow-y-auto border-r border-[#edeff1] bg-white px-3 py-4 transition-all duration-200 lg:block ${
+      <aside className={`fixed bottom-0 top-14 z-40 hidden w-[260px] flex-col overflow-y-auto border-r border-[#edeff1] bg-white px-3 py-4 transition-all duration-200 lg:flex ${
         sidebarOpen ? 'left-[var(--shell-gutter)]' : '-left-[280px]'
       }`}>
       <nav className="flex flex-col gap-0.5">
@@ -121,6 +127,14 @@ export function LeftSidebar() {
             ))}
           </div>
         </>
+      )}
+
+      {/* mt-auto pushes it to the bottom of the sidebar; when the nav is
+          taller than the screen it simply follows it as the last item. */}
+      {verifyNotice && (
+        <div className="mt-auto pt-4">
+          <VerifyEmailNotice compact {...verifyNotice} />
+        </div>
       )}
     </aside>
     </>

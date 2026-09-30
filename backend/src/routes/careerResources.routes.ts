@@ -4,6 +4,7 @@ import { query } from '../db/pool.js'
 import { requireAuth } from '../auth/middleware.js'
 import { ApiError, asyncHandler } from '../http.js'
 import { pushNotification } from '../notify.js'
+import { HTTP_URL, HTTP_URL_MESSAGE } from '../validation.js'
 import { mapCareerResource, mapPublicCareerResource, type CareerResourceRow } from '../mappers.js'
 
 /**
@@ -38,7 +39,7 @@ const VISIBLE = `
             AND (ms.mentor_id = $1 OR ms.mentee_id = $1))))`
 
 const SELECT = `
-  SELECT r.*, u.name AS owner_name, u.photo AS owner_photo, s.topic AS session_topic
+  SELECT r.*, u.name AS owner_name, u.photo AS owner_photo, s.topic AS session_topic, s.status AS session_status
     FROM career_resources r
     JOIN users u ON u.id = r.user_id
     LEFT JOIN mentorship_sessions s ON s.id = r.session_id`
@@ -56,15 +57,35 @@ async function assertInSession(sessionId: string, me: string) {
   if (!r.rowCount) throw new ApiError(404, 'Session not found (or you are not part of it)')
 }
 
+/** A session that has finished (or been declined) — its resources are a
+ *  record from then on. A resource with no session is never locked. */
+function isSessionOver(status: string | null | undefined): boolean {
+  return !!status && status !== 'requested' && status !== 'upcoming'
+}
+
+/** Whether a session's existing resources are frozen against edit/delete.
+ *  Narrower than isSessionOver: only a completed ('past') session can hold a
+ *  mentee's evidence worth protecting. A cancelled/declined one never reached
+ *  /complete, so its prep stays removable — otherwise it is stuck for good.
+ *  Keep in step with sessionLocked in mappers.ts. */
+function isSessionLocked(status: string | null | undefined): boolean {
+  return status === 'past'
+}
+
 /** Attaching to a session is the mentor's job; the mentee's side is POST
  *  /:id/submit. Enforced here, not just by hiding the form in the UI, so a
  *  direct API call can't get around it. */
 async function assertMentorOfSession(sessionId: string, me: string) {
-  const r = await query(
-    `SELECT 1 FROM mentorship_sessions WHERE id = $1 AND mentor_id = $2`,
+  const r = await query<{ status: string }>(
+    `SELECT status FROM mentorship_sessions WHERE id = $1 AND mentor_id = $2`,
     [sessionId, me],
   )
   if (!r.rowCount) throw new ApiError(404, 'Session not found (or you are not its mentor)')
+  // A finished session's resources are a record of what was assigned while it
+  // was live; adding to it afterwards would rewrite that record.
+  if (isSessionOver(r.rows[0].status)) {
+    throw new ApiError(400, 'This session is over — resources can only be assigned before or during it')
+  }
 }
 
 /** Confirms the roadmap is the caller's own and really has that stage.
@@ -87,7 +108,7 @@ async function assertOwnStage(roadmapId: string, stepKey: string | undefined, me
 
 const createSchema = z.object({
   title: z.string().trim().min(1).max(160),
-  url: z.string().trim().url().max(2000).optional(),
+  url: z.string().trim().url().regex(HTTP_URL, HTTP_URL_MESSAGE).max(2000).optional(),
   note: z.string().trim().max(1000).optional(),
   kind: z.enum(KINDS).optional(),
   status: z.enum(STATUSES).optional(),
@@ -95,8 +116,8 @@ const createSchema = z.object({
   stepKey: z.string().optional(),
   sessionId: z.string().optional(),
   isPublic: z.boolean().optional().default(false),
-  // Only meaningful alongside sessionId: the mentor marking "come back with
-  // proof you did this" on a resource they're attaching to the session.
+  // Accepted only so a request asking for it gets a clear refusal below:
+  // evidence tasks are created at session completion, never as prep.
   requiresSubmission: z.boolean().optional().default(false),
 })
 
@@ -106,7 +127,7 @@ const createSchema = z.object({
 // row instead of falling through to it.
 const updateSchema = z.object({
   title: z.string().trim().min(1).max(160).optional(),
-  url: z.string().trim().url().max(2000).nullable().optional(),
+  url: z.string().trim().url().regex(HTTP_URL, HTTP_URL_MESSAGE).max(2000).nullable().optional(),
   note: z.string().trim().max(1000).nullable().optional(),
   kind: z.enum(KINDS).optional(),
   status: z.enum(STATUSES).optional(),
@@ -164,7 +185,19 @@ careerResourcesRouter.post(
     // other is a request that cannot be stored coherently.
     if (d.stepKey && !d.roadmapId) throw new ApiError(400, 'A stage needs its roadmap')
     if (d.roadmapId) await assertOwnStage(d.roadmapId, d.stepKey, me)
-    if (d.sessionId) await assertMentorOfSession(d.sessionId, me)
+    if (d.sessionId) {
+      // A resource handed to a mentee has to point at something they can
+      // open — a title alone gives them nothing to read or act on. Personal
+      // saves (no session) can still be a bare note.
+      if (!d.url) throw new ApiError(400, 'Add a link — a session resource needs something to open')
+      // Anything attached while a session is live is prep: read it, nothing
+      // to hand back. A task that needs evidence is created by the session's
+      // /complete route instead, once there's a session to follow up on.
+      if (d.requiresSubmission) {
+        throw new ApiError(400, 'Prep resources don’t take evidence — add a follow-up task when you complete the session')
+      }
+      await assertMentorOfSession(d.sessionId, me)
+    }
 
     const ins = await query<{ id: string }>(
       `INSERT INTO career_resources (user_id, title, url, note, kind, status, roadmap_id, step_key, session_id, is_public, requires_submission)
@@ -173,7 +206,7 @@ careerResourcesRouter.post(
       [
         me, d.title, d.url ?? null, d.note ?? null, d.kind ?? null, d.status ?? null,
         d.roadmapId ?? null, d.stepKey ?? null, d.sessionId ?? null, d.isPublic,
-        d.sessionId ? d.requiresSubmission : false,
+        false,
       ],
     )
 
@@ -213,11 +246,25 @@ careerResourcesRouter.patch(
     const d = parsed.data
 
     const cur = await query<CareerResourceRow>(
-      `SELECT * FROM career_resources WHERE id = $1 AND user_id = $2`,
+      `SELECT r.*, s.status AS session_status
+         FROM career_resources r LEFT JOIN mentorship_sessions s ON s.id = r.session_id
+        WHERE r.id = $1 AND r.user_id = $2`,
       [req.params.id, req.user!.sub],
     )
     if (!cur.rowCount) throw new ApiError(404, 'Resource not found (or not yours)')
     const c = cur.rows[0]
+
+    if (c.session_id) {
+      // Something handed to a mentee has to stay openable.
+      if (d.url === null) throw new ApiError(400, 'A session resource needs a link — change it instead of removing it')
+      // Once the session is over, what was assigned is a record. The owner can
+      // still tick it done or make it public — their own bookkeeping — but not
+      // rewrite it.
+      const changesContent = d.title !== undefined || d.url !== undefined || d.note !== undefined || d.kind !== undefined
+      if (changesContent && isSessionLocked(c.session_status)) {
+        throw new ApiError(409, 'This session is over — what was assigned can no longer be changed')
+      }
+    }
 
     await query(
       `UPDATE career_resources
@@ -239,7 +286,7 @@ careerResourcesRouter.patch(
 )
 
 const submitSchema = z.object({
-  url: z.string().trim().url().max(2000),
+  url: z.string().trim().url().regex(HTTP_URL, HTTP_URL_MESSAGE).max(2000),
 })
 
 // POST /api/career-resources/:id/submit — the session's MENTEE proves they
@@ -256,8 +303,8 @@ careerResourcesRouter.post(
     if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
     const me = req.user!.sub
 
-    const cur = await query<{ requires_submission: boolean; title: string; user_id: string; mentee_id: string | null }>(
-      `SELECT r.requires_submission, r.title, r.user_id, s.mentee_id
+    const cur = await query<{ requires_submission: boolean; title: string; user_id: string; session_id: string }>(
+      `SELECT r.requires_submission, r.title, r.user_id, r.session_id
          FROM career_resources r
          JOIN mentorship_sessions s ON s.id = r.session_id
         WHERE r.id = $1 AND s.mentee_id = $2`,
@@ -276,7 +323,9 @@ careerResourcesRouter.post(
       'mentorship',
       `${who.rows[0].name} submitted "${cur.rows[0].title}".`,
       me,
-      { type: 'session', id: req.params.id },
+      // The session, not the resource: a 'session' target is resolved as a
+      // session id wherever the notification is opened.
+      { type: 'session', id: cur.rows[0].session_id },
     )
 
     const full = await query<CareerResourceRow>(`${SELECT} WHERE r.id = $1`, [req.params.id])
@@ -291,11 +340,26 @@ careerResourcesRouter.delete(
   '/:id',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const r = await query(
-      `DELETE FROM career_resources WHERE id = $1 AND user_id = $2`,
+    // The status check and the delete are one statement, so the session can't
+    // finish between checking and deleting. A finished session's resources are
+    // a record — deleting a follow-up task would erase the mentee's evidence.
+    const r = await query<{ id: string }>(
+      `DELETE FROM career_resources r
+        WHERE r.id = $1 AND r.user_id = $2
+          AND (r.session_id IS NULL OR EXISTS (
+                SELECT 1 FROM mentorship_sessions s
+                 WHERE s.id = r.session_id AND s.status <> 'past'))
+        RETURNING r.id`,
       [req.params.id, req.user!.sub],
     )
-    if (!r.rowCount) throw new ApiError(404, 'Resource not found (or not yours)')
+    if (!r.rowCount) {
+      const mine = await query(`SELECT 1 FROM career_resources WHERE id = $1 AND user_id = $2`, [
+        req.params.id,
+        req.user!.sub,
+      ])
+      if (!mine.rowCount) throw new ApiError(404, 'Resource not found (or not yours)')
+      throw new ApiError(409, 'This session is over — what was assigned can no longer be removed')
+    }
     res.status(204).end()
   }),
 )

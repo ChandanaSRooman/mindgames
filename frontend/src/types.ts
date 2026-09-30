@@ -740,6 +740,9 @@ export interface MentorshipSession {
    *  session list decide whether to show a "Resources" button at all,
    *  without a per-session fetch. */
   resourceCount?: number
+  /** The real scheduled instant, when one was set. Older sessions only have
+   *  the date/time display labels above. */
+  scheduledAt?: string
 }
 
 // A mentee's first N mentorship sessions are free; the rest are paid.
@@ -1396,6 +1399,9 @@ export interface CareerResource {
   ownerName?: string
   ownerPhoto?: string
   sessionTopic?: string
+  /** Its session has finished: what was assigned is a record, so it can't be
+   *  deleted or rewritten (status and visibility can still change). */
+  sessionLocked?: boolean
 }
 
 /** A resource as shown on someone ELSE's profile — public only, and
@@ -1421,4 +1427,19 @@ export interface CareerResourceInput {
   sessionId?: string
   isPublic?: boolean
   requiresSubmission?: boolean
+}
+
+/** Admin: a session the mentor completed that still waits on the mentee's
+ *  "it happened" — until then it counts toward nobody's stats. Mirrors
+ *  mapPendingConfirmation in backend/src/mappers.ts. */
+export interface PendingConfirmation {
+  id: string
+  topic: string
+  mentorId: string
+  mentorName: string
+  menteeId: string
+  menteeName: string
+  date: string
+  completedAt?: string
+  remindedAt?: string
 }

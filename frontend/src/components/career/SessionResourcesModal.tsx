@@ -1,23 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
-import { CheckCircle2, ExternalLink, Link2, Plus, Trash2, X } from 'lucide-react'
+import { CheckCircle2, Clock, ExternalLink, Link2, Trash2, X } from 'lucide-react'
 import { Button, Card } from '../ui'
 import { api } from '../../lib/api'
-import { isSharedWithMe } from '../../lib/careerResources'
+import { assignedRelativeToSession, isSharedWithMe, shortStamp } from '../../lib/careerResources'
 import { useApp } from '../../store/AppStore'
 import type { CareerResource, CareerResourceKind } from '../../types'
 
 /**
  * Resources attached to one mentorship session.
  *
- * A mentor assigns these — while offering or confirming the session, or any
- * time after via the form below. The mentee's role here is narrower: read
- * what was assigned, and if a resource asks for it, submit a link proving
- * they did it. A mentee never adds a resource of their own in their own
- * session — this is the mentor's shelf to fill, not a shared one.
- *
- * The same rows also appear on the member's Learning Resources page, because
- * a resource shared into a session is visible to both parties to it. This
- * modal is just the session-shaped view of that list.
+ * Two kinds, set at different moments:
+ *   - prep: assigned while the session is live (offer, accept, or the form
+ *     below). Just something to go through — never asks for evidence.
+ *   - a follow-up task: set when the mentor completes the session. That is
+ *     the only kind that asks the mentee to submit a link as evidence.
+ * Once the session is over this is a read-only record for the mentor. The
+ * mentee never adds; they read, and submit evidence for a follow-up task.
  */
 
 const KINDS: CareerResourceKind[] = ['article', 'video', 'course', 'book', 'doc', 'other']
@@ -26,32 +24,39 @@ export function SessionResourcesModal({
   sessionId,
   topic,
   iAmMentor,
+  canAdd,
+  sessionAt,
   onClose,
 }: {
   sessionId: string
   topic: string
   iAmMentor: boolean
+  /** Mentor on a session that hasn't finished — the only case with a form. */
+  canAdd: boolean
+  /** The session's real scheduled instant, when it has one. */
+  sessionAt?: string
   onClose: () => void
 }) {
-  const { currentUser, notify } = useApp()
+  const { currentUser, notify, setSessionResourceCount } = useApp()
   const [items, setItems] = useState<CareerResource[]>([])
   const [loading, setLoading] = useState(true)
+  // Only true once a load succeeded — a failed load leaves items empty, and
+  // syncing that as "0" would hide the card's Resources button.
+  const [loaded, setLoaded] = useState(false)
   const [title, setTitle] = useState('')
   const [url, setUrl] = useState('')
   const [kind, setKind] = useState<CareerResourceKind>('article')
-  const [requiresSubmission, setRequiresSubmission] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  // One submission draft per resource id, so typing in one row's box doesn't
-  // touch another's.
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
       setItems(await api.getCareerResources(sessionId))
+      setLoaded(true)
     } catch {
-      setError('Could not load what was shared here.')
+      setError('Could not load resources.')
     }
     setLoading(false)
   }, [sessionId])
@@ -60,9 +65,14 @@ export function SessionResourcesModal({
     void load()
   }, [load])
 
+  // The card behind this modal shows the count; keep it true as rows change.
+  useEffect(() => {
+    if (loaded) setSessionResourceCount(sessionId, items.length)
+  }, [items.length, loaded, sessionId, setSessionResourceCount])
+
   const add = async () => {
-    if (!title.trim()) {
-      setError('Give it a title.')
+    if (!title.trim() || !url.trim()) {
+      setError('Add a title and a link.')
       return
     }
     setSaving(true)
@@ -73,14 +83,12 @@ export function SessionResourcesModal({
         url: url.trim() || undefined,
         kind,
         sessionId,
-        requiresSubmission,
       })
       setItems((prev) => [created, ...prev])
       setTitle('')
       setUrl('')
-      setRequiresSubmission(false)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not share that resource.')
+      setError(e instanceof Error ? e.message : 'Could not assign that.')
     }
     setSaving(false)
   }
@@ -89,8 +97,8 @@ export function SessionResourcesModal({
     setItems((prev) => prev.filter((x) => x.id !== r.id))
     try {
       await api.deleteCareerResource(r.id)
-    } catch {
-      setError('Could not remove that resource.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not remove that.')
       void load()
     }
   }
@@ -110,33 +118,33 @@ export function SessionResourcesModal({
     setSubmitting(null)
   }
 
+  const submittedCount = items.filter((r) => r.requiresSubmission && r.submissionUrl).length
+  const needsCount = items.filter((r) => r.requiresSubmission).length
+
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
       <Card className="max-h-[85vh] w-full max-w-lg overflow-y-auto p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-lg font-bold text-[#1c1c1c]">
-              {iAmMentor ? 'Resources you assigned' : 'Resources assigned to you'}
-            </h2>
+            <h2 className="text-lg font-bold text-[#1c1c1c]">Resources</h2>
             <p className="truncate text-sm text-[#878a8c]">{topic}</p>
+            {needsCount > 0 && (
+              <p className="mt-1 text-xs font-semibold text-[#1c1c1c]">
+                {submittedCount} of {needsCount} submitted
+              </p>
+            )}
           </div>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded-full p-1 text-[#878a8c] hover:bg-gray-100"
-          >
+          <button onClick={onClose} aria-label="Close" className="rounded-full p-1 text-[#878a8c] hover:bg-gray-100">
             <X size={18} />
           </button>
         </div>
 
-        {/* Only the mentor gets to add — the mentee's side of this feature is
-            reading and submitting, not authoring. */}
-        {iAmMentor && (
+        {canAdd && (
           <div className="mt-4 flex flex-col gap-2 rounded-lg border border-[#edeff1] p-3">
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Title — e.g. Read this before we meet"
+              placeholder="Title"
               aria-label="Resource title"
               className="rounded-lg border border-[#edeff1] px-3 py-2 text-sm"
             />
@@ -144,15 +152,16 @@ export function SessionResourcesModal({
               <input
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                placeholder="Link (optional)"
+                placeholder="Link (required) — https://…"
                 aria-label="Resource link"
+                required
                 className="min-w-0 flex-1 rounded-lg border border-[#edeff1] px-3 py-2 text-sm"
               />
               <select
                 value={kind}
                 onChange={(e) => setKind(e.target.value as CareerResourceKind)}
                 aria-label="Resource type"
-                className="rounded-lg border border-[#edeff1] px-3 py-2 text-sm"
+                className="rounded-lg border border-[#edeff1] px-2 py-2 text-sm"
               >
                 {KINDS.map((k) => (
                   <option key={k} value={k}>
@@ -161,65 +170,54 @@ export function SessionResourcesModal({
                 ))}
               </select>
             </div>
-            <label className="flex items-center gap-2 text-xs text-[#878a8c]">
-              <input
-                type="checkbox"
-                checked={requiresSubmission}
-                onChange={(e) => setRequiresSubmission(e.target.checked)}
-                className="h-3.5 w-3.5 accent-[#ff4500]"
-              />
-              They need to submit proof they did it
-            </label>
-            {error && <p className="text-xs font-semibold text-red-600">{error}</p>}
-            <div className="flex justify-end">
-              <Button icon={<Plus size={14} />} loading={saving} onClick={() => void add()}>
+            {/* Prep only: a task that needs evidence is set when the session
+                is completed, not here. */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-[#878a8c]">Prep for them to go through — no evidence asked.</span>
+              <Button className="!px-3 !py-1.5 !text-xs" loading={saving} onClick={() => void add()}>
                 Assign
               </Button>
             </div>
+            {error && <p className="text-xs font-semibold text-red-600">{error}</p>}
           </div>
         )}
 
         <div className="mt-4 flex flex-col gap-2">
           {loading && <p className="text-sm text-[#878a8c]">Loading…</p>}
           {!loading && items.length === 0 && (
-            <p className="py-4 text-center text-sm text-[#878a8c]">
-              {iAmMentor
-                ? 'Nothing assigned yet. Anything you add here shows up for both of you.'
-                : 'Nothing assigned here yet.'}
-            </p>
+            <p className="py-4 text-center text-sm text-[#878a8c]">Nothing assigned.</p>
           )}
-          {!iAmMentor && error && <p className="text-xs font-semibold text-red-600">{error}</p>}
+          {!canAdd && error && <p className="text-xs font-semibold text-red-600">{error}</p>}
           {items.map((r) => {
             const mine = !isSharedWithMe(r, currentUser.id)
-            const needsMySubmission = !iAmMentor && r.requiresSubmission
+            const relative = assignedRelativeToSession(r.createdAt, sessionAt)
             return (
-              <div
-                key={r.id}
-                className="flex flex-col gap-2 rounded-lg border border-[#edeff1] p-3"
-              >
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gray-50 text-[#878a8c]">
-                    <Link2 size={15} />
-                  </span>
+              <div key={r.id} className="flex flex-col gap-1.5 rounded-lg border border-[#edeff1] p-3">
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-gray-50 text-[#878a8c]"><Link2 size={14} /></span>
                   <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-[#1c1c1c]">{r.title}</p>
+                    {/* The link itself, spelled out — hiding it behind the
+                        title left the mentee seeing only a name. */}
                     {r.url ? (
                       <a
                         href={r.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-sm font-semibold text-[#1c1c1c] hover:text-[#ff4500] hover:underline"
+                        className="mt-0.5 flex min-w-0 items-center gap-1 text-xs text-blue-600 hover:underline"
                       >
-                        {r.title}
-                        <ExternalLink size={11} />
+                        <span className="truncate">{r.url}</span>
+                        <ExternalLink size={11} className="shrink-0" />
                       </a>
                     ) : (
-                      <span className="text-sm font-semibold text-[#1c1c1c]">{r.title}</span>
+                      <p className="mt-0.5 text-xs italic text-[#878a8c]">No link attached</p>
                     )}
-                    <p className="mt-0.5 text-[11px] text-[#878a8c]">
-                      {mine ? 'Assigned by you' : `Assigned by ${r.ownerName ?? 'your mentor'}`}
+                    <p className="mt-1 text-[11px] text-[#878a8c]" title={shortStamp(r.createdAt)}>
+                      Assigned {relative ?? shortStamp(r.createdAt)}
+                      {!mine && ` · by ${r.ownerName ?? 'your mentor'}`}
                     </p>
                   </div>
-                  {iAmMentor && mine && (
+                  {canAdd && mine && (
                     <button
                       onClick={() => void remove(r)}
                       aria-label={`Remove ${r.title}`}
@@ -230,52 +228,48 @@ export function SessionResourcesModal({
                   )}
                 </div>
 
-                {r.requiresSubmission && (
-                  <div className="ml-11">
-                    {r.submissionUrl ? (
-                      <p className="flex items-center gap-1.5 text-xs font-medium text-green-700">
+                <div className="pl-9 text-xs">
+                  {!r.requiresSubmission ? (
+                    <span className="text-[#878a8c]">No evidence needed</span>
+                  ) : r.submissionUrl ? (
+                    <div className="rounded-lg bg-green-50 px-2.5 py-2">
+                      <p className="flex items-center gap-1 font-semibold text-green-700">
                         <CheckCircle2 size={13} />
-                        Submitted:{' '}
-                        <a
-                          href={r.submissionUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="truncate underline"
-                        >
-                          {r.submissionUrl}
-                        </a>
+                        {iAmMentor ? 'Their evidence' : 'Your evidence'}
+                        {r.submissionAt && (
+                          <span className="font-normal text-green-700/80">· submitted {shortStamp(r.submissionAt)}</span>
+                        )}
                       </p>
-                    ) : needsMySubmission ? (
-                      <div className="flex gap-2">
-                        <input
-                          value={drafts[r.id] ?? ''}
-                          onChange={(e) => setDrafts((prev) => ({ ...prev, [r.id]: e.target.value }))}
-                          placeholder="Paste a link to what you did"
-                          aria-label={`Submission link for ${r.title}`}
-                          className="min-w-0 flex-1 rounded-lg border border-[#edeff1] px-3 py-1.5 text-xs"
-                        />
-                        <Button
-                          className="!px-3 !py-1.5 !text-xs"
-                          loading={submitting === r.id}
-                          onClick={() => void submit(r)}
-                        >
-                          Submit
-                        </Button>
-                      </div>
-                    ) : (
-                      <p className="text-xs font-medium text-amber-600">Waiting on their submission</p>
-                    )}
-                  </div>
-                )}
+                      <a
+                        href={r.submissionUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-1 flex min-w-0 items-center gap-1 text-blue-600 hover:underline"
+                      >
+                        <span className="truncate">{r.submissionUrl}</span>
+                        <ExternalLink size={11} className="shrink-0" />
+                      </a>
+                    </div>
+                  ) : iAmMentor ? (
+                    <span className="inline-flex items-center gap-1 font-medium text-amber-600"><Clock size={13} /> Evidence pending</span>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input
+                        value={drafts[r.id] ?? ''}
+                        onChange={(e) => setDrafts((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                        placeholder="Paste your evidence link"
+                        aria-label={`Evidence link for ${r.title}`}
+                        className="min-w-0 flex-1 rounded-lg border border-[#edeff1] px-3 py-1.5 text-xs"
+                      />
+                      <Button className="!px-3 !py-1.5 !text-xs" loading={submitting === r.id} onClick={() => void submit(r)}>
+                        Submit
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </div>
             )
           })}
-        </div>
-
-        <div className="mt-4 flex justify-end">
-          <Button variant="ghost" onClick={onClose}>
-            Done
-          </Button>
         </div>
       </Card>
     </div>

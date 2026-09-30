@@ -1,5 +1,7 @@
 import assert from 'node:assert'
-import { belongsToStage, doneCount, groupByStage, isSharedWithMe, UNSORTED_TITLE } from './careerResources'
+import {
+  assignedRelativeToSession, belongsToStage, doneCount, groupByStage, isSharedWithMe, UNSORTED_TITLE,
+} from './careerResources'
 import type { CareerResource, CareerStage } from '../types'
 
 const stage = (stepKey: string, title: string): CareerStage => ({
@@ -79,5 +81,15 @@ assert.strictEqual(doneCount([res({ id: 'a', status: 'in_progress' })]), 0, 'in_
 
 assert.strictEqual(isSharedWithMe(res({ id: 'a', userId: 'them' }), 'me'), true)
 assert.strictEqual(isSharedWithMe(res({ id: 'a', userId: 'me' }), 'me'), false)
+
+// --- when a resource was assigned, relative to its session ------------------
+
+const AT = '2026-10-10T12:00:00.000Z'
+assert.strictEqual(assignedRelativeToSession('2026-10-08T12:00:00.000Z', AT), '2d before session')
+assert.strictEqual(assignedRelativeToSession('2026-10-10T15:30:00.000Z', AT), '3h after session')
+assert.strictEqual(assignedRelativeToSession('2026-10-10T11:45:00.000Z', AT), '15m before session')
+assert.strictEqual(assignedRelativeToSession('2026-10-10T12:00:20.000Z', AT), 'at session time')
+assert.strictEqual(assignedRelativeToSession('2026-10-08T12:00:00.000Z', undefined), null, 'no real session time')
+assert.strictEqual(assignedRelativeToSession('2026-10-08T12:00:00.000Z', 'not a date'), null)
 
 console.log('careerResources.check.ts — all assertions passed')

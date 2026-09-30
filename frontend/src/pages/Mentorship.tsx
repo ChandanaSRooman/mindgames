@@ -9,7 +9,8 @@ import { CompleteSessionModal } from '../components/mentor/CompleteSessionModal'
 import { EditSessionModal } from '../components/mentor/EditSessionModal'
 import { SessionResourcesModal } from '../components/career/SessionResourcesModal'
 import { api } from '../lib/api'
-import { roleLine, sessionPriceLabel } from '../lib/format'
+import { roleLine, sessionLabels, sessionPriceLabel } from '../lib/format'
+import { isHttpUrl } from '../lib/links'
 import { isBookableMentor } from '../lib/profileCompleteness'
 import { Avatar, Button, Card } from '../components/ui'
 import { FREE_MENTORSHIP_SESSIONS, type MentorshipSession, type User } from '../types'
@@ -39,7 +40,7 @@ export function Mentorship() {
   const [accepting, setAccepting] = useState<string | null>(null)
   // Session the mentor was accepting when the paywall interrupted.
   const [payFor, setPayFor] = useState<{
-    id: string; link?: string; resourceLink?: string; resourceRequiresSubmission?: boolean
+    id: string; link?: string; resourceLink?: string; resourceTitle?: string
   } | null>(null)
   const [rating, setRating] = useState<MentorshipSession | null>(null)
   const [ratings, setRatings] = useState<Map<string, { avg: number; count: number }>>(new Map())
@@ -292,10 +293,12 @@ export function Mentorship() {
                     )}
                     {/* A student's own session: only their mentor assigns
                         resources here, so the button only appears once
-                        there is actually something to see. */}
+                        there is actually something to see. On an upcoming
+                        session that's prep to go through before it, so it's
+                        outlined and shows the count. */}
                     {!!s.resourceCount && (
-                      <Button variant="subtle" className="!px-3 !py-1.5 text-xs" icon={<BookOpen size={12} />} onClick={() => setResourcesFor(s)}>
-                        Resources
+                      <Button variant="outline" className="!px-3 !py-1.5 text-xs" icon={<BookOpen size={12} />} onClick={() => setResourcesFor(s)}>
+                        Resources · {s.resourceCount}
                       </Button>
                     )}
                     <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => cancelSession(s.id)}>
@@ -350,16 +353,18 @@ export function Mentorship() {
                         <Star size={13} /> Rate
                       </Button>
                     )}
-                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${declined ? 'bg-red-50 text-red-500' : 'bg-gray-100 text-[#878a8c]'}`}>
-                      {declined ? 'Declined' : 'Completed'}
-                    </span>
+                    {/* Everything under Past is completed, so only the
+                        exception gets a badge. */}
+                    {declined && (
+                      <span className="rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-500">Declined</span>
+                    )}
                     {/* A declined session never happened, so there is nothing
                         to attach reading material to. Otherwise, same rule as
                         Upcoming: only the mentee's own session, only shown
                         once the mentor has actually assigned something. */}
                     {!declined && !!s.resourceCount && (
                       <Button variant="subtle" className="!px-3 !py-1.5 text-xs" icon={<BookOpen size={12} />} onClick={() => setResourcesFor(s)}>
-                        Resources
+                        Resources · {s.resourceCount}
                       </Button>
                     )}
                   </Card>
@@ -389,6 +394,11 @@ export function Mentorship() {
           sessionId={resourcesFor.id}
           topic={resourcesFor.topic}
           iAmMentor={resourcesFor.mentorId === currentUser.id}
+          canAdd={
+            resourcesFor.mentorId === currentUser.id &&
+            (resourcesFor.status === 'upcoming' || resourcesFor.status === 'requested')
+          }
+          sessionAt={resourcesFor.scheduledAt}
           onClose={() => setResourcesFor(null)}
         />
       )}
@@ -409,9 +419,10 @@ export function Mentorship() {
         <CompleteSessionModal
           topic={completing.topic}
           who={completing.menteeName}
+          allowFollowUp
           onClose={() => setCompleting(null)}
-          onConfirm={(minutes, domain) => {
-            completeSession(completing.id, minutes, domain)
+          onConfirm={(minutes, domain, followUp) => {
+            completeSession(completing.id, minutes, domain, followUp)
             setCompleting(null)
           }}
         />
@@ -420,15 +431,15 @@ export function Mentorship() {
       {accepting && (
         <AcceptModal
           onClose={() => setAccepting(null)}
-          onAccept={async (link, resourceLink, resourceRequiresSubmission) => {
+          onAccept={async (link, resourceLink, resourceTitle) => {
             const id = accepting
             setAccepting(null)
             // A mentor without an active plan cannot accept. Open the plans
             // rather than showing an error they have no way to act on, and
             // remember the session so accepting resumes once they've paid.
-            const result = await acceptSession(id, link || undefined, resourceLink, resourceRequiresSubmission)
+            const result = await acceptSession(id, link || undefined, resourceLink, resourceTitle)
             if (result === 'payment-required') {
-              setPayFor({ id, link: link || undefined, resourceLink, resourceRequiresSubmission })
+              setPayFor({ id, link: link || undefined, resourceLink, resourceTitle })
             }
           }}
         />
@@ -445,7 +456,7 @@ export function Mentorship() {
             setPayFor(null)
             await refreshSubscription()
             if (pending) {
-              await acceptSession(pending.id, pending.link, pending.resourceLink, pending.resourceRequiresSubmission)
+              await acceptSession(pending.id, pending.link, pending.resourceLink, pending.resourceTitle)
             }
           }}
         />
@@ -503,12 +514,9 @@ function BookModal({
     if (!topic.trim()) return setError('Tell the mentor what you want to discuss.')
     if (!date) return setError('Pick a date for the session.')
     if (!time) return setError('Pick a time for the session.')
-    // Human-readable labels, e.g. "Mon, 6 Jul 2026" and "6:00 pm IST".
-    const dateLabel = new Date(`${date}T00:00:00`).toLocaleDateString('en-IN', {
-      weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
-    })
-    const timeLabel =
-      new Date(`${date}T${time}`).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) + ' IST'
+    // The shared formatter, so a booked session's label reads exactly like a
+    // hosted or edited one ("Mon, 6 Jul 2026" / "6:00 PM IST").
+    const { dateLabel, timeLabel } = sessionLabels(new Date(`${date}T${time}`))
     onBook(topic.trim(), dateLabel, timeLabel)
   }
 
@@ -578,52 +586,67 @@ function Empty({ label }: { label: string }) {
   return <div className="rounded-xl border border-[#edeff1] bg-white py-10 text-center text-sm text-[#878a8c] shadow-sm">{label}</div>
 }
 
-// Mentor confirms a request, optionally attaching a meeting link.
+// Mentor confirms a request; the meeting link is required, so a confirmed
+// session always has a way to join.
 function AcceptModal({
   onClose,
   onAccept,
 }: {
   onClose: () => void
-  onAccept: (link: string, resourceLink?: string, resourceRequiresSubmission?: boolean) => void
+  onAccept: (link: string, resourceLink?: string, resourceTitle?: string) => void
 }) {
   const [link, setLink] = useState('')
   const [resourceLink, setResourceLink] = useState('')
-  const [resourceRequiresSubmission, setResourceRequiresSubmission] = useState(false)
+  const [resourceTitle, setResourceTitle] = useState('')
+  const [error, setError] = useState('')
+
+  function confirm() {
+    const l = link.trim()
+    if (!l) return setError('Add a meeting link so your mentee knows where to join.')
+    if (!isHttpUrl(l)) return setError('The meeting link must be a full link, starting with https://')
+    const prep = resourceLink.trim()
+    if (prep && !isHttpUrl(prep)) return setError('The prep link must be a full link, starting with https://')
+    onAccept(l, resourceLink.trim() || undefined, resourceTitle.trim() || undefined)
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="animate-slidein w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <h2 className="font-bold text-[#1c1c1c]">Confirm this session</h2>
         <p className="mt-1 text-sm text-[#878a8c]">
-          Add a meeting link (Google Meet, Zoom…) so your mentee knows where to join. You can also
-          confirm without one and share it in chat later.
+          Add a meeting link (Google Meet, Zoom…) so your mentee knows where to join.
         </p>
+        <label className="mt-3 block text-sm font-medium text-[#1c1c1c]">
+          Meeting link <span className="text-red-500">*</span>
+        </label>
         <input
           value={link}
-          onChange={(e) => setLink(e.target.value)}
-          placeholder="https://meet.google.com/… (optional)"
-          className="mt-3 w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
+          onChange={(e) => { setLink(e.target.value); setError('') }}
+          placeholder="https://meet.google.com/…"
+          className="mt-1 w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
         />
-        <label className="mt-3 block text-sm font-medium text-[#1c1c1c]">Assign a resource (optional)</label>
+        {error && <p className="mt-1.5 text-xs font-semibold text-red-600">{error}</p>}
+        <label className="mt-3 block text-sm font-medium text-[#1c1c1c]">Prep for them (optional)</label>
         <input
           value={resourceLink}
           onChange={(e) => setResourceLink(e.target.value)}
-          placeholder="A link for them to read or watch before you meet"
+          placeholder="A link for them to go through before you meet"
           className="mt-1 w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
         />
+        {/* Only once there's a link — a title on its own has nothing to name. */}
         {resourceLink.trim() && (
-          <label className="mt-2 flex items-center gap-2 text-xs text-[#878a8c]">
-            <input
-              type="checkbox"
-              checked={resourceRequiresSubmission}
-              onChange={(e) => setResourceRequiresSubmission(e.target.checked)}
-              className="h-3.5 w-3.5 accent-[#ff4500]"
-            />
-            They need to submit proof they did it
-          </label>
+          <input
+            value={resourceTitle}
+            onChange={(e) => setResourceTitle(e.target.value)}
+            placeholder="What is it? e.g. Read chapter 4 on rate limiters (optional)"
+            maxLength={160}
+            aria-label="Prep title"
+            className="mt-2 w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
+          />
         )}
         <div className="mt-4 flex items-center justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => onAccept(link.trim(), resourceLink.trim() || undefined, resourceRequiresSubmission)}>
+          <Button onClick={confirm}>
             Confirm session
           </Button>
         </div>

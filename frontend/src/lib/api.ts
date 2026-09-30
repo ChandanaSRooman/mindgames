@@ -47,6 +47,7 @@ import type {
   ProfilePatch,
   MentorApplication,
   MentorClaim,
+  PendingConfirmation,
   ResumeParseResult,
   Startup,
   StartupApplication,
@@ -377,14 +378,11 @@ export const api = {
   offerSession: (
     menteeId: string, topic: string, date: string, time: string,
     meetingLink?: string, scheduledAt?: string,
-    resourceLink?: string, resourceRequiresSubmission?: boolean,
+    resourceLink?: string, resourceTitle?: string,
   ) =>
     http<MentorshipSession>('/api/mentorship/sessions/offer', {
       method: 'POST',
-      body: JSON.stringify({
-        menteeId, topic, date, time, meetingLink, scheduledAt,
-        resourceLink, resourceRequiresSubmission,
-      }),
+      body: JSON.stringify({ menteeId, topic, date, time, meetingLink, scheduledAt, resourceLink, resourceTitle }),
     }),
   /** Either side calls off a requested or upcoming session. */
   cancelSession: (id: string) =>
@@ -399,13 +397,10 @@ export const api = {
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/accept-offer`, { method: 'POST' }),
   declineSessionOffer: (id: string) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/decline-offer`, { method: 'POST' }),
-  acceptSession: (
-    id: string, meetingLink?: string,
-    resourceLink?: string, resourceRequiresSubmission?: boolean,
-  ) =>
+  acceptSession: (id: string, meetingLink?: string, resourceLink?: string, resourceTitle?: string) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/accept`, {
       method: 'POST',
-      body: JSON.stringify({ meetingLink, resourceLink, resourceRequiresSubmission }),
+      body: JSON.stringify({ meetingLink, resourceLink, resourceTitle }),
     }),
   rateSession: (id: string, rating: number, review?: string) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/rate`, {
@@ -418,10 +413,15 @@ export const api = {
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/decline`, { method: 'POST' }),
   // durationMinutes/domain are what the profile record is built from; both
   // optional so the plain one-click complete still works.
-  completeSession: (id: string, durationMinutes?: number, domain?: string) =>
+  // followUp is the optional task that needs evidence — the only way one is
+  // created; prep attached before the session never asks for evidence.
+  completeSession: (
+    id: string, durationMinutes?: number, domain?: string,
+    followUp?: { title: string; url: string },
+  ) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/complete`, {
       method: 'POST',
-      body: JSON.stringify({ durationMinutes, domain }),
+      body: JSON.stringify({ durationMinutes, domain, followUpTitle: followUp?.title, followUpUrl: followUp?.url }),
     }),
   /** Mentor edits a session they are hosting. `scheduledAt` is the real
    *  instant — the server derives the displayed date/time labels from it, so
@@ -742,6 +742,14 @@ export const api = {
   cancelSubscription: () =>
     http<SubscriptionState>('/api/subscription/cancel', { method: 'POST' }),
   getAdminSubscriptions: () => http<AdminSubscriptionRow[]>('/api/subscription/admin'),
+  // Admin: completed sessions still waiting on the mentee's confirmation.
+  getPendingConfirmations: () =>
+    http<PendingConfirmation[]>('/api/mentorship/admin/pending-confirmations'),
+  // Re-notifies the mentee; the server allows one reminder per session per 24h.
+  remindConfirmation: (sessionId: string) =>
+    http<{ remindedAt: string }>(`/api/mentorship/admin/sessions/${sessionId}/remind-confirm`, {
+      method: 'POST',
+    }),
   grantSubscription: (userId: string, plan: PlanId, months = 1, note?: string) =>
     http<SubscriptionState>('/api/subscription/admin/grant', {
       method: 'POST',
