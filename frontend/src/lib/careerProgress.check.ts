@@ -1,7 +1,8 @@
 // Sanity checks for roadmap progress + completion ordering. Run with:
 //   npm --prefix frontend run check
 import assert from 'node:assert'
-import { blockedBy, roadmapProgress, workableStages } from './careerProgress'
+import { blockedBy, nextStageAfter, roadmapProgress, workableStages } from './careerProgress'
+import { servicesForStage } from './careerServices'
 import type { CareerStage, CareerStageStatus } from '../types'
 
 const stage = (key: string, title: string, status: CareerStageStatus): CareerStage =>
@@ -84,5 +85,28 @@ assert.strictEqual(blockedBy(unfinishedStart, 's1'), null, 'stage 0 must never d
 
 // An unknown key is not blocked (the server rejects it separately).
 assert.strictEqual(blockedBy(plan('upcoming', 'upcoming', 'upcoming'), 'nope'), null)
+
+// --- nextStageAfter: where the "Next up" nudge points --------------------
+{
+  const st = (k: string, status: CareerStageStatus): CareerStage =>
+    ({ stepKey: k, title: k, status, durationWeeks: null, relevantAlumniIds: [], relevantServiceIds: [] })
+  const five = [st('s0', 'completed'), st('s1', 'completed'), st('s2', 'upcoming'), st('s3', 'upcoming'), st('s4', 'upcoming')]
+  assert.strictEqual(nextStageAfter(five, 's1')?.stepKey, 's2')
+  // Next is the goal itself -> no nudge; the congratulations banner covers it.
+  assert.strictEqual(nextStageAfter(five, 's3'), null)
+  // An already-completed later stage is skipped, not suggested.
+  const gap = [st('s0', 'completed'), st('s1', 'completed'), st('s2', 'completed'), st('s3', 'upcoming'), st('s4', 'upcoming')]
+  assert.strictEqual(nextStageAfter(gap, 's1')?.stepKey, 's3')
+  assert.strictEqual(nextStageAfter(five, 'nope'), null)
+}
+
+// --- servicesForStage: the "N services" chip ------------------------------
+{
+  const svc = (id: string) => ({ id } as unknown as Parameters<typeof servicesForStage>[1][number])
+  const loaded = [svc('a'), svc('b'), svc('a')] // 'a' loaded twice (matched + all)
+  assert.deepStrictEqual(servicesForStage(['a', 'b', 'gone'], loaded).map((s) => s.id), ['a', 'b'])
+  assert.deepStrictEqual(servicesForStage(['a', 'a'], loaded).map((s) => s.id), ['a'])
+  assert.deepStrictEqual(servicesForStage([], loaded), [])
+}
 
 console.log('careerProgress.check.ts — all assertions passed')

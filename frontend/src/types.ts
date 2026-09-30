@@ -1141,6 +1141,10 @@ export interface CareerRoadmap {
   hoursPerWeek: number
   stages: CareerStage[]
   createdAt: string
+  /** The live services matched to this roadmap's stages (paused/deleted ones
+   *  already dropped). Each stage picks its own by relevantServiceIds.
+   *  Optional: the response sent straight after the assessment omits it. */
+  stageServices?: AlumniService[]
 }
 
 export interface AlumniService {

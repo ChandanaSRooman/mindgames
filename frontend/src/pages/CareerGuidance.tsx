@@ -105,12 +105,28 @@ export function CareerGuidance() {
       .finally(() => setLoading(false))
   }, [notify, loadRoadmapExtras])
 
-  async function setStepStatus(stepKey: string, status: CareerStageStatus) {
+  // Resolves true once saved, so the timeline only shows its "Next up" strip
+  // for a stage that really was marked done. Failures still toast here.
+  async function setStepStatus(stepKey: string, status: CareerStageStatus): Promise<boolean> {
     try {
       setRoadmap(await api.setCareerStepStatus(stepKey, status))
+      return true
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Could not update that step.', 'error')
+      return false
     }
+  }
+
+  // Shared by the services section below and each stage's "N services" list,
+  // so both book a service through exactly the same path.
+  function bookService(s: AlumniService) {
+    setBooking({
+      kind: 'service',
+      mentorId: s.userId,
+      name: s.providerName ?? 'this alumnus',
+      topic: serviceName(s),
+      serviceId: s.id,
+    })
   }
 
   // Shared by the timeline's per-stage "X alumni can help" list and the
@@ -228,6 +244,7 @@ export function CareerGuidance() {
         people={helpers}
         onStepStatus={setStepStatus}
         onBookPerson={bookPerson}
+        onBookService={bookService}
       />
 
       <AlumniHelpSection people={helpers} onBook={bookPerson} />
@@ -236,15 +253,7 @@ export function CareerGuidance() {
         services={services}
         showingAll={showingAll}
         onToggleAll={toggleAllServices}
-        onBook={(s) =>
-          setBooking({
-            kind: 'service',
-            mentorId: s.userId,
-            name: s.providerName ?? 'this alumnus',
-            topic: serviceName(s),
-            serviceId: s.id,
-          })
-        }
+        onBook={bookService}
       />
 
       <div className="grid gap-4 lg:grid-cols-3">

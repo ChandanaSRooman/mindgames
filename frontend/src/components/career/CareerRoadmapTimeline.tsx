@@ -1,9 +1,11 @@
 import { useState } from 'react'
-import { BookOpen, Check, CircleDashed, Flag, Lock, Map, Target, Users } from 'lucide-react'
-import { Card } from '../ui'
+import { createPortal } from 'react-dom'
+import { BookOpen, Briefcase, Check, CircleDashed, Flag, Lock, Map, Target, Users, X } from 'lucide-react'
+import { Button, Card } from '../ui'
 import { AlumniListModal } from './AlumniListModal'
-import { blockedBy } from '../../lib/careerProgress'
-import type { AlumniHelper, CareerRoadmap, CareerStage, CareerStageStatus } from '../../types'
+import { blockedBy, nextStageAfter } from '../../lib/careerProgress'
+import { SERVICE_ICONS, serviceName, servicePrice, servicesForStage } from '../../lib/careerServices'
+import type { AlumniHelper, AlumniService, CareerRoadmap, CareerStage, CareerStageStatus } from '../../types'
 
 const BADGE: Record<CareerStageStatus, string> = {
   completed: 'bg-green-500 text-white',
@@ -14,20 +16,32 @@ const BADGE: Record<CareerStageStatus, string> = {
 
 /** The horizontal plan. Scrolls sideways on desktop when there are many
  *  stages and stacks vertically on small screens — the roadmap has to stay
- *  readable on a phone rather than being a shrunken desktop row. */
+ *  readable on a phone rather than being a shrunken desktop row.
+ *
+ *  Each stage leads with the network — the alumni who can help with it and
+ *  the services matched to it — because the roadmap is a map to people, not
+ *  a syllabus. Finishing a stage points the member at who can help with the
+ *  next one, rather than grading them. */
 export function CareerRoadmapTimeline({
   roadmap,
   people,
   onStepStatus,
   onBookPerson,
+  onBookService,
 }: {
   roadmap: CareerRoadmap
   /** The roadmap's full matched-alumni list — each stage card filters this
    *  down to its own relevantAlumniIds rather than fetching anything new. */
   people: AlumniHelper[]
-  onStepStatus: (stepKey: string, status: CareerStageStatus) => void
+  /** Resolves true when the change was saved, so the "Next up" strip only
+   *  appears for a stage that really was marked done. */
+  onStepStatus: (stepKey: string, status: CareerStageStatus) => Promise<boolean>
   onBookPerson: (person: AlumniHelper) => void
+  onBookService: (service: AlumniService) => void
 }) {
+  // Live services for this roadmap's stages, sent with the roadmap itself.
+  const services = roadmap.stageServices ?? []
+
   // Which stage's alumni list is open, if any. One at a time, so opening a
   // second stage's list closes the first rather than stacking modals.
   const [openFor, setOpenFor] = useState<string | null>(null)
@@ -35,6 +49,29 @@ export function CareerRoadmapTimeline({
   const openStagePeople = openStage
     ? people.filter((p) => openStage.relevantAlumniIds.includes(p.id))
     : []
+
+  // Same one-at-a-time rule for a stage's services.
+  const [servicesFor, setServicesFor] = useState<string | null>(null)
+  const servicesStage = roadmap.stages.find((s) => s.stepKey === servicesFor)
+
+  // The "Next up" strip after a stage is marked done. Kept as keys, not
+  // stage objects, so it always renders against the latest roadmap.
+  const [nextUp, setNextUp] = useState<{ doneTitle: string; nextKey: string } | null>(null)
+  const nextUpStage = nextUp ? roadmap.stages.find((s) => s.stepKey === nextUp.nextKey) : undefined
+
+  async function changeStatus(stage: CareerStage, status: CareerStageStatus) {
+    const ok = await onStepStatus(stage.stepKey, status)
+    if (!ok) return
+    if (status !== 'completed') {
+      setNextUp(null)
+      return
+    }
+    // `roadmap` here is from before the save, so treat this stage as done
+    // when working out what comes next.
+    const after = roadmap.stages.map((s) => (s.stepKey === stage.stepKey ? { ...s, status } : s))
+    const next = nextStageAfter(after, stage.stepKey)
+    setNextUp(next ? { doneTitle: stage.title, nextKey: next.stepKey } : null)
+  }
 
   return (
     <Card className="p-5">
@@ -57,6 +94,17 @@ export function CareerRoadmapTimeline({
         </div>
       </div>
 
+      {nextUp && nextUpStage && (
+        <NextUpStrip
+          doneTitle={nextUp.doneTitle}
+          next={nextUpStage}
+          serviceCount={servicesForStage(nextUpStage.relevantServiceIds, services).length}
+          onSeePeople={() => setOpenFor(nextUpStage.stepKey)}
+          onSeeServices={() => setServicesFor(nextUpStage.stepKey)}
+          onDismiss={() => setNextUp(null)}
+        />
+      )}
+
       <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
         {roadmap.stages.map((stage, i) => (
           <div key={stage.stepKey} className="flex flex-col lg:min-w-0 lg:flex-1 lg:flex-row lg:items-stretch">
@@ -66,8 +114,10 @@ export function CareerRoadmapTimeline({
               isFirst={i === 0}
               isLast={i === roadmap.stages.length - 1}
               blockedBy={blockedBy(roadmap.stages, stage.stepKey)}
-              onStepStatus={onStepStatus}
+              serviceCount={servicesForStage(stage.relevantServiceIds, services).length}
+              onStepStatus={(status) => void changeStatus(stage, status)}
               onShowPeople={() => setOpenFor(stage.stepKey)}
+              onShowServices={() => setServicesFor(stage.stepKey)}
             />
             {i < roadmap.stages.length - 1 && (
               <span
@@ -91,6 +141,18 @@ export function CareerRoadmapTimeline({
           }}
         />
       )}
+
+      {servicesStage && (
+        <StageServicesModal
+          stage={servicesStage}
+          services={servicesForStage(servicesStage.relevantServiceIds, services)}
+          onClose={() => setServicesFor(null)}
+          onBook={(s) => {
+            onBookService(s)
+            setServicesFor(null)
+          }}
+        />
+      )}
     </Card>
   )
 }
@@ -104,14 +166,68 @@ function Legend({ className, label }: { className: string; label: string }) {
   )
 }
 
+/** Shown after a stage is marked done: a nudge toward the people who can help
+ *  with the next one. Stays until dismissed, so it isn't missed. */
+function NextUpStrip({
+  doneTitle,
+  next,
+  serviceCount,
+  onSeePeople,
+  onSeeServices,
+  onDismiss,
+}: {
+  doneTitle: string
+  next: CareerStage
+  serviceCount: number
+  onSeePeople: () => void
+  onSeeServices: () => void
+  onDismiss: () => void
+}) {
+  // Same count the stage card shows, so the two never disagree.
+  const helpers = next.relevantAlumniIds.length
+
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-green-200 bg-green-50/60 px-4 py-3">
+      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-green-500 text-white">
+        <Check size={14} />
+      </span>
+      <p className="min-w-0 flex-1 text-sm text-[#1c1c1c]">
+        <span className="font-semibold">“{doneTitle}” done.</span> Next up:{' '}
+        <span className="font-semibold">{next.title}</span>
+        {helpers > 0 ? ` — ${helpers} alumni can help.` : '.'}
+      </p>
+      {/* People first — the network is the point. Services only when there's
+          nobody to ask. */}
+      {helpers > 0 ? (
+        <Button variant="outline" className="!px-3 !py-1.5 !text-xs" icon={<Users size={12} />} onClick={onSeePeople}>
+          See who
+        </Button>
+      ) : serviceCount > 0 ? (
+        <Button variant="outline" className="!px-3 !py-1.5 !text-xs" icon={<Briefcase size={12} />} onClick={onSeeServices}>
+          See services
+        </Button>
+      ) : null}
+      <button
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        className="rounded-full p-1 text-[#878a8c] hover:bg-white hover:text-[#1c1c1c]"
+      >
+        <X size={16} />
+      </button>
+    </div>
+  )
+}
+
 function StageCard({
   stage,
   index,
   isFirst,
   isLast,
   blockedBy,
+  serviceCount,
   onStepStatus,
   onShowPeople,
+  onShowServices,
 }: {
   stage: CareerStage
   index: number
@@ -120,8 +236,11 @@ function StageCard({
   /** Title of the earlier stage that still has to be finished, or null when
    *  this stage is open. The server enforces the same rule. */
   blockedBy: string | null
-  onStepStatus: (stepKey: string, status: CareerStageStatus) => void
+  /** How many of this stage's matched services are available to book. */
+  serviceCount: number
+  onStepStatus: (status: CareerStageStatus) => void
   onShowPeople: () => void
+  onShowServices: () => void
 }) {
   const Icon = isFirst ? Flag : isLast ? Target : stage.status === 'completed' ? Check : BookOpen
   const helpers = stage.relevantAlumniIds.length
@@ -164,15 +283,30 @@ function StageCard({
         <span className="mt-2 rounded-full bg-green-100 px-2.5 py-0.5 text-[11px] font-semibold text-green-700">
           Completed
         </span>
-      ) : helpers > 0 ? (
-        <button
-          onClick={onShowPeople}
-          className="mt-2 flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-[#878a8c] transition-colors hover:bg-orange-50 hover:text-[#ff4500]"
-          title={`See who: ${stage.title}`}
-        >
-          <Users size={11} />
-          {helpers} alumni can help
-        </button>
+      ) : helpers > 0 || serviceCount > 0 ? (
+        // Who can help, then what can be booked — the network, before the work.
+        <div className="mt-2 flex flex-wrap justify-center gap-1">
+          {helpers > 0 && (
+            <button
+              onClick={onShowPeople}
+              className="flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-[#878a8c] transition-colors hover:bg-orange-50 hover:text-[#ff4500]"
+              title={`See who: ${stage.title}`}
+            >
+              <Users size={11} />
+              {helpers} alumni can help
+            </button>
+          )}
+          {serviceCount > 0 && (
+            <button
+              onClick={onShowServices}
+              className="flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-[#878a8c] transition-colors hover:bg-orange-50 hover:text-[#ff4500]"
+              title={`Services for: ${stage.title}`}
+            >
+              <Briefcase size={11} />
+              {serviceCount} {serviceCount === 1 ? 'service' : 'services'}
+            </button>
+          )}
+        </div>
       ) : null}
 
       {/* Progress control — the plan is the member's to drive, not a fixed
@@ -191,9 +325,7 @@ function StageCard({
           </span>
         ) : (
           <button
-            onClick={() =>
-              onStepStatus(stage.stepKey, stage.status === 'completed' ? 'upcoming' : 'completed')
-            }
+            onClick={() => onStepStatus(stage.status === 'completed' ? 'upcoming' : 'completed')}
             className="mt-2 flex items-center gap-1 text-[11px] font-semibold text-[#ff4500] hover:underline"
           >
             {stage.status === 'completed' ? <CircleDashed size={11} /> : <Check size={11} />}
@@ -204,5 +336,64 @@ function StageCard({
 
       {isFirst && <p className="mt-1.5 text-[11px] text-[#878a8c]">You’re here</p>}
     </div>
+  )
+}
+
+/** A stage's matched services, each bookable through the page's normal
+ *  booking modal. Plain-div backdrop, same pattern as AlumniListModal — the
+ *  shared Card component takes no onClick. */
+function StageServicesModal({
+  stage,
+  services,
+  onClose,
+  onBook,
+}: {
+  stage: CareerStage
+  services: AlumniService[]
+  onClose: () => void
+  onBook: (service: AlumniService) => void
+}) {
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-[#edeff1] px-5 py-4">
+          <div className="min-w-0">
+            <h2 className="text-base font-bold text-[#1c1c1c]">Services for “{stage.title}”</h2>
+            <p className="text-xs text-[#878a8c]">
+              {services.length} {services.length === 1 ? 'alumnus offers' : 'alumni offer'} help with this stage
+            </p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="rounded-full p-1 text-[#878a8c] hover:bg-gray-100">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-2 overflow-y-auto p-4">
+          {services.map((s) => {
+            const { icon: Icon, classes } = SERVICE_ICONS[s.serviceType] ?? SERVICE_ICONS.career_guidance
+            return (
+              <div key={s.id} className="flex items-center gap-3 rounded-xl border border-[#edeff1] p-3">
+                <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${classes}`}>
+                  <Icon size={16} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-[#1c1c1c]">{serviceName(s)}</p>
+                  <p className="truncate text-xs text-[#878a8c]">
+                    by {s.providerName ?? 'an alumnus'} · {servicePrice(s)}
+                  </p>
+                </div>
+                <Button variant="outline" className="!px-3 !py-1.5 !text-xs" onClick={() => onBook(s)}>
+                  Book
+                </Button>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>,
+    document.body,
   )
 }

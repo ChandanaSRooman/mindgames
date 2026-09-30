@@ -58,3 +58,18 @@ export function blockedBy(stages: CareerStage[], stepKey: string): string | null
   const blocker = stages.slice(1, index).find((s) => s.status !== 'completed')
   return blocker ? blocker.title : null
 }
+
+/**
+ * Where to point the member once they finish `stepKey`: the next stage that
+ * is still ahead of them. Skips any already done (a member who reopened an
+ * earlier stage can have later ones complete), and returns null once only the
+ * goal itself is left — the roadmap's congratulations banner covers that.
+ */
+export function nextStageAfter(stages: CareerStage[], stepKey: string): CareerStage | null {
+  const i = stages.findIndex((s) => s.stepKey === stepKey)
+  if (i === -1) return null
+  for (let j = i + 1; j < stages.length - 1; j++) {
+    if (stages[j].status !== 'completed') return stages[j]
+  }
+  return null
+}
