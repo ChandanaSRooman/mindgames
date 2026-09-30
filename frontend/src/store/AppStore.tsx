@@ -509,7 +509,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!isAuthenticated || !token) return
     const es = new EventSource(`/api/stream?token=${encodeURIComponent(token)}`)
-    const onNotification = () => api.getNotifications().then(setNotifications, () => {})
+    // Connection and mentorship notifications ("X accepted your request",
+    // "X confirmed your session" — which also connects the two of you) change
+    // the network itself, so those re-pull it: graph, counts and the feed's
+    // private posts together. Others (likes, comments) don't, and re-pulling
+    // on those would keep overwriting a Connect click still in flight.
+    const onNotification = (e: MessageEvent) => {
+      api.getNotifications().then(setNotifications, () => {})
+      let type: unknown
+      try {
+        type = (JSON.parse(e.data || '{}') as { type?: unknown }).type
+      } catch {
+        /* older payload with no data */
+      }
+      if (type === 'connection' || type === 'mentorship') void refreshNetwork()
+    }
     const onMessage = () => void refreshThreads()
     es.addEventListener('notification', onNotification)
     es.addEventListener('message', onMessage)
@@ -609,10 +623,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
           bumpCounts(id)
           notify(`You are now connected with ${u?.name ?? 'member'}.`)
         },
-        () => notify('Could not accept the request.', 'error'),
+        () => {
+          // Re-read the real state rather than guess it. A failure can mean
+          // the request is still pending (back to Requests), or that the two
+          // are already connected — e.g. a session agreement connected them
+          // a moment earlier — in which case they must stay in My Network.
+          notify('Could not accept the request.', 'error')
+          void refreshNetwork()
+        },
       )
     },
-    [notify, users, bumpCounts],
+    [notify, users, bumpCounts, refreshNetwork],
   )
 
   const ignoreRequest = useCallback((id: string) => {
@@ -900,6 +921,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         const updated = await api.acceptSession(id, meetingLink, resourceLink, resourceTitle)
         setSessions((list) => list.map((s) => (s.id === updated.id ? updated : s)))
+        // Accepting connects mentor and mentee on the server — re-pull the
+        // network so they show in My Network with the right counts.
+        void refreshNetwork()
         notify('Session confirmed. The mentee has been notified.')
         return 'ok'
       } catch (err) {
@@ -912,7 +936,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return 'error'
       }
     },
-    [notify],
+    [notify, refreshNetwork],
   )
   const setSessionResourceCount = useCallback((id: string, count: number) => {
     // Returns the same array when nothing changed, so opening the modal on a

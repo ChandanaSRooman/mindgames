@@ -46,7 +46,9 @@ export async function pushNotification(
        VALUES ($1,$2,$3,$4,$5,$6)`,
       [userId, type, text, actorId ?? null, target?.type ?? null, target?.id ?? null],
     )
-    emitTo(userId, 'notification')
+    // The type rides along so the client can tell a notification that
+    // changes the network (a connection, a session agreed) from a like.
+    emitTo(userId, 'notification', { type })
   } catch (err) {
     console.error('notification insert failed:', err instanceof Error ? err.message : err)
   }
@@ -87,7 +89,7 @@ export async function pushNotificationOncePerTarget(
     )
     // Only poke the client when a row was actually written. A suppressed
     // duplicate must not trigger a notification refetch.
-    if (result.rowCount) emitTo(userId, 'notification')
+    if (result.rowCount) emitTo(userId, 'notification', { type })
   } catch (err) {
     console.error('notification insert failed:', err instanceof Error ? err.message : err)
   }
