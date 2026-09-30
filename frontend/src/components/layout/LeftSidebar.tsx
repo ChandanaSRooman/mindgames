@@ -1,5 +1,6 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 import {
+  BookOpen,
   Briefcase,
   Building2,
   Calendar,
@@ -7,7 +8,6 @@ import {
   GraduationCap,
   Home,
   Newspaper,
-  Plus,
   Rocket,
   Route,
   ShieldCheck,
@@ -26,14 +26,17 @@ const NAV = [
   { to: '/mentorship', label: 'Mentorship', icon: GraduationCap },
   { to: '/startupvarsity', label: 'StartupVarsity', icon: Rocket },
   { to: '/news', label: 'News & Updates', icon: Newspaper },
-  { to: '/explore', label: 'Explore Communities', icon: Compass },
+  { to: '/learning-resources', label: 'Learning Resources', icon: BookOpen },
   { to: '/career-guidance', label: 'Career Guidance', icon: Route },
+  // Explore and "Start a Community" are one entry: the Explore page already
+  // has its own Start a Community button, so a separate sidebar item was a
+  // second door to the same room.
+  { to: '/explore', label: 'Explore Communities', icon: Compass },
 ]
 
 export function LeftSidebar() {
   const { communities, currentUser } = useApp()
   const { sidebarOpen, toggleSidebar } = useLayout()
-  const navigate = useNavigate()
   const joined = communities.filter((c) => c.joined)
 
   return (
@@ -82,14 +85,6 @@ export function LeftSidebar() {
           </NavLink>
         ))}
 
-        <button
-          onClick={() => navigate('/explore', { state: { create: true } })}
-          className="mt-1 flex items-center gap-3 rounded-lg border-l-[3px] border-transparent px-3 py-2 text-sm font-medium text-[#1c1c1c] hover:bg-gray-100"
-        >
-          <Plus size={20} className="text-[#878a8c]" />
-          Start a Community
-        </button>
-
         {/* Console entry — admins only */}
         {currentUser.isAdmin && (
           <NavLink
@@ -102,30 +97,31 @@ export function LeftSidebar() {
         )}
       </nav>
 
-      <div className="my-4 border-t border-[#edeff1]" />
+      {joined.length > 0 && (
+        <>
+          <div className="my-4 border-t border-[#edeff1]" />
 
-      <p className="px-3 pb-2 text-xs font-bold uppercase tracking-wide text-[#878a8c]">
-        My Communities
-      </p>
-      <div className="flex flex-col gap-0.5">
-        {joined.map((c) => (
-          <NavLink
-            key={c.id}
-            to={`/community/${c.id}`}
-            className={({ isActive }) =>
-              `flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
-                isActive ? 'bg-orange-50 text-[#ff4500]' : 'text-[#1c1c1c] hover:bg-gray-100'
-              }`
-            }
-          >
-            <span className={`h-6 w-6 shrink-0 rounded-full bg-gradient-to-br ${c.color}`} />
-            <span className="truncate">{c.name}</span>
-          </NavLink>
-        ))}
-        {joined.length === 0 && (
-          <p className="px-3 text-xs text-[#878a8c]">You haven’t joined any communities yet.</p>
-        )}
-      </div>
+          <p className="px-3 pb-2 text-xs font-bold uppercase tracking-wide text-[#878a8c]">
+            My Communities
+          </p>
+          <div className="flex flex-col gap-0.5">
+            {joined.map((c) => (
+              <NavLink
+                key={c.id}
+                to={`/community/${c.id}`}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
+                    isActive ? 'bg-orange-50 text-[#ff4500]' : 'text-[#1c1c1c] hover:bg-gray-100'
+                  }`
+                }
+              >
+                <span className={`h-6 w-6 shrink-0 rounded-full bg-gradient-to-br ${c.color}`} />
+                <span className="truncate">{c.name}</span>
+              </NavLink>
+            ))}
+          </div>
+        </>
+      )}
     </aside>
     </>
   )

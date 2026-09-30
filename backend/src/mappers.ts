@@ -823,3 +823,79 @@ export function mapInvitee(r: InviteeRow) {
     everActive: !!r.ever_active,
   }
 }
+
+// ---------------------------------------------------------------------------
+// Learning resources.
+//
+// The joined display fields (owner_name, owner_photo, session_topic) are
+// optional on the row because not every query needs them: the owner's own
+// list already knows who they are. A route that does select them gets them
+// mapped; one that doesn't emits undefined rather than a wrong value.
+// ---------------------------------------------------------------------------
+export interface CareerResourceRow {
+  id: string
+  user_id: string
+  title: string
+  url: string | null
+  note: string | null
+  kind: string
+  status: string
+  roadmap_id: string | null
+  step_key: string | null
+  session_id: string | null
+  is_public: boolean
+  requires_submission: boolean
+  submission_url: string | null
+  submission_at: Date | string | null
+  created_at: Date | string
+  updated_at: Date | string
+  owner_name?: string | null
+  owner_photo?: string | null
+  session_topic?: string | null
+}
+
+export function mapCareerResource(r: CareerResourceRow) {
+  return {
+    id: r.id,
+    userId: r.user_id,
+    title: r.title,
+    url: r.url ?? undefined,
+    note: r.note ?? undefined,
+    kind: r.kind,
+    status: r.status,
+    // Both links are optional and independent — a resource can name a stage,
+    // a session, both, or neither.
+    roadmapId: r.roadmap_id ?? undefined,
+    stepKey: r.step_key ?? undefined,
+    sessionId: r.session_id ?? undefined,
+    isPublic: r.is_public,
+    requiresSubmission: r.requires_submission,
+    submissionUrl: r.submission_url ?? undefined,
+    submissionAt: r.submission_at ? new Date(r.submission_at).toISOString() : undefined,
+    createdAt: new Date(r.created_at).toISOString(),
+    updatedAt: new Date(r.updated_at).toISOString(),
+    ownerName: r.owner_name ?? undefined,
+    ownerPhoto: r.owner_photo ?? undefined,
+    sessionTopic: r.session_topic ?? undefined,
+  }
+}
+
+/**
+ * A resource as shown on someone ELSE's profile — the public case only.
+ *
+ * Deliberately a smaller shape than mapCareerResource: which roadmap stage or
+ * session a resource is tied to is information about the other party to that
+ * link too (a mentee's stage, a session between two specific people), so a
+ * resource being public never leaks who it was shared with or what stage it
+ * served. Only the recommendation itself is public.
+ */
+export function mapPublicCareerResource(r: CareerResourceRow) {
+  return {
+    id: r.id,
+    title: r.title,
+    url: r.url ?? undefined,
+    note: r.note ?? undefined,
+    kind: r.kind,
+    createdAt: new Date(r.created_at).toISOString(),
+  }
+}

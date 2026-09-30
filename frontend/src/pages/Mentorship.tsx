@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ExternalLink, Video, Award, Calendar, GraduationCap, Star, X } from 'lucide-react'
+import { BookOpen, ExternalLink, Video, Award, Calendar, GraduationCap, Star, X } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { SubscriptionPlans } from '../components/subscription/SubscriptionPlans'
 import { MentorWorkspace } from '../components/mentor/MentorWorkspace'
 import { GroupSessionsTab } from '../components/mentor/GroupSessionsTab'
 import { CompleteSessionModal } from '../components/mentor/CompleteSessionModal'
 import { EditSessionModal } from '../components/mentor/EditSessionModal'
+import { SessionResourcesModal } from '../components/career/SessionResourcesModal'
 import { api } from '../lib/api'
 import { roleLine, sessionPriceLabel } from '../lib/format'
 import { isBookableMentor } from '../lib/profileCompleteness'
@@ -37,7 +38,9 @@ export function Mentorship() {
   const [tab, setTab] = useState<Tab>('Find a Mentor')
   const [accepting, setAccepting] = useState<string | null>(null)
   // Session the mentor was accepting when the paywall interrupted.
-  const [payFor, setPayFor] = useState<{ id: string; link?: string } | null>(null)
+  const [payFor, setPayFor] = useState<{
+    id: string; link?: string; resourceLink?: string; resourceRequiresSubmission?: boolean
+  } | null>(null)
   const [rating, setRating] = useState<MentorshipSession | null>(null)
   const [ratings, setRatings] = useState<Map<string, { avg: number; count: number }>>(new Map())
 
@@ -52,6 +55,7 @@ export function Mentorship() {
   const [completing, setCompleting] = useState<MentorshipSession | null>(null)
   // Session being rescheduled/renamed by its mentor.
   const [editing, setEditing] = useState<MentorshipSession | null>(null)
+  const [resourcesFor, setResourcesFor] = useState<MentorshipSession | null>(null)
 
   const q = query.trim().toLowerCase()
   const mentors = users
@@ -286,6 +290,14 @@ export function Mentorship() {
                         Mark completed
                       </Button>
                     )}
+                    {/* A student's own session: only their mentor assigns
+                        resources here, so the button only appears once
+                        there is actually something to see. */}
+                    {!!s.resourceCount && (
+                      <Button variant="subtle" className="!px-3 !py-1.5 text-xs" icon={<BookOpen size={12} />} onClick={() => setResourcesFor(s)}>
+                        Resources
+                      </Button>
+                    )}
                     <Button variant="subtle" className="!px-3 !py-1.5 text-xs" onClick={() => cancelSession(s.id)}>
                       Cancel
                     </Button>
@@ -341,6 +353,15 @@ export function Mentorship() {
                     <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${declined ? 'bg-red-50 text-red-500' : 'bg-gray-100 text-[#878a8c]'}`}>
                       {declined ? 'Declined' : 'Completed'}
                     </span>
+                    {/* A declined session never happened, so there is nothing
+                        to attach reading material to. Otherwise, same rule as
+                        Upcoming: only the mentee's own session, only shown
+                        once the mentor has actually assigned something. */}
+                    {!declined && !!s.resourceCount && (
+                      <Button variant="subtle" className="!px-3 !py-1.5 text-xs" icon={<BookOpen size={12} />} onClick={() => setResourcesFor(s)}>
+                        Resources
+                      </Button>
+                    )}
                   </Card>
                 )
               })}
@@ -357,9 +378,19 @@ export function Mentorship() {
           onDecline={declineSession}
           onComplete={(session) => setCompleting(session)}
           onEdit={(session) => setEditing(session)}
+          onResources={(session) => setResourcesFor(session)}
         />
       ) : (
         <GroupSessionsTab />
+      )}
+
+      {resourcesFor && (
+        <SessionResourcesModal
+          sessionId={resourcesFor.id}
+          topic={resourcesFor.topic}
+          iAmMentor={resourcesFor.mentorId === currentUser.id}
+          onClose={() => setResourcesFor(null)}
+        />
       )}
 
       {editing && (
@@ -389,14 +420,16 @@ export function Mentorship() {
       {accepting && (
         <AcceptModal
           onClose={() => setAccepting(null)}
-          onAccept={async (link) => {
+          onAccept={async (link, resourceLink, resourceRequiresSubmission) => {
             const id = accepting
             setAccepting(null)
             // A mentor without an active plan cannot accept. Open the plans
             // rather than showing an error they have no way to act on, and
             // remember the session so accepting resumes once they've paid.
-            const result = await acceptSession(id, link || undefined)
-            if (result === 'payment-required') setPayFor({ id, link: link || undefined })
+            const result = await acceptSession(id, link || undefined, resourceLink, resourceRequiresSubmission)
+            if (result === 'payment-required') {
+              setPayFor({ id, link: link || undefined, resourceLink, resourceRequiresSubmission })
+            }
           }}
         />
       )}
@@ -411,7 +444,9 @@ export function Mentorship() {
             const pending = payFor
             setPayFor(null)
             await refreshSubscription()
-            if (pending) await acceptSession(pending.id, pending.link)
+            if (pending) {
+              await acceptSession(pending.id, pending.link, pending.resourceLink, pending.resourceRequiresSubmission)
+            }
           }}
         />
       )}
@@ -544,8 +579,16 @@ function Empty({ label }: { label: string }) {
 }
 
 // Mentor confirms a request, optionally attaching a meeting link.
-function AcceptModal({ onClose, onAccept }: { onClose: () => void; onAccept: (link: string) => void }) {
+function AcceptModal({
+  onClose,
+  onAccept,
+}: {
+  onClose: () => void
+  onAccept: (link: string, resourceLink?: string, resourceRequiresSubmission?: boolean) => void
+}) {
   const [link, setLink] = useState('')
+  const [resourceLink, setResourceLink] = useState('')
+  const [resourceRequiresSubmission, setResourceRequiresSubmission] = useState(false)
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="animate-slidein w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -560,9 +603,29 @@ function AcceptModal({ onClose, onAccept }: { onClose: () => void; onAccept: (li
           placeholder="https://meet.google.com/… (optional)"
           className="mt-3 w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
         />
+        <label className="mt-3 block text-sm font-medium text-[#1c1c1c]">Assign a resource (optional)</label>
+        <input
+          value={resourceLink}
+          onChange={(e) => setResourceLink(e.target.value)}
+          placeholder="A link for them to read or watch before you meet"
+          className="mt-1 w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
+        />
+        {resourceLink.trim() && (
+          <label className="mt-2 flex items-center gap-2 text-xs text-[#878a8c]">
+            <input
+              type="checkbox"
+              checked={resourceRequiresSubmission}
+              onChange={(e) => setResourceRequiresSubmission(e.target.checked)}
+              className="h-3.5 w-3.5 accent-[#ff4500]"
+            />
+            They need to submit proof they did it
+          </label>
+        )}
         <div className="mt-4 flex items-center justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => onAccept(link.trim())}>Confirm session</Button>
+          <Button onClick={() => onAccept(link.trim(), resourceLink.trim() || undefined, resourceRequiresSubmission)}>
+            Confirm session
+          </Button>
         </div>
       </div>
     </div>

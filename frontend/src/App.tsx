@@ -35,6 +35,7 @@ import { CareerGuidance } from './pages/CareerGuidance'
 import { CareerAssessmentPage } from './pages/CareerAssessmentPage'
 import { EditRoadmapPage } from './pages/EditRoadmapPage'
 import { ManageServicesPage } from './pages/ManageServicesPage'
+import { CareerResourcesPage } from './pages/CareerResourcesPage'
 import { CommunityPage } from './pages/CommunityPage'
 import { Profile } from './pages/Profile'
 import { Settings } from './pages/Settings'
@@ -137,6 +138,7 @@ export default function App() {
             <Route path="/career-guidance/assessment" element={<CareerAssessmentPage />} />
             <Route path="/career-guidance/roadmap/edit" element={<EditRoadmapPage />} />
             <Route path="/career-guidance/services" element={<ManageServicesPage />} />
+            <Route path="/learning-resources" element={<CareerResourcesPage />} />
             <Route path="/community/:id" element={<CommunityPage />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/profile/:id" element={<Profile />} />

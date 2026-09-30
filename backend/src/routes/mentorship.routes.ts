@@ -31,10 +31,16 @@ interface SessionRow {
   requested_by: 'mentor' | 'mentee'
   mentee_confirmed: boolean
   mentor_confirmed: boolean
+  resource_count: number
 }
 
+// resource_count lets the UI decide whether to show a session's "Resources"
+// button at all, without an extra round trip per session — a plain COUNT via
+// subquery rather than a JOIN, since a session can have many resources and a
+// JOIN would multiply the session row per resource instead of per session.
 const SESSION_SELECT = `
-  SELECT s.id, s.mentor_id, s.mentee_id, u.name AS mentee_name, s.topic, s.date_label, s.time_label, s.status, s.meeting_link, s.rating, s.is_paid, s.price, s.service_id, s.requested_by, s.mentee_confirmed, s.mentor_confirmed
+  SELECT s.id, s.mentor_id, s.mentee_id, u.name AS mentee_name, s.topic, s.date_label, s.time_label, s.status, s.meeting_link, s.rating, s.is_paid, s.price, s.service_id, s.requested_by, s.mentee_confirmed, s.mentor_confirmed,
+         (SELECT count(*)::int FROM career_resources r WHERE r.session_id = s.id) AS resource_count
   FROM mentorship_sessions s
   JOIN users u ON u.id = s.mentee_id`
 
@@ -59,6 +65,7 @@ function mapSession(r: SessionRow) {
     // session waiting for their confirmation.
     menteeConfirmed: r.mentee_confirmed,
     mentorConfirmed: r.mentor_confirmed,
+    resourceCount: r.resource_count,
   }
 }
 
@@ -188,6 +195,10 @@ const offerSchema = z.object({
   // so without this an offered session could never get a join link at all.
   meetingLink: z.string().trim().url().optional().or(z.literal('')),
   scheduledAt: z.string().datetime({ offset: true }).or(z.string().datetime()).optional(),
+  // Optional: a resource to attach to the session right as it's created,
+  // instead of a separate trip to the Resources modal afterwards.
+  resourceLink: z.string().trim().url().max(2000).optional().or(z.literal('')),
+  resourceRequiresSubmission: z.boolean().optional().default(false),
 })
 
 // POST /api/mentorship/sessions/offer — a mentor proactively offers a
@@ -203,7 +214,7 @@ mentorshipRouter.post(
   asyncHandler(async (req, res) => {
     const parsed = offerSchema.safeParse(req.body)
     if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
-    const { menteeId, topic, date, time, meetingLink, scheduledAt } = parsed.data
+    const { menteeId, topic, date, time, meetingLink, scheduledAt, resourceLink, resourceRequiresSubmission } = parsed.data
     const when = scheduledAt ? new Date(scheduledAt) : null
     // Same guard the PATCH edit route applies. The schema only proves the
     // string is a datetime, not that it is ahead of now -- and a past
@@ -278,10 +289,28 @@ mentorshipRouter.post(
       { type: 'session', id: ins.rows[0].id },
     )
 
+    if (resourceLink) {
+      await attachSessionResource(ins.rows[0].id, req.user!.sub, resourceLink, resourceRequiresSubmission)
+    }
+
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [ins.rows[0].id])
     res.status(201).json(mapSession(full.rows[0]))
   }),
 )
+
+// A mentor attaching a resource link at the moment they create/confirm a
+// session — offer and accept both call this, right after the session row
+// exists, so the resource can carry the real session_id. Title is generated
+// rather than asked for: the point was one input field, not a second form.
+async function attachSessionResource(
+  sessionId: string, mentorId: string, link: string, requiresSubmission: boolean,
+) {
+  await query(
+    `INSERT INTO career_resources (user_id, title, url, kind, session_id, requires_submission)
+     VALUES ($1, $2, $3, 'other', $4, $5)`,
+    [mentorId, 'Resource for this session', link, sessionId, requiresSubmission],
+  )
+}
 
 // Fetch a session and assert the caller is its mentor.
 async function sessionForMentor(id: string, me: string) {
@@ -328,6 +357,11 @@ mentorshipRouter.post(
     // stats something they can actually count.
     const when = typeof req.body?.scheduledAt === 'string' ? new Date(req.body.scheduledAt) : null
     const scheduledAt = when && !Number.isNaN(when.getTime()) ? when : null
+    const resourceLink = typeof req.body?.resourceLink === 'string' ? req.body.resourceLink.trim() : ''
+    if (resourceLink && !z.string().url().safeParse(resourceLink).success) {
+      throw new ApiError(400, 'That resource link does not look like a valid URL')
+    }
+    const resourceRequiresSubmission = req.body?.resourceRequiresSubmission === true
     await query(
       `UPDATE mentorship_sessions
           SET status = 'upcoming', meeting_link = $2, scheduled_at = COALESCE($3, scheduled_at),
@@ -344,6 +378,9 @@ mentorshipRouter.post(
       req.user!.sub,
       { type: 'session', id: req.params.id },
     )
+    if (resourceLink) {
+      await attachSessionResource(req.params.id, req.user!.sub, resourceLink, resourceRequiresSubmission)
+    }
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
     res.json(mapSession(full.rows[0]))
   }),

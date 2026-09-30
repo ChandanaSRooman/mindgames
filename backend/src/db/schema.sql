@@ -1302,3 +1302,85 @@ ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS reminded BOOLEAN NOT NU
 CREATE INDEX IF NOT EXISTS idx_sessions_reminder_due
   ON mentorship_sessions (scheduled_at)
   WHERE NOT reminded AND scheduled_at IS NOT NULL AND status = 'upcoming';
+
+-- ---------------------------------------------------------------------------
+-- Learning resources
+--
+-- Something a member is learning from — an article, a video, a course — kept
+-- next to the roadmap it serves instead of in a browser bookmark folder.
+--
+-- Both links are nullable and independent of each other, which is the whole
+-- design:
+--
+--   * roadmap_id + step_key — the stage this resource helps with, so the
+--     Resources page can group by stage. Stored as a pair because step_key is
+--     only unique inside one roadmap, and a roadmap is regenerated as a new
+--     version row every time the member edits their assessment. Naming the
+--     roadmap too means an old resource keeps saying which plan it belonged
+--     to, instead of silently re-attaching itself to a same-named stage in a
+--     newer plan.
+--
+--   * session_id — the mentorship session this resource was shared in. A
+--     mentor attaches "read this before we meet"; a mentee can attach one
+--     back. Whoever created the row owns it, and the other party to that
+--     session may read it. That read rule is enforced in the route, not here,
+--     because it depends on who is asking.
+--
+-- ON DELETE, deliberately different per link: the owner going away takes
+-- their resources with them (CASCADE), but a deleted session or roadmap only
+-- clears the link (SET NULL). The member keeps the thing they were learning
+-- from — it is theirs, not the session's.
+CREATE TABLE IF NOT EXISTS career_resources (
+  id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title      TEXT NOT NULL,
+  url        TEXT,
+  note       TEXT,
+  kind       TEXT NOT NULL DEFAULT 'article'
+             CHECK (kind IN ('article', 'video', 'course', 'book', 'doc', 'other')),
+  status     TEXT NOT NULL DEFAULT 'saved'
+             CHECK (status IN ('saved', 'in_progress', 'done')),
+  roadmap_id TEXT REFERENCES career_roadmaps(id) ON DELETE SET NULL,
+  step_key   TEXT,
+  session_id TEXT REFERENCES mentorship_sessions(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- The Resources page always reads one member's own list, newest first.
+CREATE INDEX IF NOT EXISTS idx_career_resources_user
+  ON career_resources (user_id, created_at DESC);
+
+-- Reading "what was shared in this session" is the other access path, and
+-- only a small slice of rows ever carries a session link.
+CREATE INDEX IF NOT EXISTS idx_career_resources_session
+  ON career_resources (session_id)
+  WHERE session_id IS NOT NULL;
+
+-- career_resources: public visibility.
+--
+-- Everything before this was owner-or-session-party only. That leaves no way
+-- for a mentor to recommend a resource on their own profile for anyone to
+-- see — the same role AlumniServices plays for bookable services. is_public
+-- opens a resource to any signed-in member; it is unrelated to the
+-- roadmap/session links, which stay private no matter what this says, since
+-- a stage or session name is information about the OTHER party too.
+ALTER TABLE career_resources ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Reading "this member's public resources" (a profile visit) only ever wants
+-- the public slice, so the partial index stays a fraction of the table.
+CREATE INDEX IF NOT EXISTS idx_career_resources_public
+  ON career_resources (user_id, created_at DESC)
+  WHERE is_public;
+
+-- career_resources: mentor-assigned submissions.
+--
+-- A resource attached to a session is normally just "read this" — nothing
+-- else required. requires_submission marks the other case: the mentor wants
+-- the mentee to come back with a link proving they did it. Who the mentee is
+-- comes from the session this resource is already attached to (session_id),
+-- so no separate "assigned to" column is needed. submission_url/at are set
+-- once by the session's mentee via POST /:id/submit, never by the owner.
+ALTER TABLE career_resources ADD COLUMN IF NOT EXISTS requires_submission BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE career_resources ADD COLUMN IF NOT EXISTS submission_url TEXT;
+ALTER TABLE career_resources ADD COLUMN IF NOT EXISTS submission_at TIMESTAMPTZ;

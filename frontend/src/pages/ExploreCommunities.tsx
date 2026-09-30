@@ -37,7 +37,7 @@ export function ExploreCommunities() {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-[#1c1c1c]">Explore Communities</h1>
+        <h1 className="text-2xl font-bold text-[#1c1c1c]">Communities</h1>
         <Button icon={<Plus size={16} />} onClick={() => setShowCreate(true)}>Start a Community</Button>
       </div>
 

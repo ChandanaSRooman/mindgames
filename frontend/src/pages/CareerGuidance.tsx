@@ -43,6 +43,10 @@ export function CareerGuidance() {
   const [draft, setDraft] = useState<CareerAssessment | null>(null)
   const [helpers, setHelpers] = useState<AlumniHelper[]>([])
   const [matched, setMatched] = useState<AlumniService[]>([])
+  // Feeds the Quick access card, and stays in step with anything a mentor
+  // assigns — getCareerResources() already returns everything shared into a
+  // session with this member, not just what they saved themselves.
+  const [resourceCount, setResourceCount] = useState(0)
   const [allServices, setAllServices] = useState<AlumniService[] | null>(null)
   const [showingAll, setShowingAll] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -78,10 +82,11 @@ export function CareerGuidance() {
   }, [])
 
   const loadRoadmapExtras = useCallback(() => {
-    Promise.all([api.getCareerAlumniHelp(), api.getMatchedServices()])
-      .then(([people, services]) => {
+    Promise.all([api.getCareerAlumniHelp(), api.getMatchedServices(), api.getCareerResources()])
+      .then(([people, services, resources]) => {
         setHelpers(people)
         setMatched(services)
+        setResourceCount(resources.length)
       })
       .catch(() => {
         /* the roadmap itself still renders without these side panels */
@@ -253,7 +258,7 @@ export function CareerGuidance() {
             }}
           />
         </div>
-        <QuickAccessCard />
+        <QuickAccessCard resourceCount={resourceCount} />
       </div>
 
       <div className="flex items-center justify-between gap-3 rounded-xl border border-[#edeff1] bg-white px-5 py-4">

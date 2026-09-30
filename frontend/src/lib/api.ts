@@ -8,6 +8,9 @@ import type {
   AdminSubscriptionRow,
   CareerAssessment,
   CareerRoadmap,
+  CareerResource,
+  CareerResourceInput,
+  PublicCareerResource,
   CareerStageStatus,
   CheckoutSession,
   Mentee,
@@ -374,10 +377,14 @@ export const api = {
   offerSession: (
     menteeId: string, topic: string, date: string, time: string,
     meetingLink?: string, scheduledAt?: string,
+    resourceLink?: string, resourceRequiresSubmission?: boolean,
   ) =>
     http<MentorshipSession>('/api/mentorship/sessions/offer', {
       method: 'POST',
-      body: JSON.stringify({ menteeId, topic, date, time, meetingLink, scheduledAt }),
+      body: JSON.stringify({
+        menteeId, topic, date, time, meetingLink, scheduledAt,
+        resourceLink, resourceRequiresSubmission,
+      }),
     }),
   /** Either side calls off a requested or upcoming session. */
   cancelSession: (id: string) =>
@@ -392,10 +399,13 @@ export const api = {
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/accept-offer`, { method: 'POST' }),
   declineSessionOffer: (id: string) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/decline-offer`, { method: 'POST' }),
-  acceptSession: (id: string, meetingLink?: string) =>
+  acceptSession: (
+    id: string, meetingLink?: string,
+    resourceLink?: string, resourceRequiresSubmission?: boolean,
+  ) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/accept`, {
       method: 'POST',
-      body: JSON.stringify({ meetingLink }),
+      body: JSON.stringify({ meetingLink, resourceLink, resourceRequiresSubmission }),
     }),
   rateSession: (id: string, rating: number, review?: string) =>
     http<MentorshipSession>(`/api/mentorship/sessions/${id}/rate`, {
@@ -755,6 +765,41 @@ export const api = {
   // from the service, so the panel can report the real consequence.
   deleteService: (id: string) =>
     http<{ unlinkedSessions: number }>(`/api/career/services/${id}`, { method: 'DELETE' }),
+
+  // ---- Learning resources --------------------------------------------------
+  // Returns everything the caller may see: their own resources, plus anything
+  // attached to a mentorship session they are a party to. Passing a sessionId
+  // narrows it to that one session, which is what the session view uses.
+  getCareerResources: (sessionId?: string) =>
+    http<CareerResource[]>(
+      `/api/career-resources${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`,
+    ),
+  // Someone else's public profile — the deliberately smaller shape, with no
+  // stage, session or status attached (see PublicCareerResource).
+  getPublicCareerResources: (userId: string) =>
+    http<PublicCareerResource[]>(`/api/career-resources/of/${encodeURIComponent(userId)}`),
+  createCareerResource: (body: CareerResourceInput) =>
+    http<CareerResource>('/api/career-resources', { method: 'POST', body: JSON.stringify(body) }),
+  // Only title/url/note/kind/status are editable — the stage and session links
+  // are fixed at creation, because re-pointing a shared resource would move it
+  // between people's lists without either of them acting.
+  updateCareerResource: (
+    id: string,
+    body: Partial<Pick<CareerResourceInput, 'title' | 'url' | 'note' | 'kind' | 'status' | 'isPublic'>>,
+  ) =>
+    http<CareerResource>(`/api/career-resources/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  deleteCareerResource: (id: string) =>
+    http<void>(`/api/career-resources/${id}`, { method: 'DELETE' }),
+  // The session's mentee proving they did a resource the mentor marked
+  // requiresSubmission — a link, not a file upload (no storage for that yet).
+  submitCareerResource: (id: string, url: string) =>
+    http<CareerResource>(`/api/career-resources/${id}/submit`, {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
 }
 
 export interface CareerAssessmentInput {
