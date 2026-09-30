@@ -80,3 +80,31 @@ export function doneCount(resources: CareerResource[]): number {
 export function isSharedWithMe(resource: CareerResource, myUserId: string): boolean {
   return resource.userId !== myUserId
 }
+
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+const DAY = 24 * HOUR
+
+/**
+ * When a resource was assigned, relative to its session — "2d before
+ * session", "3h after session". Null when the session has no real
+ * timestamp (older sessions only carry display labels), so the caller can
+ * fall back to the plain date instead of printing a guess.
+ */
+export function assignedRelativeToSession(assignedAt: string, sessionAt?: string): string | null {
+  if (!sessionAt) return null
+  const diff = +new Date(assignedAt) - +new Date(sessionAt)
+  if (Number.isNaN(diff)) return null
+  const gap = Math.abs(diff)
+  if (gap < MINUTE) return 'at session time'
+  const amount =
+    gap >= DAY ? `${Math.floor(gap / DAY)}d` : gap >= HOUR ? `${Math.floor(gap / HOUR)}h` : `${Math.floor(gap / MINUTE)}m`
+  return `${amount} ${diff < 0 ? 'before' : 'after'} session`
+}
+
+/** A short absolute date and time, e.g. "30 Sep, 11:40 am". */
+export function shortStamp(iso: string): string {
+  return new Date(iso).toLocaleString('en-IN', {
+    day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
+  })
+}

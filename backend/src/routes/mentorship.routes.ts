@@ -7,6 +7,9 @@ import { pushNotification } from '../notify.js'
 import { sendEmail } from '../email.js'
 import { getSubscription } from '../subscription.js'
 import { getProfileStats, refreshBadges, stampMutualConfirmation } from '../sessionStats.js'
+import { mapPendingConfirmation, type PendingConfirmationRow } from '../mappers.js'
+import { labelsFor } from '../sessionLabels.js'
+import { HTTP_URL, HTTP_URL_MESSAGE, isHttpUrl } from '../validation.js'
 
 export const mentorshipRouter = Router()
 
@@ -32,6 +35,7 @@ interface SessionRow {
   mentee_confirmed: boolean
   mentor_confirmed: boolean
   resource_count: number
+  scheduled_at: Date | null
 }
 
 // resource_count lets the UI decide whether to show a session's "Resources"
@@ -39,7 +43,7 @@ interface SessionRow {
 // subquery rather than a JOIN, since a session can have many resources and a
 // JOIN would multiply the session row per resource instead of per session.
 const SESSION_SELECT = `
-  SELECT s.id, s.mentor_id, s.mentee_id, u.name AS mentee_name, s.topic, s.date_label, s.time_label, s.status, s.meeting_link, s.rating, s.is_paid, s.price, s.service_id, s.requested_by, s.mentee_confirmed, s.mentor_confirmed,
+  SELECT s.id, s.mentor_id, s.mentee_id, u.name AS mentee_name, s.topic, s.date_label, s.time_label, s.status, s.meeting_link, s.rating, s.is_paid, s.price, s.service_id, s.requested_by, s.mentee_confirmed, s.mentor_confirmed, s.scheduled_at,
          (SELECT count(*)::int FROM career_resources r WHERE r.session_id = s.id) AS resource_count
   FROM mentorship_sessions s
   JOIN users u ON u.id = s.mentee_id`
@@ -66,6 +70,9 @@ function mapSession(r: SessionRow) {
     menteeConfirmed: r.mentee_confirmed,
     mentorConfirmed: r.mentor_confirmed,
     resourceCount: r.resource_count,
+    // The real instant, when one was set — the date/time labels above are
+    // display text and can't be compared against. Older sessions have none.
+    scheduledAt: r.scheduled_at ? new Date(r.scheduled_at).toISOString() : undefined,
   }
 }
 
@@ -193,12 +200,21 @@ const offerSchema = z.object({
   // The offering mentor sets the link up front: unlike a mentee's request,
   // there is no later "accept" step on the mentor's side to attach one at,
   // so without this an offered session could never get a join link at all.
-  meetingLink: z.string().trim().url().optional().or(z.literal('')),
+  // Required: a session with no way to join isn't really scheduled.
+  meetingLink: z
+    .string({ error: 'A meeting link is required' })
+    .trim()
+    .min(1, 'A meeting link is required')
+    .url('The meeting link must be a full link, starting with https://')
+    .regex(HTTP_URL, HTTP_URL_MESSAGE)
+    .max(500),
   scheduledAt: z.string().datetime({ offset: true }).or(z.string().datetime()).optional(),
-  // Optional: a resource to attach to the session right as it's created,
-  // instead of a separate trip to the Resources modal afterwards.
-  resourceLink: z.string().trim().url().max(2000).optional().or(z.literal('')),
-  resourceRequiresSubmission: z.boolean().optional().default(false),
+  // Optional prep to attach as the session is created, instead of a separate
+  // trip to the Resources modal afterwards. Prep never asks for evidence.
+  resourceLink: z.string().trim().url().regex(HTTP_URL, HTTP_URL_MESSAGE).max(2000).optional().or(z.literal('')),
+  // What the prep is, shown to the mentee. Optional; a generic title is used
+  // when it's left blank.
+  resourceTitle: z.string().trim().max(160).optional(),
 })
 
 // POST /api/mentorship/sessions/offer — a mentor proactively offers a
@@ -214,7 +230,7 @@ mentorshipRouter.post(
   asyncHandler(async (req, res) => {
     const parsed = offerSchema.safeParse(req.body)
     if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
-    const { menteeId, topic, date, time, meetingLink, scheduledAt, resourceLink, resourceRequiresSubmission } = parsed.data
+    const { menteeId, topic, date, time, meetingLink, scheduledAt, resourceLink, resourceTitle } = parsed.data
     const when = scheduledAt ? new Date(scheduledAt) : null
     // Same guard the PATCH edit route applies. The schema only proves the
     // string is a datetime, not that it is ahead of now -- and a past
@@ -290,7 +306,7 @@ mentorshipRouter.post(
     )
 
     if (resourceLink) {
-      await attachSessionResource(ins.rows[0].id, req.user!.sub, resourceLink, resourceRequiresSubmission)
+      await attachSessionResource(ins.rows[0].id, req.user!.sub, resourceLink, resourceTitle)
     }
 
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [ins.rows[0].id])
@@ -298,17 +314,16 @@ mentorshipRouter.post(
   }),
 )
 
-// A mentor attaching a resource link at the moment they create/confirm a
+// A mentor attaching a prep link at the moment they create/confirm a
 // session — offer and accept both call this, right after the session row
-// exists, so the resource can carry the real session_id. Title is generated
-// rather than asked for: the point was one input field, not a second form.
-async function attachSessionResource(
-  sessionId: string, mentorId: string, link: string, requiresSubmission: boolean,
-) {
+// exists, so the resource can carry the real session_id. The title is
+// optional — a blank one falls back to a generic label so the link still
+// has a name.
+async function attachSessionResource(sessionId: string, mentorId: string, link: string, title?: string) {
   await query(
-    `INSERT INTO career_resources (user_id, title, url, kind, session_id, requires_submission)
-     VALUES ($1, $2, $3, 'other', $4, $5)`,
-    [mentorId, 'Resource for this session', link, sessionId, requiresSubmission],
+    `INSERT INTO career_resources (user_id, title, url, kind, session_id)
+     VALUES ($1, $2, $3, 'other', $4)`,
+    [mentorId, title?.trim().slice(0, 160) || 'Prep for this session', link, sessionId],
   )
 }
 
@@ -351,17 +366,22 @@ mentorshipRouter.post(
       throw new ApiError(402, sub.blockedReason ?? 'Accepting a session needs an active plan.')
     }
 
-    const link = typeof req.body?.meetingLink === 'string' ? req.body.meetingLink.trim().slice(0, 500) : ''
+    const link = typeof req.body?.meetingLink === 'string' ? req.body.meetingLink.trim() : ''
+    // Confirming a session means telling the mentee where to join it.
+    if (!link) throw new ApiError(400, 'A meeting link is required to confirm the session')
+    if (link.length > 500 || !isHttpUrl(link)) {
+      throw new ApiError(400, 'The meeting link must be a full link, starting with https://')
+    }
     // scheduled_at is optional and additive: the free-text date/time labels
     // stay the source of truth for display, while this gives the profile
     // stats something they can actually count.
     const when = typeof req.body?.scheduledAt === 'string' ? new Date(req.body.scheduledAt) : null
     const scheduledAt = when && !Number.isNaN(when.getTime()) ? when : null
     const resourceLink = typeof req.body?.resourceLink === 'string' ? req.body.resourceLink.trim() : ''
-    if (resourceLink && !z.string().url().safeParse(resourceLink).success) {
+    const resourceTitle = typeof req.body?.resourceTitle === 'string' ? req.body.resourceTitle : undefined
+    if (resourceLink && !isHttpUrl(resourceLink)) {
       throw new ApiError(400, 'That resource link does not look like a valid URL')
     }
-    const resourceRequiresSubmission = req.body?.resourceRequiresSubmission === true
     await query(
       `UPDATE mentorship_sessions
           SET status = 'upcoming', meeting_link = $2, scheduled_at = COALESCE($3, scheduled_at),
@@ -379,7 +399,7 @@ mentorshipRouter.post(
       { type: 'session', id: req.params.id },
     )
     if (resourceLink) {
-      await attachSessionResource(req.params.id, req.user!.sub, resourceLink, resourceRequiresSubmission)
+      await attachSessionResource(req.params.id, req.user!.sub, resourceLink, resourceTitle)
     }
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
     res.json(mapSession(full.rows[0]))
@@ -393,31 +413,17 @@ const editSchema = z.object({
   scheduledAt: z.string().datetime({ offset: true }).or(z.string().datetime()).optional(),
   // .url() to match the two other meeting-link schemas in this file. Without
   // it a scheme-less "meet.google.com/abc" was stored and rendered as an
-  // app-relative href, so the join link led to a 404 inside the app. The
-  // empty string is allowed so the mentor can clear the link.
-  meetingLink: z.string().trim().url().max(500).optional().or(z.literal('')),
+  // app-relative href, so the join link led to a 404 inside the app. It can be
+  // changed but not cleared: a confirmed session always needs a way to join.
+  meetingLink: z
+    .string()
+    .trim()
+    .min(1, 'A meeting link is required — change it instead of removing it')
+    .url('The meeting link must be a full link, starting with https://')
+    .regex(HTTP_URL, HTTP_URL_MESSAGE)
+    .max(500)
+    .optional(),
 })
-
-/** The free-text labels the existing UI renders, derived from the real
- *  timestamp so the two can never disagree. If the card said "Thu 12 Jun"
- *  while scheduled_at pointed at Friday, the reminder would fire on the day
- *  nobody was expecting. Formatted in IST because that is what every label
- *  already in the table says, and what the audience is in. */
-function labelsFor(when: Date): { dateLabel: string; timeLabel: string } {
-  const opts = { timeZone: 'Asia/Kolkata' } as const
-  return {
-    // en-IN renders "Fri, 20 Nov, 2026" — the comma before the year is not
-    // how every label already in this table is written ("Fri, 26 Sep 2026"),
-    // and an edited session sitting next to an unedited one would look broken.
-    dateLabel: when
-      .toLocaleDateString('en-IN', { ...opts, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
-      .replace(/,(\s\d{4})$/, '$1'),
-    // en-IN gives a lowercase "pm"; existing labels are "8:00 PM IST".
-    timeLabel: `${when
-      .toLocaleTimeString('en-IN', { ...opts, hour: 'numeric', minute: '2-digit' })
-      .toUpperCase()} IST`,
-  }
-}
 
 // PATCH /api/mentorship/sessions/:id — the mentor edits a session they are
 // hosting: move it, rename the topic, or change the joining link.
@@ -536,8 +542,9 @@ mentorshipRouter.post(
   }),
 )
 
+// No '' any more: a link can be changed here, never cleared.
 const linkSchema = z.object({
-  meetingLink: z.string().trim().url().or(z.literal('')),
+  meetingLink: z.string().trim().url().regex(HTTP_URL, HTTP_URL_MESSAGE).max(500),
 })
 
 // POST /api/mentorship/sessions/:id/meeting-link — the mentor adds or
@@ -546,7 +553,7 @@ const linkSchema = z.object({
 // Until now a link could only be attached in the one instant the mentor
 // accepted a request, and only for requests — a mentor who confirmed without
 // one, or who offered the slot themselves, left the other side with a
-// "Confirmed" session and no way to join it. Passing '' clears the link.
+// "Confirmed" session and no way to join it.
 mentorshipRouter.post(
   '/sessions/:id/meeting-link',
   requireAuth,
@@ -715,6 +722,16 @@ mentorshipRouter.post(
     const durationMinutes = Number.isInteger(mins) && mins > 0 && mins <= 600 ? mins : null
     const domain = typeof req.body?.domain === 'string' ? req.body.domain.trim().slice(0, 60) : ''
 
+    // Optional follow-up task: the one place a resource that needs evidence
+    // is created. Prep attached before the session never asks for any.
+    const followUpUrl = typeof req.body?.followUpUrl === 'string' ? req.body.followUpUrl.trim() : ''
+    const followUpTitle =
+      (typeof req.body?.followUpTitle === 'string' ? req.body.followUpTitle.trim().slice(0, 160) : '') ||
+      'Follow-up task'
+    if (followUpUrl && (followUpUrl.length > 2000 || !isHttpUrl(followUpUrl))) {
+      throw new ApiError(400, 'That follow-up link does not look like a valid URL')
+    }
+
     // FOR UPDATE + one transaction: without it, a double-click or retried
     // request can both read status = 'upcoming' before either UPDATE
     // commits, both mark it completed, and both increment
@@ -745,6 +762,15 @@ mentorshipRouter.post(
         `UPDATE users SET sessions_conducted = COALESCE(sessions_conducted, 0) + 1 WHERE id = $1`,
         [req.user!.sub],
       )
+      // Same transaction as the completion: a completed session never loses
+      // its task, and a failed task insert never leaves it half-completed.
+      if (followUpUrl) {
+        await client.query(
+          `INSERT INTO career_resources (user_id, title, url, kind, session_id, requires_submission)
+           VALUES ($1, $2, $3, 'other', $4, TRUE)`,
+          [req.user!.sub, followUpTitle, followUpUrl, req.params.id],
+        )
+      }
       return r.rows[0]
     })
     // The mentee hasn't confirmed yet at this point (that's the next step),
@@ -756,7 +782,8 @@ mentorshipRouter.post(
     void pushNotification(
       s.mentee_id,
       'mentorship',
-      `Your session "${s.topic}" with ${me.rows[0].name} is marked completed — confirm it to add it to your learning record. 🎓`,
+      `Your session "${s.topic}" with ${me.rows[0].name} is marked completed — confirm it to add it to your learning record. 🎓` +
+        (followUpUrl ? ` They also set a follow-up task, "${followUpTitle}" — submit your evidence from the session's Resources.` : ''),
       req.user!.sub,
       { type: 'session', id: req.params.id },
     )
@@ -822,6 +849,83 @@ mentorshipRouter.get(
     // of viewing someone else's profile.
     if (req.params.userId === req.user!.sub) void refreshBadges(req.params.userId)
     res.json(await getProfileStats(req.params.userId))
+  }),
+)
+
+// --- Sessions waiting on the mentee's confirmation (admin) -------------------
+//
+// A session only counts toward either side's hours and badges once both have
+// said it happened. The mentor's half arrives with "Complete"; these are the
+// ones where the mentee never gave theirs, so they quietly count for nobody.
+
+const REMIND_EVERY_HOURS = 24
+
+// GET /api/mentorship/admin/pending-confirmations — oldest first, since the
+// longest-waiting ones are the likeliest to have been forgotten.
+mentorshipRouter.get(
+  '/admin/pending-confirmations',
+  requireAuth,
+  requireAdmin,
+  asyncHandler(async (_req, res) => {
+    const r = await query<PendingConfirmationRow>(
+      `SELECT s.id, s.topic, s.mentor_id, m.name AS mentor_name, s.mentee_id, e.name AS mentee_name,
+              s.date_label, s.ended_at, s.confirm_reminded_at
+         FROM mentorship_sessions s
+         JOIN users m ON m.id = s.mentor_id
+         JOIN users e ON e.id = s.mentee_id
+        WHERE s.status = 'past' AND s.mentor_confirmed AND NOT s.mentee_confirmed
+        ORDER BY s.ended_at ASC NULLS FIRST`,
+    )
+    res.json(r.rows.map(mapPendingConfirmation))
+  }),
+)
+
+// POST /api/mentorship/admin/sessions/:id/remind-confirm — nudge the mentee.
+// One UPDATE both checks and claims the reminder, so two admins clicking at
+// once can't both send one, and the 24-hour window can't be skipped.
+mentorshipRouter.post(
+  '/admin/sessions/:id/remind-confirm',
+  requireAuth,
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const r = await query<{ mentee_id: string; topic: string; mentor_name: string; confirm_reminded_at: Date }>(
+      `UPDATE mentorship_sessions s
+          SET confirm_reminded_at = now()
+         FROM users m
+        WHERE s.id = $1 AND m.id = s.mentor_id
+          AND s.status = 'past' AND s.mentor_confirmed AND NOT s.mentee_confirmed
+          AND (s.confirm_reminded_at IS NULL
+               OR s.confirm_reminded_at < now() - make_interval(hours => $2))
+        RETURNING s.mentee_id, s.topic, m.name AS mentor_name, s.confirm_reminded_at`,
+      [req.params.id, REMIND_EVERY_HOURS],
+    )
+    if (!r.rowCount) {
+      // Work out which condition actually failed, so the message is true.
+      const why = await query<{ mentee_confirmed: boolean; mentor_confirmed: boolean; status: string; recently: boolean }>(
+        `SELECT mentee_confirmed, mentor_confirmed, status,
+                confirm_reminded_at >= now() - make_interval(hours => $2) AS recently
+           FROM mentorship_sessions WHERE id = $1`,
+        [req.params.id, REMIND_EVERY_HOURS],
+      )
+      if (!why.rowCount) throw new ApiError(404, 'Session not found')
+      const w = why.rows[0]
+      if (w.status !== 'past' || !w.mentor_confirmed || w.mentee_confirmed) {
+        throw new ApiError(409, 'That session is no longer waiting on the mentee’s confirmation')
+      }
+      if (w.recently) throw new ApiError(429, `Already reminded in the last ${REMIND_EVERY_HOURS} hours`)
+      // Every condition passes now — it changed between the two queries. Ask
+      // for a retry rather than guess.
+      throw new ApiError(409, 'That session changed just now — refresh and try again')
+    }
+    const row = r.rows[0]
+    void pushNotification(
+      row.mentee_id,
+      'mentorship',
+      `Reminder: please confirm your session "${row.topic}" with ${row.mentor_name} happened — it only counts toward your learning record once you do.`,
+      req.user!.sub,
+      { type: 'session', id: req.params.id },
+    )
+    res.json({ remindedAt: new Date(row.confirm_reminded_at).toISOString() })
   }),
 )
 

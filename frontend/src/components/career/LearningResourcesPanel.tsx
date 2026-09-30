@@ -106,8 +106,8 @@ export function LearningResourcesPanel() {
     setResources((prev) => prev.filter((x) => x.id !== r.id))
     try {
       await api.deleteCareerResource(r.id)
-    } catch {
-      setError('Could not delete that resource.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not delete that resource.')
       void load()
     }
   }
@@ -288,13 +288,17 @@ function ResourceRow({
               </option>
             ))}
           </select>
-          <button
-            onClick={onDelete}
-            aria-label={`Delete ${resource.title}`}
-            className="rounded-full p-1.5 text-[#878a8c] hover:bg-red-50 hover:text-red-600"
-          >
-            <Trash2 size={13} />
-          </button>
+          {/* A finished session's resources are a record — the server refuses
+              the delete, so the button would only ever fail. */}
+          {!resource.sessionLocked && (
+            <button
+              onClick={onDelete}
+              aria-label={`Delete ${resource.title}`}
+              className="rounded-full p-1.5 text-[#878a8c] hover:bg-red-50 hover:text-red-600"
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
         </div>
       )}
     </li>

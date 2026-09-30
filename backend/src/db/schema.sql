@@ -1128,6 +1128,11 @@ ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPT
 -- request waits on the mentor, a mentor offer waits on the mentee.
 ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS requested_by TEXT NOT NULL DEFAULT 'mentee' CHECK (requested_by IN ('mentor', 'mentee'));
 
+-- When an admin last nudged the mentee to confirm a session the mentor has
+-- completed. Shown on the admin list ("reminded 2h ago") and used to allow at
+-- most one reminder per 24 hours, so repeated clicks can't spam the mentee.
+ALTER TABLE mentorship_sessions ADD COLUMN IF NOT EXISTS confirm_reminded_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_sessions_mentor_confirmed
   ON mentorship_sessions (mentor_id, confirmed_at DESC) WHERE confirmed_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_sessions_mentee_confirmed

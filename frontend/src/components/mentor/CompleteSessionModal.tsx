@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Clock, X } from 'lucide-react'
 import { Button } from '../ui'
 import { DOMAINS } from '../../types'
+import { isHttpUrl } from '../../lib/links'
 
 /**
  * Captures how long a session actually ran, and what it covered.
@@ -17,16 +18,38 @@ import { DOMAINS } from '../../types'
 export function CompleteSessionModal({
   topic,
   who,
+  allowFollowUp = false,
   onClose,
   onConfirm,
 }: {
   topic: string
   who: string
+  /** 1:1 sessions only: lets the mentor set a task that needs evidence. */
+  allowFollowUp?: boolean
   onClose: () => void
-  onConfirm: (durationMinutes: number, domain: string) => void
+  onConfirm: (durationMinutes: number, domain: string, followUp?: { title: string; url: string }) => void
 }) {
   const [minutes, setMinutes] = useState(60)
   const [domain, setDomain] = useState('')
+  const [taskTitle, setTaskTitle] = useState('')
+  const [taskUrl, setTaskUrl] = useState('')
+  const [taskError, setTaskError] = useState('')
+
+  function confirm() {
+    const url = taskUrl.trim()
+    // A title with no link would otherwise be dropped without a word — and the
+    // session is locked once completed, so the task could never be added later.
+    if (!url && taskTitle.trim()) {
+      setTaskError('Add the task’s link, or clear the title to complete without a task.')
+      return
+    }
+    if (!url) return onConfirm(minutes, domain)
+    if (!isHttpUrl(url)) {
+      setTaskError('The task link should start with http:// or https://')
+      return
+    }
+    onConfirm(minutes, domain, { title: taskTitle.trim(), url })
+  }
 
   const PRESETS = [30, 45, 60, 90]
 
@@ -86,6 +109,29 @@ export function CompleteSessionModal({
           ))}
         </select>
 
+        {allowFollowUp && (
+          <div className="mb-4 rounded-lg border border-[#edeff1] p-3">
+            <p className="text-xs font-semibold text-[#1c1c1c]">Follow-up task (optional)</p>
+            <p className="mb-2 text-xs text-[#878a8c]">
+              Something for {who} to do after the session. They'll submit a link as evidence.
+            </p>
+            <input
+              value={taskTitle}
+              onChange={(e) => { setTaskTitle(e.target.value); setTaskError('') }}
+              placeholder="Task — e.g. Build a small RAG demo"
+              maxLength={160}
+              className="mb-2 w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
+            />
+            <input
+              value={taskUrl}
+              onChange={(e) => { setTaskUrl(e.target.value); setTaskError('') }}
+              placeholder="Link to the brief — https://…"
+              className="w-full rounded-lg border border-[#edeff1] px-3 py-2 text-sm outline-none focus:border-[#ff4500]"
+            />
+            {taskError && <p className="mt-1.5 text-xs font-semibold text-red-600">{taskError}</p>}
+          </div>
+        )}
+
         <p className="mb-4 flex items-center gap-1.5 rounded-lg bg-gray-50 px-3 py-2 text-xs text-[#878a8c]">
           <Clock size={13} className="shrink-0" />
           {minutes} minutes will be added to your mentoring hours once {who} confirms.
@@ -95,7 +141,7 @@ export function CompleteSessionModal({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => onConfirm(minutes, domain)}>Mark completed</Button>
+          <Button onClick={confirm}>Mark completed</Button>
         </div>
       </div>
     </div>,

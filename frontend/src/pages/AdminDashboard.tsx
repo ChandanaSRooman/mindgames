@@ -24,6 +24,7 @@ import { AddUserForm } from '../components/admin/AddUserForm'
 import { AlumniTable } from '../components/admin/AlumniTable'
 import { InviteEmailTemplateModal } from '../components/admin/InviteEmailTemplateModal'
 import { SentInvitesPanel } from '../components/admin/SentInvitesPanel'
+import { PendingConfirmationsPanel } from '../components/admin/PendingConfirmationsPanel'
 import { Avatar, Button, Card } from '../components/ui'
 import { roleLine, timeAgo } from '../lib/format'
 
@@ -146,6 +147,8 @@ export function AdminDashboard() {
       {view === 'mentors' && <MentorApprovalsPanel />}
 
       {view === 'subscriptions' && <SubscriptionsPanel />}
+
+      {view === 'confirmations' && <PendingConfirmationsPanel />}
 
       {view === 'startups' && <StartupApplicationsPanel />}
 

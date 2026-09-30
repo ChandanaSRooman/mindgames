@@ -3,6 +3,7 @@ import { pool, withTransaction } from './pool.js'
 import { migrate } from './migrate.js'
 import { hashPassword } from '../auth/password.js'
 import { config } from '../config.js'
+import { labelsFor } from '../sessionLabels.js'
 import {
   seedCommunities,
   seedConnections,
@@ -19,6 +20,21 @@ import {
 } from './seed-data.js'
 
 const ME = 'me'
+
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000
+
+/** A seed session's real instant: `daysFromNow` days from today (in IST), at
+ *  an IST wall-clock time. Relative on purpose — fixed dates in the seed
+ *  drifted into the past and left "upcoming" sessions months overdue. */
+function seedInstant(daysFromNow: number, istTime: string): Date {
+  const [h, m] = istTime.split(':').map(Number)
+  const todayIst = new Date(Date.now() + IST_OFFSET_MS)
+  const utcMidnightOfIstDay = Date.UTC(
+    todayIst.getUTCFullYear(), todayIst.getUTCMonth(), todayIst.getUTCDate() + daysFromNow,
+  )
+  return new Date(utcMidnightOfIstDay + (h * 60 + m) * 60 * 1000 - IST_OFFSET_MS)
+}
+
 
 /**
  * Resets the database to the demo seed: TRUNCATES everything and re-inserts.
@@ -169,10 +185,12 @@ export async function seed(opts: { force?: boolean } = {}): Promise<void> {
     }
 
     for (const s of seedSessions) {
+      const when = seedInstant(s.days_from_now, s.ist_time)
+      const { dateLabel, timeLabel } = labelsFor(when)
       await client.query(
-        `INSERT INTO mentorship_sessions (id, mentor_id, mentee_id, topic, date_label, time_label, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [s.id, s.mentor_id, s.mentee_id, s.topic, s.date_label, s.time_label, s.status],
+        `INSERT INTO mentorship_sessions (id, mentor_id, mentee_id, topic, date_label, time_label, status, meeting_link, scheduled_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [s.id, s.mentor_id, s.mentee_id, s.topic, dateLabel, timeLabel, s.status, s.meeting_link, when],
       )
     }
 

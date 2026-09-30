@@ -175,15 +175,18 @@ export interface SeedSession {
   mentor_id: string
   mentee_id: string
   topic: string
-  date_label: string
-  time_label: string
+  /** Relative to when the seed runs, so "upcoming" never lands in the past. */
+  days_from_now: number
+  /** Wall-clock time in IST, "HH:MM". */
+  ist_time: string
+  meeting_link: string
   status: string
 }
 
 export const seedSessions: SeedSession[] = [
-  { id: 's1', mentor_id: 'a1', mentee_id: 'me', topic: 'System Design Interview Prep', date_label: 'Mon, 30 Jun 2026', time_label: '6:00 PM IST', status: 'upcoming' },
-  { id: 's2', mentor_id: 'a9', mentee_id: 'me', topic: 'AWS Architecture Deep-Dive', date_label: 'Fri, 4 Jul 2026', time_label: '7:30 PM IST', status: 'upcoming' },
-  { id: 's3', mentor_id: 'a4', mentee_id: 'me', topic: 'Breaking into Engineering Management', date_label: 'Thu, 12 Jun 2026', time_label: '5:00 PM IST', status: 'past' },
+  { id: 's1', mentor_id: 'a1', mentee_id: 'me', topic: 'System Design Interview Prep', days_from_now: 3, ist_time: '18:00', meeting_link: 'https://meet.google.com/rmn-sysd-prep', status: 'upcoming' },
+  { id: 's2', mentor_id: 'a9', mentee_id: 'me', topic: 'AWS Architecture Deep-Dive', days_from_now: 6, ist_time: '19:30', meeting_link: 'https://meet.google.com/rmn-aws-deep', status: 'upcoming' },
+  { id: 's3', mentor_id: 'a4', mentee_id: 'me', topic: 'Breaking into Engineering Management', days_from_now: -18, ist_time: '17:00', meeting_link: 'https://meet.google.com/rmn-eng-mgmt', status: 'past' },
 ]
 
 // Alumni whose mentor applications await admin approval.

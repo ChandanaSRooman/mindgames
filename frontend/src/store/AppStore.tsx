@@ -140,7 +140,7 @@ interface AppContextValue {
   offerSession: (
     menteeId: string, topic: string, date: string, time: string,
     meetingLink?: string, scheduledAt?: string,
-    resourceLink?: string, resourceRequiresSubmission?: boolean,
+    resourceLink?: string, resourceTitle?: string,
   ) => Promise<'ok' | 'payment-required' | 'error'>
   acceptSessionOffer: (id: string) => void
   declineSessionOffer: (id: string) => void
@@ -153,13 +153,17 @@ interface AppContextValue {
   /** 'payment-required' means the mentor needs a plan and the caller should
    *  open the pricing page; 'error' means it genuinely failed and has already
    *  been reported to the member, so the caller must not treat it as done. */
-  acceptSession: (
-    id: string, meetingLink?: string,
-    resourceLink?: string, resourceRequiresSubmission?: boolean,
-  ) => Promise<'ok' | 'payment-required' | 'error'>
+  acceptSession: (id: string, meetingLink?: string, resourceLink?: string, resourceTitle?: string) => Promise<'ok' | 'payment-required' | 'error'>
+  /** Keeps a session card's resource count in step after the Resources
+   *  modal adds or removes one, without refetching every session. */
+  setSessionResourceCount: (id: string, count: number) => void
   rateSession: (id: string, rating: number, review?: string) => void
   declineSession: (id: string) => void
-  completeSession: (id: string, durationMinutes?: number, domain?: string) => void
+  /** followUp: an optional task that needs evidence, set as the session closes. */
+  completeSession: (
+    id: string, durationMinutes?: number, domain?: string,
+    followUp?: { title: string; url: string },
+  ) => void
   /** Mentor-only: move a session, rename it, or change its joining link.
    *  scheduledAt is a real ISO instant — it is what makes the 6-hour
    *  reminder possible, since the date/time a session was booked with are
@@ -892,12 +896,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // mentor needs a plan, and the caller opens the pricing page instead of
   // showing a toast the member cannot act on.
   const acceptSession = useCallback(
-    async (
-      id: string, meetingLink?: string,
-      resourceLink?: string, resourceRequiresSubmission?: boolean,
-    ): Promise<'ok' | 'payment-required' | 'error'> => {
+    async (id: string, meetingLink?: string, resourceLink?: string, resourceTitle?: string): Promise<'ok' | 'payment-required' | 'error'> => {
       try {
-        const updated = await api.acceptSession(id, meetingLink, resourceLink, resourceRequiresSubmission)
+        const updated = await api.acceptSession(id, meetingLink, resourceLink, resourceTitle)
         setSessions((list) => list.map((s) => (s.id === updated.id ? updated : s)))
         notify('Session confirmed. The mentee has been notified.')
         return 'ok'
@@ -913,6 +914,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [notify],
   )
+  const setSessionResourceCount = useCallback((id: string, count: number) => {
+    // Returns the same array when nothing changed, so opening the modal on a
+    // session whose count is already right doesn't re-render every card.
+    setSessions((list) =>
+      list.some((s) => s.id === id && s.resourceCount !== count)
+        ? list.map((s) => (s.id === id ? { ...s, resourceCount: count } : s))
+        : list,
+    )
+  }, [])
+
   // A mentor offering a slot is gated by the same plan check as accepting a
   // request, so this reports 'payment-required' the same way acceptSession
   // does rather than showing a toast the mentor can't act on.
@@ -920,13 +931,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (
       menteeId: string, topic: string, date: string, time: string,
       meetingLink?: string, scheduledAt?: string,
-      resourceLink?: string, resourceRequiresSubmission?: boolean,
+      resourceLink?: string, resourceTitle?: string,
     ): Promise<'ok' | 'payment-required' | 'error'> => {
       try {
-        const session = await api.offerSession(
-          menteeId, topic, date, time, meetingLink, scheduledAt,
-          resourceLink, resourceRequiresSubmission,
-        )
+        const session = await api.offerSession(menteeId, topic, date, time, meetingLink, scheduledAt, resourceLink, resourceTitle)
         setSessions((s) => [session, ...s])
         notify('Session offered — waiting for them to accept.')
         return 'ok'
@@ -984,9 +992,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [sessionAction],
   )
   const completeSession = useCallback(
-    (id: string, durationMinutes?: number, domain?: string) => {
+    (id: string, durationMinutes?: number, domain?: string, followUp?: { title: string; url: string }) => {
       sessionAction(
-        api.completeSession(id, durationMinutes, domain),
+        api.completeSession(id, durationMinutes, domain, followUp),
         'Session marked completed — waiting for your mentee to confirm it. 🎓',
       )
       // reflect the mentor's new session count locally
@@ -1340,6 +1348,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     cancelSession,
     setSessionMeetingLink,
     acceptSession,
+    setSessionResourceCount,
     rateSession,
     declineSession,
     completeSession,

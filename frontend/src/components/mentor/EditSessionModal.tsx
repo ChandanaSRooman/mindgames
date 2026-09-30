@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { CalendarClock, X } from 'lucide-react'
 import { Button } from '../ui'
 import type { MentorshipSession } from '../../types'
+import { isHttpUrl } from '../../lib/links'
 
 /**
  * Lets the mentor move a session, rename it, or change its joining link.
@@ -40,6 +41,15 @@ export function EditSessionModal({
   function save() {
     if (halfATime) {
       setError('Pick both a date and a time, or leave both blank.')
+      return
+    }
+    // Changeable, never removable: a confirmed session needs a way to join.
+    if (!link.trim()) {
+      setError('A meeting link is required — change it instead of removing it.')
+      return
+    }
+    if (!isHttpUrl(link.trim())) {
+      setError('The meeting link must be a full link, starting with https://')
       return
     }
     const changes: { topic?: string; scheduledAt?: string; meetingLink?: string } = {}
@@ -112,7 +122,9 @@ export function EditSessionModal({
           />
         </div>
 
-        <label className="mb-1 block text-xs font-semibold text-[#1c1c1c]">Meeting link</label>
+        <label className="mb-1 block text-xs font-semibold text-[#1c1c1c]">
+          Meeting link <span className="text-red-500">*</span>
+        </label>
         <input
           value={link}
           onChange={(e) => setLink(e.target.value)}
