@@ -31,7 +31,7 @@ const NAV = [
   // Explore and "Start a Community" are one entry: the Explore page already
   // has its own Start a Community button, so a separate sidebar item was a
   // second door to the same room.
-  { to: '/explore', label: 'Communities', icon: Compass },
+  { to: '/explore', label: 'Explore Communities', icon: Compass },
 ]
 
 export function LeftSidebar() {
@@ -97,30 +97,31 @@ export function LeftSidebar() {
         )}
       </nav>
 
-      <div className="my-4 border-t border-[#edeff1]" />
+      {joined.length > 0 && (
+        <>
+          <div className="my-4 border-t border-[#edeff1]" />
 
-      <p className="px-3 pb-2 text-xs font-bold uppercase tracking-wide text-[#878a8c]">
-        My Communities
-      </p>
-      <div className="flex flex-col gap-0.5">
-        {joined.map((c) => (
-          <NavLink
-            key={c.id}
-            to={`/community/${c.id}`}
-            className={({ isActive }) =>
-              `flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
-                isActive ? 'bg-orange-50 text-[#ff4500]' : 'text-[#1c1c1c] hover:bg-gray-100'
-              }`
-            }
-          >
-            <span className={`h-6 w-6 shrink-0 rounded-full bg-gradient-to-br ${c.color}`} />
-            <span className="truncate">{c.name}</span>
-          </NavLink>
-        ))}
-        {joined.length === 0 && (
-          <p className="px-3 text-xs text-[#878a8c]">You haven’t joined any communities yet.</p>
-        )}
-      </div>
+          <p className="px-3 pb-2 text-xs font-bold uppercase tracking-wide text-[#878a8c]">
+            My Communities
+          </p>
+          <div className="flex flex-col gap-0.5">
+            {joined.map((c) => (
+              <NavLink
+                key={c.id}
+                to={`/community/${c.id}`}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
+                    isActive ? 'bg-orange-50 text-[#ff4500]' : 'text-[#1c1c1c] hover:bg-gray-100'
+                  }`
+                }
+              >
+                <span className={`h-6 w-6 shrink-0 rounded-full bg-gradient-to-br ${c.color}`} />
+                <span className="truncate">{c.name}</span>
+              </NavLink>
+            ))}
+          </div>
+        </>
+      )}
     </aside>
     </>
   )
