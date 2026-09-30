@@ -63,6 +63,15 @@ function isSessionOver(status: string | null | undefined): boolean {
   return !!status && status !== 'requested' && status !== 'upcoming'
 }
 
+/** Whether a session's existing resources are frozen against edit/delete.
+ *  Narrower than isSessionOver: only a completed ('past') session can hold a
+ *  mentee's evidence worth protecting. A cancelled/declined one never reached
+ *  /complete, so its prep stays removable — otherwise it is stuck for good.
+ *  Keep in step with sessionLocked in mappers.ts. */
+function isSessionLocked(status: string | null | undefined): boolean {
+  return status === 'past'
+}
+
 /** Attaching to a session is the mentor's job; the mentee's side is POST
  *  /:id/submit. Enforced here, not just by hiding the form in the UI, so a
  *  direct API call can't get around it. */
@@ -252,7 +261,7 @@ careerResourcesRouter.patch(
       // still tick it done or make it public — their own bookkeeping — but not
       // rewrite it.
       const changesContent = d.title !== undefined || d.url !== undefined || d.note !== undefined || d.kind !== undefined
-      if (changesContent && isSessionOver(c.session_status)) {
+      if (changesContent && isSessionLocked(c.session_status)) {
         throw new ApiError(409, 'This session is over — what was assigned can no longer be changed')
       }
     }
@@ -339,7 +348,7 @@ careerResourcesRouter.delete(
         WHERE r.id = $1 AND r.user_id = $2
           AND (r.session_id IS NULL OR EXISTS (
                 SELECT 1 FROM mentorship_sessions s
-                 WHERE s.id = r.session_id AND s.status IN ('requested', 'upcoming')))
+                 WHERE s.id = r.session_id AND s.status <> 'past'))
         RETURNING r.id`,
       [req.params.id, req.user!.sub],
     )

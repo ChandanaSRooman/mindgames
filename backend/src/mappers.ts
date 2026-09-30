@@ -880,7 +880,8 @@ export function mapCareerResource(r: CareerResourceRow) {
     sessionTopic: r.session_topic ?? undefined,
     // Lets the UI hide edit/delete on a finished session's resources, which
     // the server refuses anyway (they're a record of what was assigned).
-    sessionLocked: r.session_id ? !['requested', 'upcoming'].includes(r.session_status ?? '') : false,
+    // Only 'past' locks — mirrors isSessionLocked in careerResources.routes.ts.
+    sessionLocked: r.session_id ? r.session_status === 'past' : false,
   }
 }
 
