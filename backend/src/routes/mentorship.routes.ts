@@ -821,7 +821,7 @@ mentorshipRouter.post(
       'mentorship',
       `You just helped someone through "${s.topic}". Share what you recommended with everyone on that stage?`,
       undefined,
-      { type: 'resource', id: req.params.id },
+      { type: 'learning_session', id: req.params.id },
     )
 
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])

@@ -33,10 +33,19 @@ export function notificationLink(n: AppNotification, fallback: string): string {
       return `/profile/${n.targetId}`
     case 'company':
       return `/companies/${n.targetId}`
-    // A resource assigned directly (or its submission) — it lives in the
-    // Learning Resources page's lists, which have no per-item route.
+    // Learning Resources: a resource assigned to you, a share of yours that
+    // helped someone, a stage where members are waiting, or a nudge to share
+    // what you recommended in a session. All live in that page's lists, which
+    // have no per-item route.
     case 'resource':
+    case 'learning_share':
+    case 'learning_topic':
+    case 'learning_session':
       return '/learning-resources'
+    // Work a mentee sent back on something you assigned directly: Mentor
+    // Space's "Assign resource" lists what you assigned and what came back.
+    case 'assignment':
+      return '/mentorship'
     // No per-item route exists for these yet. Storing the target now means
     // adding one later is a change to this function alone.
     case 'event':

@@ -103,6 +103,13 @@ export const isPaymentRequired = (err: unknown): err is HttpError =>
   err instanceof HttpError && err.status === 402
 
 // ---- Low-level fetch --------------------------------------------------------
+/** "?after=<id>&afterAt=<createdAt>" for a keyset-paged list, or "" for its
+ *  first page. The timestamp lets the server keep its place when the row the
+ *  client last saw has been deleted in the meantime. */
+function afterQuery(after?: { id: string; createdAt: string }): string {
+  return after ? `?${new URLSearchParams({ after: after.id, afterAt: after.createdAt })}` : ''
+}
+
 async function http<T>(url: string, options?: RequestInit): Promise<T> {
   const token = getToken()
   const res = await fetch(url, {
@@ -788,14 +795,19 @@ export const api = {
   // attached to a mentorship session they are a party to. Passing a sessionId
   // narrows it to that one session, which is what the session view uses.
   // Without a sessionId it is paged: `limit` rows (server default 20, max 50)
-  // older than `after`, the id of the last row already shown. A page shorter
+  // older than `after`, the id of the last row already shown — with `afterAt`,
+  // its createdAt, so paging survives that row being deleted. A page shorter
   // than the limit is the last one. `saved` keeps only what the member kept for
   // themselves — the Learning page's Saved Resources list.
-  getCareerResources: (sessionId?: string, page?: { limit?: number; after?: string; saved?: boolean }) => {
+  getCareerResources: (
+    sessionId?: string,
+    page?: { limit?: number; after?: string; afterAt?: string; saved?: boolean },
+  ) => {
     const q = new URLSearchParams()
     if (sessionId) q.set('sessionId', sessionId)
     if (page?.limit) q.set('limit', String(page.limit))
     if (page?.after) q.set('after', page.after)
+    if (page?.after && page.afterAt) q.set('afterAt', page.afterAt)
     if (page?.saved) q.set('scope', 'saved')
     const qs = q.toString()
     return http<CareerResource[]>(`/api/career-resources${qs ? `?${qs}` : ''}`)
@@ -828,6 +840,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ url }),
     }),
+  // A mentor's side of direct assignments: what they gave this member without
+  // a session, and the work sent back (submissionUrl). Newest first, up to 50.
+  getAssignedByMe: (menteeId: string) =>
+    http<CareerResource[]>(`/api/career-resources/assigned-by-me?menteeId=${encodeURIComponent(menteeId)}`),
 
   // ---- Learning hub (Learning Resources page) --------------------------------
   // One call on open: roadmap, banner data and the tab counts.
@@ -839,13 +855,15 @@ export const api = {
     if (stepKey) q.set('stepKey', stepKey)
     return http<StageShares>(`/api/learning/stage?${q}`)
   },
-  getLearningAssigned: (after?: string) =>
-    http<CareerResource[]>(`/api/learning/assigned${after ? `?after=${encodeURIComponent(after)}` : ''}`),
+  // `after` is the last row already shown — its id and createdAt, so paging
+  // survives that row being deleted.
+  getLearningAssigned: (after?: Pick<CareerResource, 'id' | 'createdAt'>) =>
+    http<CareerResource[]>(`/api/learning/assigned${afterQuery(after)}`),
   // The alum's side: stages this member can speak to, and where members are
   // waiting with nothing shared yet.
   getContributeStages: () => http<{ stages: ContributeStage[] }>('/api/learning/contribute'),
-  getMyShares: (after?: string) =>
-    http<LearningShare[]>(`/api/learning/mine${after ? `?after=${encodeURIComponent(after)}` : ''}`),
+  getMyShares: (after?: Pick<LearningShare, 'id' | 'createdAt'>) =>
+    http<LearningShare[]>(`/api/learning/mine${afterQuery(after)}`),
   // "All Resources": the whole network's shares, narrowed by the search box and
   // the Filter-by panel. `after` is the last item already shown — its id, plus
   // the position it was seen at, so paging survives that item being deleted;

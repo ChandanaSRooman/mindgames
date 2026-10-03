@@ -169,3 +169,31 @@ export function pageLimit(value: unknown, fallback = 20, max = 50): number {
   if (!Number.isFinite(n) || n < 1) return fallback
   return Math.min(Math.floor(n), max)
 }
+
+/** Parses ?afterAt= — the created_at the client SAW the last row at, sent with
+ *  ?after=<id> so paging survives that row being deleted (its own created_at
+ *  can no longer be looked up then). Null unless it is a real timestamp. */
+export function afterAtParam(value: unknown): string | null {
+  return typeof value === 'string' && value && !Number.isNaN(Date.parse(value)) ? value : null
+}
+
+/**
+ * The keyset cursor for a list ordered by (created_at DESC, id DESC), as SQL.
+ *
+ * The last row's own (created_at, id) when it still exists — exact. When it
+ * has been deleted since the page was shown (a mentor removed an assignment, an
+ * author took a share back), the position the client saw it at instead. That
+ * timestamp is millisecond-precise and the column microsecond, so it is rounded
+ * UP to the end of its millisecond: nothing older can be skipped, and at worst
+ * a row from that same millisecond is sent twice, which the client drops by id.
+ * Without the fallback the lookup comes back empty, every comparison against
+ * it is NULL, and "Load more" returns nothing — the list looks finished.
+ */
+export function cursorRowSql(table: string, idParam: string, atParam: string): string {
+  return `SELECT created_at, id FROM ${table} WHERE id = ${idParam}
+     UNION ALL
+     SELECT ${atParam}::timestamptz + interval '999 microseconds', ${idParam}::text
+      WHERE ${atParam}::timestamptz IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM ${table} WHERE id = ${idParam})
+     LIMIT 1`
+}

@@ -44,15 +44,17 @@ export function StageView({
   const [state, setState] = useState<'loading' | 'ready' | 'failed' | 'none'>('loading')
   const [more, setMore] = useState(false)
   const [loading, setLoading] = useState(false)
-  // Answers for a stage the member has already clicked away from are ignored.
-  const wanted = useRef(stepKey)
-  wanted.current = stepKey
+  // Bumped on every fresh load (a new stage, or a reload of the same one), so
+  // an answer to a request from before it is ignored — comparing the stage key
+  // alone would let a pre-reload answer for the same stage land.
+  const gen = useRef(0)
 
   const loadPage = useCallback(async (key: string, offset: number) => {
+    const g = gen.current
     setLoading(true)
     try {
       const r = await api.getLearningStage(key, offset)
-      if (wanted.current !== key) return
+      if (gen.current !== g) return
       setShares((prev) => (offset === 0 ? r.shares : appendPage(prev, r.shares)))
       if (offset === 0) {
         setAlumni(r.alumni)
@@ -61,16 +63,17 @@ export function StageView({
       setMore(r.shares.length === PAGE)
       setState('ready')
     } catch {
-      if (wanted.current === key) {
+      if (gen.current === g) {
         setState('failed')
         setMore(false)
       }
     } finally {
-      if (wanted.current === key) setLoading(false)
+      if (gen.current === g) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
+    gen.current += 1
     setShares([])
     setAlumni([])
     if (!stepKey) {

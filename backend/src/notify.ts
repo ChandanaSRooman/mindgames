@@ -21,7 +21,15 @@ type NotificationType =
  * the column — see the comment in schema.sql.
  */
 export type NotificationTarget = {
-  type: 'post' | 'event' | 'community' | 'user' | 'company' | 'startup' | 'session' | 'conversation' | 'resource'
+  type:
+    | 'post' | 'event' | 'community' | 'user' | 'company' | 'startup' | 'session' | 'conversation'
+    // Learning Resources. One kind of id per type, so a per-item link added
+    // later can trust what the id is:
+    | 'resource'          // career_resources id — something assigned TO the recipient
+    | 'assignment'        // career_resources id — something the recipient (a mentor) assigned
+    | 'learning_share'    // learning_shares id
+    | 'learning_topic'    // learning_topics topic_key — a stage members are waiting on
+    | 'learning_session'  // mentorship_sessions id — "share what you recommended in it"
   id: string
 }
 

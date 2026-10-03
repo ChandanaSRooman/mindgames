@@ -6,7 +6,7 @@ import { ApiError, asyncHandler } from '../http.js'
 import { pushNotification } from '../notify.js'
 import { HTTP_URL, HTTP_URL_MESSAGE } from '../validation.js'
 import { mapCareerResource, mapPublicCareerResource, type CareerResourceRow } from '../mappers.js'
-import { pageLimit } from '../learning.js'
+import { afterAtParam, cursorRowSql, pageLimit } from '../learning.js'
 import { RESOURCE_SELECT } from '../resourceQueries.js'
 
 /**
@@ -44,8 +44,10 @@ const STATUSES = ['saved', 'in_progress', 'done'] as const
 // second half skips rows the caller owns, so nothing is listed twice.
 //
 // Paging is keyset: $2 is the id of the last row the client already has, and
-// its exact (created_at, id) is looked up by primary key. Each half stops at
-// $3 rows, so the merge reads at most 2 × $3 ids whatever the list's length.
+// its exact (created_at, id) is looked up by primary key — or, if that row has
+// since been deleted, $5 is where the client saw it (see cursorRowSql). Each
+// half stops at $3 rows, so the merge reads at most 2 × $3 ids whatever the
+// list's length.
 //
 // $4 = saved only, for the Learning page's "Saved Resources": just what the
 // member kept for themselves. It drops the "assigned to me" half (mentors'
@@ -53,7 +55,7 @@ const STATUSES = ['saved', 'in_progress', 'done'] as const
 // they assigned to SOMEONE ELSE as a mentor — that is their outgoing work,
 // not something they saved.
 const VISIBLE_PAGE = `
-  cursor_row AS (SELECT created_at, id FROM career_resources WHERE id = $2),
+  cursor_row AS (${cursorRowSql('career_resources', '$2', '$5')}),
   visible AS (
     (SELECT r.id FROM career_resources r
       WHERE r.user_id = $1
@@ -187,7 +189,8 @@ const updateSchema = z.object({
 // GET /api/career-resources — what I can see, newest first, one page at a time.
 //
 // ?limit= (default 20, max 50) and ?after=<id of the last row you have> page
-// through it; a page shorter than the limit is the last one. The response is
+// through it (plus ?afterAt=<its createdAt>, so a deleted last row doesn't end
+// the list); a page shorter than the limit is the last one. The response is
 // still a plain array, so every existing reader keeps working unchanged.
 //
 // ?scope=saved lists only what the caller kept for themselves (see VISIBLE_PAGE).
@@ -217,12 +220,13 @@ careerResourcesRouter.get(
 
     const limit = pageLimit(req.query.limit)
     const after = typeof req.query.after === 'string' && req.query.after ? req.query.after : null
+    const afterAt = after ? afterAtParam(req.query.afterAt) : null
     const r = await query<CareerResourceRow>(
       `WITH ${VISIBLE_PAGE}
        ${SELECT} WHERE r.id IN (SELECT id FROM visible)
        ORDER BY r.created_at DESC, r.id DESC
        LIMIT $3`,
-      [me, after, limit, savedOnly],
+      [me, after, limit, savedOnly, afterAt],
     )
     res.json(r.rows.map(mapCareerResource))
   }),
@@ -266,6 +270,30 @@ careerResourcesRouter.get(
       if (row.step_key) byStage[row.step_key] = { total: row.total, done: row.done }
     }
     res.json({ count, done, byStage })
+  }),
+)
+
+// GET /api/career-resources/assigned-by-me?menteeId= — what I, as a mentor,
+// assigned straight to this member (no session), with whatever they sent back.
+//
+// The mentor's side of a direct assignment. Session resources already have
+// theirs (the session's Resources view); without this, a mentor who asked for
+// proof of work had nowhere to see it, edit what they assigned, or remove it.
+// Only the caller's own rows (user_id = me), so it needs no other check. One
+// walk of idx_career_resources_assigned over that member's incoming rows,
+// capped. Mounted before the '/:id' routes so "assigned-by-me" is never an id.
+careerResourcesRouter.get(
+  '/assigned-by-me',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const menteeId = typeof req.query.menteeId === 'string' ? req.query.menteeId : ''
+    if (!menteeId) throw new ApiError(400, 'Which member?')
+    const r = await query<CareerResourceRow>(
+      `${SELECT} WHERE r.assigned_to = $1 AND r.user_id = $2 AND r.session_id IS NULL
+        ORDER BY r.created_at DESC, r.id DESC LIMIT 50`,
+      [menteeId, req.user!.sub],
+    )
+    res.json(r.rows.map(mapCareerResource))
   }),
 )
 
@@ -414,23 +442,33 @@ careerResourcesRouter.patch(
     if (!cur.rowCount) throw new ApiError(404, 'Resource not found (or not yours)')
     const c = cur.rows[0]
 
-    if (c.session_id || c.assigned_to) {
+    const changesContent = d.title !== undefined || d.url !== undefined || d.note !== undefined || d.kind !== undefined
+    const assigned = !!(c.session_id || c.assigned_to)
+    if (assigned) {
       // Something handed to a mentee has to stay openable.
       if (d.url === null) throw new ApiError(400, 'An assigned resource needs a link — change it instead of removing it')
       // Once the session is over — or, for a direct assignment, once the
       // mentee has submitted — what was assigned is a record. The owner can
       // still tick it done or make it public — their own bookkeeping — but not
       // rewrite it.
-      const changesContent = d.title !== undefined || d.url !== undefined || d.note !== undefined || d.kind !== undefined
       if (changesContent && isLocked(c)) {
         throw new ApiError(409, 'This has been completed — what was assigned can no longer be changed')
       }
     }
 
-    await query(
-      `UPDATE career_resources
+    // The lock is checked again inside the UPDATE ($8): the mentee can submit,
+    // or the session finish, between the read above and this write, and the
+    // check and the write must be one step or that window rewrites a record.
+    // Same rule as isLocked and the DELETE below.
+    const upd = await query(
+      `UPDATE career_resources r
           SET title = $2, url = $3, note = $4, kind = $5, status = $6, is_public = $7, updated_at = now()
-        WHERE id = $1`,
+        WHERE r.id = $1
+          AND (NOT $8::boolean
+               OR CASE WHEN r.session_id IS NOT NULL
+                       THEN NOT EXISTS (SELECT 1 FROM mentorship_sessions s
+                                         WHERE s.id = r.session_id AND s.status = 'past')
+                       ELSE r.assigned_to IS NULL OR r.submission_url IS NULL END)`,
       [
         req.params.id,
         d.title ?? c.title,
@@ -439,8 +477,10 @@ careerResourcesRouter.patch(
         d.kind ?? c.kind,
         d.status ?? c.status,
         d.isPublic ?? c.is_public,
+        assigned && changesContent,
       ],
     )
+    if (!upd.rowCount) throw new ApiError(409, 'This has been completed — what was assigned can no longer be changed')
     const full = await query<CareerResourceRow>(`${SELECT} WHERE r.id = $1`, [req.params.id])
     res.json(mapCareerResource(full.rows[0]))
   }),
@@ -484,10 +524,11 @@ careerResourcesRouter.post(
       me,
       // The session when there is one (a 'session' target is resolved as a
       // session id wherever it is opened); a direct assignment points at the
-      // resource itself.
+      // resource itself, as the mentor's own 'assignment' — it opens Mentor
+      // Space, where they can see what was sent back.
       cur.rows[0].session_id
         ? { type: 'session', id: cur.rows[0].session_id }
-        : { type: 'resource', id: req.params.id },
+        : { type: 'assignment', id: req.params.id },
     )
 
     const full = await query<CareerResourceRow>(`${SELECT} WHERE r.id = $1`, [req.params.id])

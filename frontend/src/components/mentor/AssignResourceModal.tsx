@@ -6,6 +6,7 @@ import { isHttpUrl } from '../../lib/links'
 import { useApp } from '../../store/AppStore'
 import { Button, Card } from '../ui'
 import type { CareerResourceKind } from '../../types'
+import { AssignedByMeList } from './AssignedByMeList'
 
 const KINDS: { value: CareerResourceKind; label: string }[] = [
   { value: 'article', label: 'Article' },
@@ -19,7 +20,8 @@ const KINDS: { value: CareerResourceKind; label: string }[] = [
 /**
  * A mentor assigning a resource straight to one of their mentees — no session
  * needed. It lands in the mentee's "Assigned to You" with a notification; the
- * server checks the two have had an agreed session.
+ * server checks the two have had an agreed session. Below the form, what the
+ * mentor already assigned this member and any work sent back.
  */
 export function AssignResourceModal({
   menteeId,
@@ -124,6 +126,7 @@ export function AssignResourceModal({
             </Button>
           </div>
         </div>
+        <AssignedByMeList menteeId={menteeId} menteeName={menteeName} />
       </Card>
     </div>,
     document.body,

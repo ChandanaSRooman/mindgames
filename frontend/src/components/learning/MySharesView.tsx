@@ -28,7 +28,7 @@ export function MySharesView({
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
 
-  const loadPage = useCallback(async (after?: string) => {
+  const loadPage = useCallback(async (after?: LearningShare) => {
     setLoading(true)
     try {
       const page = await api.getMyShares(after)
@@ -83,7 +83,7 @@ export function MySharesView({
           ))}
         </CardGrid>
       )}
-      {more && rows && <LoadMore loading={loading} onClick={() => void loadPage(rows[rows.length - 1]?.id)} />}
+      {more && rows && <LoadMore loading={loading} onClick={() => void loadPage(rows[rows.length - 1])} />}
     </section>
   )
 }

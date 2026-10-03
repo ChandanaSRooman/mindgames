@@ -795,6 +795,10 @@ export type NotificationTargetType =
   | 'session'
   | 'conversation'
   | 'resource'
+  | 'assignment'
+  | 'learning_share'
+  | 'learning_topic'
+  | 'learning_session'
 
 export interface AppNotification {
   id: string

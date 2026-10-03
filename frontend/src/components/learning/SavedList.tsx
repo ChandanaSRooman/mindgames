@@ -25,10 +25,15 @@ export function SavedList({ onCountChange }: { onCountChange: (delta: number) =>
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
 
-  const loadPage = useCallback(async (after?: string) => {
+  const loadPage = useCallback(async (after?: CareerResource) => {
     setLoading(true)
     try {
-      const page = await api.getCareerResources(undefined, { limit: PAGE, after, saved: true })
+      const page = await api.getCareerResources(undefined, {
+        limit: PAGE,
+        after: after?.id,
+        afterAt: after?.createdAt,
+        saved: true,
+      })
       setRows((prev) => (after ? appendPage(prev ?? [], page) : page))
       setMore(page.length === PAGE)
       setFailed(false)
@@ -103,7 +108,7 @@ export function SavedList({ onCountChange }: { onCountChange: (delta: number) =>
           ))}
         </ul>
       )}
-      {more && rows && <LoadMore loading={loading} onClick={() => void loadPage(rows[rows.length - 1]?.id)} />}
+      {more && rows && <LoadMore loading={loading} onClick={() => void loadPage(rows[rows.length - 1])} />}
     </section>
   )
 }

@@ -26,6 +26,7 @@ import { careerRouter } from './routes/career.routes.js'
 import { careerResourcesRouter } from './routes/careerResources.routes.js'
 import { learningRouter } from './routes/learning.routes.js'
 import { startLearningNudgeScheduler } from './learningNudge.js'
+import { backfillSessionAssignees } from './resourceAssignees.js'
 import { subscriptionRouter } from './routes/subscription.routes.js'
 import { groupSessionsRouter } from './routes/groupSessions.routes.js'
 import { backfillCareerPaths } from './careerPaths.js'
@@ -86,6 +87,9 @@ startDigestScheduler()
 startEventReminderScheduler()
 startSessionReminderScheduler()
 startLearningNudgeScheduler()
+// Session resources written by the previous build during the deploy window
+// get their recipient now that this build is the one running.
+void backfillSessionAssignees()
 
 // Resolve the address for email links BEFORE accepting requests. Awaiting it
 // is what makes that guarantee true: fire-and-forget left a window in which a

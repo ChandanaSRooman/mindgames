@@ -10,6 +10,8 @@ import { workableStages } from '../careerProgress.js'
 import { loadRoadmapCore, type LoadedRoadmap } from '../roadmap.js'
 import { RESOURCE_SELECT } from '../resourceQueries.js'
 import {
+  afterAtParam,
+  cursorRowSql,
   PROJECT_ABOUT_MIN,
   PROJECT_DIFFICULTIES,
   REPORTS_TO_HIDE,
@@ -111,39 +113,46 @@ async function loadPlan(userId: string): Promise<MyPlan | null> {
  * are waiting for help. So it adds them to new topics AND takes them off topics
  * their roadmap no longer has (a regenerated or deleted plan) — otherwise
  * "4 members are on this step" would count everyone who was ever there.
- * Every statement is idempotent: a repeat page view writes nothing.
+ * Every statement is idempotent: a repeat page view writes nothing. The three
+ * run as one transaction, so a failure part-way can't leave the member taken
+ * off their old stages without being put on the new ones.
  */
 async function registerTopics(plan: MyPlan | null, userId: string): Promise<void> {
-  const keys = plan ? [...new Set(plan.stages.map((s) => s.topicKey))] : []
-  // Off any topic not in the current plan — one walk of
-  // idx_learning_topic_members_user over this member's own handful of rows.
-  // member_count follows automatically: a trigger in schema.sql keeps it.
-  await query(
-    `DELETE FROM learning_topic_members
-      WHERE user_id = $2 AND NOT (topic_key = ANY($1::text[]))`,
-    [keys, userId],
-  )
-  if (!plan || !keys.length) return
-  const labels = keys.map((k) => plan.stages.find((s) => s.topicKey === k)!.title.slice(0, 200))
-  // The role is stored by the same rule a member's job title is compared with
-  // (designationKey), because the nudge job and the contribute list match
-  // members' designations against it.
-  const role = designationKey(plan.targetRole) || 'general'
-  await query(
-    `INSERT INTO learning_topics (topic_key, role_label, stage_label)
-     SELECT k, $2, label FROM unnest($1::text[], $3::text[]) AS t(k, label)
-     ON CONFLICT (topic_key) DO NOTHING`,
-    [keys, role.slice(0, 120), labels],
-  )
-  // The pair is the primary key, so only a member's FIRST arrival on a topic
-  // inserts a row — and only an inserted row moves member_count (the trigger)
-  // — so a repeat page view writes nothing and nobody is counted twice.
-  await query(
-    `INSERT INTO learning_topic_members (topic_key, user_id)
-     SELECT k, $2 FROM unnest($1::text[]) AS t(k)
-     ON CONFLICT DO NOTHING`,
-    [keys, userId],
-  )
+  // Sorted: the member_count trigger locks each topic row it moves, and two
+  // members sharing topics must take those locks in the same order, or their
+  // transactions could deadlock waiting on each other.
+  const keys = plan ? [...new Set(plan.stages.map((s) => s.topicKey))].sort() : []
+  await withTransaction(async (client) => {
+    // Off any topic not in the current plan — one walk of
+    // idx_learning_topic_members_user over this member's own handful of rows.
+    // member_count follows automatically: a trigger in schema.sql keeps it.
+    await client.query(
+      `DELETE FROM learning_topic_members
+        WHERE user_id = $2 AND NOT (topic_key = ANY($1::text[]))`,
+      [keys, userId],
+    )
+    if (!plan || !keys.length) return
+    const labels = keys.map((k) => plan.stages.find((s) => s.topicKey === k)!.title.slice(0, 200))
+    // The role is stored by the same rule a member's job title is compared with
+    // (designationKey), because the nudge job and the contribute list match
+    // members' designations against it.
+    const role = designationKey(plan.targetRole) || 'general'
+    await client.query(
+      `INSERT INTO learning_topics (topic_key, role_label, stage_label)
+       SELECT k, $2, label FROM unnest($1::text[], $3::text[]) AS t(k, label)
+       ON CONFLICT (topic_key) DO NOTHING`,
+      [keys, role.slice(0, 120), labels],
+    )
+    // The pair is the primary key, so only a member's FIRST arrival on a topic
+    // inserts a row — and only an inserted row moves member_count (the trigger)
+    // — so a repeat page view writes nothing and nobody is counted twice.
+    await client.query(
+      `INSERT INTO learning_topic_members (topic_key, user_id)
+       SELECT k, $2 FROM unnest($1::text[]) AS t(k)
+       ON CONFLICT DO NOTHING`,
+      [keys, userId],
+    )
+  })
 }
 
 function roadmapSummary(plan: MyPlan) {
@@ -220,16 +229,17 @@ async function topShares(me: string, key: string, limit: number, offset = 0) {
   return r.rows.map(mapLearningShare)
 }
 
-/** Resources assigned to the caller, newest first, keyset-paged by the last id. */
-async function assignedPage(me: string, limit: number, after: string | null) {
+/** Resources assigned to the caller, newest first, keyset-paged by the last id
+ *  (and where it was seen, in case it has been deleted since). */
+async function assignedPage(me: string, limit: number, after: string | null, afterAt: string | null) {
   const r = await query<CareerResourceRow>(
-    `WITH cursor_row AS (SELECT created_at, id FROM career_resources WHERE id = $2)
+    `WITH cursor_row AS (${cursorRowSql('career_resources', '$2', '$4')})
      ${RESOURCE_SELECT}
       WHERE r.assigned_to = $1 AND r.user_id <> $1
         AND ($2::text IS NULL OR (r.created_at, r.id) < (SELECT created_at, id FROM cursor_row))
       ORDER BY r.created_at DESC, r.id DESC
       LIMIT $3`,
-    [me, after, limit],
+    [me, after, limit, afterAt],
   )
   return r.rows.map(mapCareerResource)
 }
@@ -337,7 +347,10 @@ learningRouter.get(
   '/assigned',
   requireAuth,
   asyncHandler(async (req, res) => {
-    res.json(await assignedPage(req.user!.sub, pageLimit(req.query.limit), afterParam(req.query.after)))
+    const after = afterParam(req.query.after)
+    res.json(
+      await assignedPage(req.user!.sub, pageLimit(req.query.limit), after, after ? afterAtParam(req.query.afterAt) : null),
+    )
   }),
 )
 
@@ -424,13 +437,13 @@ learningRouter.get(
     const me = req.user!.sub
     const after = afterParam(req.query.after)
     const r = await query<LearningShareRow>(
-      `WITH cursor_row AS (SELECT created_at, id FROM learning_shares WHERE id = $2)
+      `WITH cursor_row AS (${cursorRowSql('learning_shares', '$2', '$4')})
        ${SHARE_SELECT}
         WHERE s.shared_by = $1
           AND ($2::text IS NULL OR (s.created_at, s.id) < (SELECT created_at, id FROM cursor_row))
         ORDER BY s.created_at DESC, s.id DESC
         LIMIT $3`,
-      [me, after, pageLimit(req.query.limit)],
+      [me, after, pageLimit(req.query.limit), after ? afterAtParam(req.query.afterAt) : null],
     )
     res.json(r.rows.map(mapLearningShare))
   }),
@@ -477,12 +490,19 @@ learningRouter.get(
       // seen position also survives the item being deleted. The live row is
       // only the fallback for a client that sent no position.
       //
-      // The client's timestamp is millisecond-precise and the column is
-      // microsecond, so the last item compares as "after" the cursor and is
-      // not re-sent; if its count rose it may reappear, and the client drops
-      // duplicates by id.
+      // created_at never changes, so it is read from the live row while that
+      // exists — exact to the microsecond. The client's copy is only
+      // millisecond-precise, and comparing against it could skip a second
+      // item with the same count from the same millisecond. Only when the row
+      // has been deleted does the client's timestamp stand in, rounded UP to
+      // the end of its millisecond so nothing is skipped (at worst a
+      // neighbour from that millisecond is sent again; the client drops
+      // duplicates by id).
       `WITH cursor_row AS (
-         SELECT $8::int AS helped_count, $9::timestamptz AS created_at, $6::text AS id
+         SELECT $8::int AS helped_count,
+                COALESCE((SELECT created_at FROM learning_shares WHERE id = $6),
+                         $9::timestamptz + interval '999 microseconds') AS created_at,
+                $6::text AS id
           WHERE $8::int IS NOT NULL AND $9::timestamptz IS NOT NULL
          UNION ALL
          SELECT helped_count, created_at, id FROM learning_shares
@@ -618,15 +638,6 @@ learningRouter.post(
     const topic = await query(`SELECT 1 FROM learning_topics WHERE topic_key = $1`, [d.topicKey])
     if (!topic.rowCount) throw new ApiError(404, 'No such stage')
 
-    const recent = await query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM learning_shares
-        WHERE shared_by = $1 AND created_at > now() - interval '1 day'`,
-      [me],
-    )
-    if (recent.rows[0].n >= SHARES_PER_DAY) {
-      throw new ApiError(429, `You can share up to ${SHARES_PER_DAY} a day — thank you, and please come back tomorrow`)
-    }
-
     const urlNorm = d.url ? normalizeUrl(d.url) : null
     if (d.url && !urlNorm) throw new ApiError(400, HTTP_URL_MESSAGE)
     const tags = cleanTags(d.skills)
@@ -635,7 +646,22 @@ learningRouter.post(
 
     // The share and its tag counts land together, so the Skill filter's
     // numbers can never disagree with what is actually shared.
-    const id = await withTransaction(async (client) => {
+    const { id, duplicate } = await withTransaction(async (client) => {
+      // One share at a time per member, so the daily cap is a real cap: two
+      // posts sent at once would otherwise both count "9 today" before either
+      // landed. The lock is this member's alone (nobody else waits on it) and
+      // is released when the transaction ends — the same pattern as
+      // connectionGraph.ts.
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`learning_share:${me}`])
+      const recent = await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM learning_shares
+          WHERE shared_by = $1 AND created_at > now() - interval '1 day'`,
+        [me],
+      )
+      if (recent.rows[0].n >= SHARES_PER_DAY) {
+        throw new ApiError(429, `You can share up to ${SHARES_PER_DAY} a day — thank you, and please come back tomorrow`)
+      }
+
       const ins = await client.query<{ id: string }>(
         `INSERT INTO learning_shares
            (topic_key, shared_by, kind, title, url, url_norm, why_helped, about, skills, difficulty, est_hours)
@@ -650,15 +676,25 @@ learningRouter.post(
           isProject ? d.estHours ?? null : null,
         ],
       )
-      if (!ins.rowCount) return null
-      await moveTagCounts(client, tags, 1)
-      return ins.rows[0].id
+      if (ins.rowCount) {
+        await moveTagCounts(client, tags, 1)
+        return { id: ins.rows[0].id, duplicate: false }
+      }
+      // Already shared for this stage: hand back that one — unless reports
+      // have hidden it, which must not be shown to anyone again, or it was
+      // deleted in the instant since the insert ran into it.
+      const existing = await client.query<{ id: string; hidden: boolean }>(
+        `SELECT id, hidden FROM learning_shares WHERE topic_key = $1 AND url_norm = $2`,
+        [d.topicKey, urlNorm],
+      )
+      if (!existing.rowCount) throw new ApiError(409, 'That link was just changed on this stage — please try again')
+      if (existing.rows[0].hidden) {
+        throw new ApiError(409, 'That link was already shared for this stage and has been hidden after members reported it')
+      }
+      return { id: existing.rows[0].id, duplicate: true }
     })
-    const duplicate = !id
-    const full = await query<LearningShareRow>(
-      id ? `${SHARE_SELECT} WHERE s.id = $2` : `${SHARE_SELECT} WHERE s.topic_key = $2 AND s.url_norm = $3`,
-      id ? [me, id] : [me, d.topicKey, urlNorm],
-    )
+    const full = await query<LearningShareRow>(`${SHARE_SELECT} WHERE s.id = $2`, [me, id])
+    if (!full.rowCount) throw new ApiError(409, 'That share was just removed — please try again')
     res.status(duplicate ? 200 : 201).json({ share: mapLearningShare(full.rows[0]), duplicate })
   }),
 )
@@ -806,7 +842,7 @@ learningRouter.post(
         'mentorship',
         `${who.rows[0].name} found "${result.title}" helpful — thanks for sharing it.`,
         me,
-        { type: 'resource', id: req.params.id },
+        { type: 'learning_share', id: req.params.id },
       )
     }
     res.json({ helpedCount: result.helpedCount, iHelped: true })

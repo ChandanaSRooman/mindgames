@@ -19,7 +19,7 @@ export function AssignedView() {
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
 
-  const loadPage = useCallback(async (after?: string) => {
+  const loadPage = useCallback(async (after?: CareerResource) => {
     setLoading(true)
     try {
       const page = await api.getLearningAssigned(after)
@@ -60,7 +60,7 @@ export function AssignedView() {
           ))}
         </CardGrid>
       )}
-      {more && rows && <LoadMore loading={loading} onClick={() => void loadPage(rows[rows.length - 1]?.id)} />}
+      {more && rows && <LoadMore loading={loading} onClick={() => void loadPage(rows[rows.length - 1])} />}
     </section>
   )
 }

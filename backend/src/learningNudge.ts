@@ -99,7 +99,7 @@ async function tick() {
           'mentorship',
           `${waiting} working on "${gap.stage_label}" — share what helped you get through it?`,
           undefined,
-          { type: 'resource', id: gap.topic_key },
+          { type: 'learning_topic', id: gap.topic_key },
         )
       }
     }

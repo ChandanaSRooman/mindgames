@@ -29,6 +29,9 @@ export function BrowseView({
   const [more, setMore] = useState(false)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
+  // The cards on screen answer an older search while a newer one is on its
+  // way — dimmed then, so they don't read as results for what was just typed.
+  const [stale, setStale] = useState(false)
   // The filters a response was asked for: an answer to an older set is dropped.
   const asked = useRef('')
 
@@ -43,11 +46,13 @@ export function BrowseView({
       setItems((prev) => (after ? appendPage(prev ?? [], page) : page))
       setMore(page.length === PAGE)
       setFailed(false)
+      setStale(false)
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return
       if (asked.current === k) {
         setFailed(true)
         setMore(false)
+        setStale(false)
       }
     } finally {
       if (asked.current === k) setLoading(false)
@@ -57,6 +62,7 @@ export function BrowseView({
   useEffect(() => {
     const f = JSON.parse(key) as BrowseFilters
     asked.current = key
+    setStale(true)
     const ctrl = new AbortController()
     const t = setTimeout(() => void loadPage(f, undefined, ctrl.signal), DEBOUNCE_MS)
     return () => {
@@ -97,11 +103,13 @@ export function BrowseView({
         </div>
       )}
       {items && items.length > 0 && (
-        <CardGrid>
+        <div aria-busy={stale} className={stale ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
+          <CardGrid>
           {items.map((s) => (
             <ShareCard key={s.id} share={s} onChange={update} onRemoved={drop} onSavedChange={onSavedChange} />
           ))}
-        </CardGrid>
+          </CardGrid>
+        </div>
       )}
       {more && items && (
         <LoadMore loading={loading} onClick={() => void loadPage(filters, items[items.length - 1])} />

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import {
@@ -277,6 +277,15 @@ export function ShareCard({
 /** A project brief's full problem statement, readable in place — enough for a
  *  member to start building, with the link (if any) and the alum to ask. */
 function BriefModal({ share, onClose, onAsk }: { share: LearningShare; onClose: () => void; onAsk: () => void }) {
+  // Escape closes it, as a dialog is expected to; the listener goes with it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   return createPortal(
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" onClick={onClose}>
       <div

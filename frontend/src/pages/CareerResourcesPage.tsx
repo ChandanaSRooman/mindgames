@@ -64,6 +64,10 @@ export function CareerResourcesPage() {
     try {
       const o = await api.getLearningOverview()
       setOverview(o)
+      // Start on the member's current stage — whichever load succeeds first
+      // (the opening one, or "Try again" after it failed). A stage they have
+      // already picked is kept, so a refresh after sharing doesn't move them.
+      setStepKey((k) => k ?? o.currentStepKey ?? null)
       setFailed(false)
       return o
     } catch {
@@ -81,7 +85,7 @@ export function CareerResourcesPage() {
   }, [])
 
   useEffect(() => {
-    void loadOverview().then((o) => setStepKey(o?.currentStepKey ?? null))
+    void loadOverview()
     void loadContribute()
   }, [loadOverview, loadContribute])
 

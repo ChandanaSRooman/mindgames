@@ -665,7 +665,8 @@ ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_target_type_ch
 ALTER TABLE notifications
   ADD CONSTRAINT notifications_target_type_check
   CHECK (target_type IS NULL OR target_type IN
-    ('post','event','community','user','company','startup','session','conversation','resource'));
+    ('post','event','community','user','company','startup','session','conversation','resource',
+     'assignment','learning_share','learning_topic','learning_session'));
 
 -- Notification types are re-checked here so upgrades pick up new ones.
 ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_type_check;
@@ -1613,6 +1614,47 @@ ALTER TABLE career_resources ADD COLUMN IF NOT EXISTS share_id TEXT
 CREATE UNIQUE INDEX IF NOT EXISTS idx_career_resources_share_save
   ON career_resources (user_id, share_id) WHERE share_id IS NOT NULL;
 
+-- Counters stay true when an account is deleted.
+--
+-- helped_count, saved_count and learning_tags.share_count are moved by app
+-- code alongside each action. Deleting a user removes that user's "helped"
+-- rows, saved copies and own shares by ON DELETE CASCADE / SET NULL, which
+-- app code never sees — so without this, every deleted account would stay
+-- counted forever ("Helped 12 members" with 11 left). BEFORE DELETE, so the
+-- rows to count are still there; same transaction as the delete, so an
+-- undone delete undoes this too. Shares the user wrote themselves are
+-- skipped for helped/saved (they are about to be deleted anyway); their
+-- tags stop counting here, exactly as deleting a share does (hidden ones
+-- stopped counting when they were hidden). Every lookup is an index walk
+-- over one user's rows: idx_learning_share_helped_user,
+-- idx_career_resources_share_save, idx_learning_shares_sharer.
+-- Re-runnable: function replaced, trigger recreated, on every migrate.
+CREATE INDEX IF NOT EXISTS idx_learning_share_helped_user
+  ON learning_share_helped (user_id);
+
+CREATE OR REPLACE FUNCTION learning_counts_on_user_delete() RETURNS trigger AS $$
+BEGIN
+  UPDATE learning_shares s SET helped_count = GREATEST(s.helped_count - 1, 0)
+    FROM learning_share_helped h
+   WHERE h.user_id = OLD.id AND h.share_id = s.id AND s.shared_by <> OLD.id;
+  UPDATE learning_shares s SET saved_count = GREATEST(s.saved_count - 1, 0)
+    FROM career_resources cr
+   WHERE cr.user_id = OLD.id AND cr.share_id = s.id AND s.shared_by <> OLD.id;
+  UPDATE learning_tags t SET share_count = GREATEST(t.share_count - x.n, 0)
+    FROM (SELECT tag, count(*)::int AS n
+            FROM learning_shares s CROSS JOIN LATERAL unnest(s.skills) AS tag
+           WHERE s.shared_by = OLD.id AND NOT s.hidden
+           GROUP BY tag) x
+   WHERE t.tag = x.tag;
+  RETURN OLD;
+END
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS users_learning_counts ON users;
+CREATE TRIGGER users_learning_counts
+  BEFORE DELETE ON users
+  FOR EACH ROW EXECUTE FUNCTION learning_counts_on_user_delete();
+
 -- assigned_to — the member a mentor handed this resource to. Before this,
 -- "who the mentee is" was derived through session_id, which made the list
 -- query an OR across two tables that no single index can answer (a full scan
@@ -1641,6 +1683,13 @@ BEGIN
     INSERT INTO app_meta (key, value) VALUES ('backfill_resources_assigned_to', now()::text);
   END IF;
 END $$;
+
+-- Session resources still missing their recipient — what the startup sweep
+-- (backfillSessionAssignees in resourceAssignees.ts) looks for, after each
+-- deploy, to catch rows the old build wrote between migrate and restart.
+-- Partial, so it holds almost nothing and the sweep is one tiny index read.
+CREATE INDEX IF NOT EXISTS idx_career_resources_unassigned_session
+  ON career_resources (session_id) WHERE session_id IS NOT NULL AND assigned_to IS NULL;
 
 -- "Has this mentor had an agreed session with this member?" — the check
 -- behind assigning a resource without a session. Also serves every
