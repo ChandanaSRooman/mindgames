@@ -23,7 +23,12 @@ export function AppLayout() {
   const [verifyDismissed, setVerifyDismissed] = useState(false)
   const [resending, setResending] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const isFullWidth = pathname.startsWith('/career-guidance')
+  // Learning Resources brings its own right column (Filter by + Saved
+  // Resources), which takes the general rail's place on that page only.
+  // Trailing slashes are trimmed first: React Router renders the same page for
+  // "/learning-resources/", and that must not bring the general rail back.
+  const isFullWidth =
+    pathname.startsWith('/career-guidance') || pathname.replace(/\/+$/, '') === '/learning-resources'
   const showVerifyBanner =
     !verifyDismissed && !currentUser.isAdmin && currentUser.emailVerified === false
 

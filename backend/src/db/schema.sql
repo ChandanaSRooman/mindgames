@@ -665,7 +665,8 @@ ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_target_type_ch
 ALTER TABLE notifications
   ADD CONSTRAINT notifications_target_type_check
   CHECK (target_type IS NULL OR target_type IN
-    ('post','event','community','user','company','startup','session','conversation'));
+    ('post','event','community','user','company','startup','session','conversation','resource',
+     'assignment','learning_share','learning_topic','learning_session'));
 
 -- Notification types are re-checked here so upgrades pick up new ones.
 ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_type_check;
@@ -1389,3 +1390,309 @@ CREATE INDEX IF NOT EXISTS idx_career_resources_public
 ALTER TABLE career_resources ADD COLUMN IF NOT EXISTS requires_submission BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE career_resources ADD COLUMN IF NOT EXISTS submission_url TEXT;
 ALTER TABLE career_resources ADD COLUMN IF NOT EXISTS submission_at TIMESTAMPTZ;
+
+-- ===========================================================================
+-- Learning hub (the Learning Resources page)
+--
+-- The page answers one question: WHO in this network can help me learn this,
+-- and how do I reach them? So every row below names a member. Nothing here is
+-- machine-written: an item exists because an alum shared what helped them,
+-- and its standing comes from other members saying it helped (helped_count),
+-- never from a star rating or a score.
+--
+-- Sized for lakhs of members: a page view reads only the viewer's own rows, or
+-- one topic's top-N by a counter kept on the row — never a count or scan over
+-- everybody.
+-- ===========================================================================
+
+-- A TOPIC is "what to learn at this stage, for this goal" — normalised
+-- (target role, stage title). It is the unit of sharing: an alum shares once
+-- against a topic and every member working on that stage sees it, however many
+-- of them there are.
+CREATE TABLE IF NOT EXISTS learning_topics (
+  topic_key   TEXT PRIMARY KEY,
+  role_label  TEXT NOT NULL,
+  stage_label TEXT NOT NULL,
+  -- Distinct members who have reached this topic, kept as a counter so
+  -- "4 members are on this" never counts rows at read time.
+  member_count INTEGER NOT NULL DEFAULT 0,
+  -- When alumni were last nudged to fill this topic, so a gap nudges at most
+  -- once a week however often the page is opened.
+  nudged_at   TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Which members are on which topic. The pair is the primary key, so a page
+-- view re-registering a topic is a no-op and member_count counts distinct
+-- people. Also answers "who should hear about a new share" later.
+CREATE TABLE IF NOT EXISTS learning_topic_members (
+  topic_key  TEXT NOT NULL REFERENCES learning_topics(topic_key) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (topic_key, user_id)
+);
+-- member_count is kept by the database itself, on every insert and delete of
+-- a membership row. A trigger rather than app code because rows also vanish
+-- WITHOUT the app: deleting a user cascades away their memberships, and a
+-- counter moved only in app code would keep every deleted account counted
+-- forever — inflating "N members are on this step" and nudging alumni about
+-- people who no longer exist. With the trigger, app code never touches the
+-- counter, so it cannot be moved twice either. Re-runnable: the function is
+-- replaced and the trigger recreated on every migrate.
+CREATE OR REPLACE FUNCTION learning_topic_member_count() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE learning_topics SET member_count = member_count + 1 WHERE topic_key = NEW.topic_key;
+    RETURN NEW;
+  END IF;
+  UPDATE learning_topics SET member_count = GREATEST(member_count - 1, 0) WHERE topic_key = OLD.topic_key;
+  RETURN OLD;
+END
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS learning_topic_members_count ON learning_topic_members;
+CREATE TRIGGER learning_topic_members_count
+  AFTER INSERT OR DELETE ON learning_topic_members
+  FOR EACH ROW EXECUTE FUNCTION learning_topic_member_count();
+
+-- "Which topics is this member on" — needed to take them OFF topics their
+-- roadmap no longer has, so member_count tracks where people are now rather
+-- than everywhere they have ever been. The primary key leads with topic_key,
+-- so it cannot answer this by itself.
+CREATE INDEX IF NOT EXISTS idx_learning_topic_members_user
+  ON learning_topic_members (user_id);
+
+-- "Stages leading to my role, most wanted first" — the alum's contribute list.
+CREATE INDEX IF NOT EXISTS idx_learning_topics_role
+  ON learning_topics (role_label, member_count DESC);
+
+-- Members by job title, normalised exactly as the app does (lower-case,
+-- trimmed, inner whitespace collapsed — learning.ts designationKey). "Who
+-- already works in this role" is how alumni are suggested to members and
+-- nudged to share; without this it is a scan of every user. is_mentor and id
+-- follow so "mentors first, a bounded few" is read straight off the index.
+-- The expression must stay byte-identical to the queries that use it, or the
+-- planner will not pick the index.
+CREATE INDEX IF NOT EXISTS idx_users_designation_key
+  ON users ((lower(regexp_replace(btrim(designation), '\s+', ' ', 'g'))), is_mentor DESC, id);
+
+-- What alumni share: a resource that helped them, or a project brief drawn
+-- from their real work. One table, not two — a brief is something to learn
+-- from like any other; it just may carry a detailed problem statement instead
+-- of a link. shared_by is NOT NULL: nothing appears on this page without a
+-- person behind it.
+--
+-- Every share is tagged (skills) and given a difficulty, because the "All
+-- Resources" tab filters the whole network by Skill, Type and Difficulty —
+-- an untagged share would be invisible to those filters.
+--
+-- helped_count is the only standing an item has, and it means exactly one
+-- thing: that many members pressed "this helped me". Kept on the row so a card
+-- never counts another table.
+CREATE TABLE IF NOT EXISTS learning_shares (
+  id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  topic_key    TEXT NOT NULL REFERENCES learning_topics(topic_key) ON DELETE CASCADE,
+  shared_by    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- The Resource Type filter's five values, exactly.
+  kind         TEXT NOT NULL CHECK (kind IN ('course', 'tutorial', 'doc', 'project', 'article')),
+  title        TEXT NOT NULL,
+  -- Nullable only for a project brief that stands on its `about` instead.
+  url          TEXT,
+  -- The link with case, "www.", tracking params and trailing slash removed, so
+  -- the same page shared twice for one topic is recognised as one item.
+  url_norm     TEXT,
+  -- The sentence that makes this a recommendation and not a bookmark: why it
+  -- helped THEM (for a project: why this build is worth doing). Required.
+  why_helped   TEXT NOT NULL,
+  -- Project briefs: the full problem statement — what to build, the
+  -- requirements, what "done" looks like. A brief must have this or a link,
+  -- so nobody is handed a title with nothing to go on.
+  about        TEXT,
+  -- Normalised skill tags (lower-case), 1–8 per share. Filtered with a GIN
+  -- index, so "AWS or Python" is an index lookup, not a scan.
+  skills       TEXT[] NOT NULL DEFAULT '{}',
+  difficulty   TEXT NOT NULL DEFAULT 'beginner'
+               CHECK (difficulty IN ('beginner', 'intermediate', 'advanced')),
+  -- Project briefs only.
+  est_hours    INTEGER,
+  helped_count INTEGER NOT NULL DEFAULT 0,
+  saved_count  INTEGER NOT NULL DEFAULT 0,
+  report_count INTEGER NOT NULL DEFAULT 0,
+  -- Set automatically once enough distinct members report it — no admin queue.
+  hidden       BOOLEAN NOT NULL DEFAULT FALSE,
+  search_tsv   tsvector GENERATED ALWAYS AS
+                 (to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(why_helped, '')
+                                        || ' ' || coalesce(about, ''))) STORED,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- A brief with neither a link nor a real problem statement is not shareable.
+  CONSTRAINT learning_shares_project_has_detail
+    CHECK (kind <> 'project' OR url IS NOT NULL OR length(coalesce(about, '')) >= 80),
+  -- Anything that is not a project points at something, so it needs a link.
+  CONSTRAINT learning_shares_resource_has_link
+    CHECK (kind = 'project' OR url IS NOT NULL)
+);
+
+-- One share of a given link per topic: the same docs page can genuinely serve
+-- two roles' stages, but not appear twice on one. Partial, because a project
+-- brief may have no url.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_learning_shares_topic_url
+  ON learning_shares (topic_key, url_norm) WHERE url_norm IS NOT NULL;
+-- "What alumni recommend for this stage" — walks this in order, stops at LIMIT.
+CREATE INDEX IF NOT EXISTS idx_learning_shares_topic_rank
+  ON learning_shares (topic_key, helped_count DESC, created_at DESC) WHERE NOT hidden;
+-- "All Resources", unfiltered — the same ranking across the whole network.
+CREATE INDEX IF NOT EXISTS idx_learning_shares_rank
+  ON learning_shares (helped_count DESC, created_at DESC, id DESC) WHERE NOT hidden;
+-- The three filters. Skills is an array, so GIN: "has any of these tags" is
+-- an index lookup. Type and difficulty are small sets, combined by bitmap.
+CREATE INDEX IF NOT EXISTS idx_learning_shares_skills
+  ON learning_shares USING GIN (skills) WHERE NOT hidden;
+CREATE INDEX IF NOT EXISTS idx_learning_shares_kind
+  ON learning_shares (kind) WHERE NOT hidden;
+CREATE INDEX IF NOT EXISTS idx_learning_shares_difficulty
+  ON learning_shares (difficulty) WHERE NOT hidden;
+CREATE INDEX IF NOT EXISTS idx_learning_shares_search
+  ON learning_shares USING GIN (search_tsv);
+-- An alum's own contributions: their "I've shared" list and the per-day cap.
+CREATE INDEX IF NOT EXISTS idx_learning_shares_sharer
+  ON learning_shares (shared_by, created_at DESC);
+
+-- The Skill / Topic filter's list. One row per tag with how many visible
+-- shares carry it, kept up to date in the same transaction as the share that
+-- moves it — so "the most-used skills" is a read of the top rows, never a
+-- count over every share. label keeps the first casing anyone used ("LLM/RAG").
+CREATE TABLE IF NOT EXISTS learning_tags (
+  tag         TEXT PRIMARY KEY,
+  label       TEXT NOT NULL,
+  share_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_learning_tags_popular
+  ON learning_tags (share_count DESC, tag);
+-- "Search skills…" matches as you type: a prefix match, which this index
+-- serves directly.
+CREATE INDEX IF NOT EXISTS idx_learning_tags_prefix
+  ON learning_tags (tag text_pattern_ops);
+
+-- "This helped me" — one per member per share. The primary key is what makes
+-- helped_count a count of distinct people.
+CREATE TABLE IF NOT EXISTS learning_share_helped (
+  share_id   TEXT NOT NULL REFERENCES learning_shares(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (share_id, user_id)
+);
+
+-- Who has already been thanked for, per share. "This helped me" can be pressed
+-- and un-pressed freely, but the alum hears about it once per member: this row
+-- is written on the first press and never removed, so toggling cannot turn
+-- into a stream of notifications.
+CREATE TABLE IF NOT EXISTS learning_share_thanked (
+  share_id   TEXT NOT NULL REFERENCES learning_shares(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (share_id, user_id)
+);
+
+-- One report per member per share; the primary key is what stops one person
+-- reporting three times to hide something on their own.
+CREATE TABLE IF NOT EXISTS learning_share_reports (
+  share_id   TEXT NOT NULL REFERENCES learning_shares(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (share_id, user_id)
+);
+
+-- career_resources: links into the learning hub.
+--
+-- share_id — this personal row is the member's saved copy of what an alum
+-- shared. Keeping the link (rather than only copying the title and url) is
+-- what lets their saved list still say who recommended it, and lets them go
+-- back to that person. The partial unique index is what makes "save"
+-- idempotent: a double click can't create two rows or move saved_count twice.
+ALTER TABLE career_resources ADD COLUMN IF NOT EXISTS share_id TEXT
+  REFERENCES learning_shares(id) ON DELETE SET NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_career_resources_share_save
+  ON career_resources (user_id, share_id) WHERE share_id IS NOT NULL;
+
+-- Counters stay true when an account is deleted.
+--
+-- helped_count, saved_count and learning_tags.share_count are moved by app
+-- code alongside each action. Deleting a user removes that user's "helped"
+-- rows, saved copies and own shares by ON DELETE CASCADE / SET NULL, which
+-- app code never sees — so without this, every deleted account would stay
+-- counted forever ("Helped 12 members" with 11 left). BEFORE DELETE, so the
+-- rows to count are still there; same transaction as the delete, so an
+-- undone delete undoes this too. Shares the user wrote themselves are
+-- skipped for helped/saved (they are about to be deleted anyway); their
+-- tags stop counting here, exactly as deleting a share does (hidden ones
+-- stopped counting when they were hidden). Every lookup is an index walk
+-- over one user's rows: idx_learning_share_helped_user,
+-- idx_career_resources_share_save, idx_learning_shares_sharer.
+-- Re-runnable: function replaced, trigger recreated, on every migrate.
+CREATE INDEX IF NOT EXISTS idx_learning_share_helped_user
+  ON learning_share_helped (user_id);
+
+CREATE OR REPLACE FUNCTION learning_counts_on_user_delete() RETURNS trigger AS $$
+BEGIN
+  UPDATE learning_shares s SET helped_count = GREATEST(s.helped_count - 1, 0)
+    FROM learning_share_helped h
+   WHERE h.user_id = OLD.id AND h.share_id = s.id AND s.shared_by <> OLD.id;
+  UPDATE learning_shares s SET saved_count = GREATEST(s.saved_count - 1, 0)
+    FROM career_resources cr
+   WHERE cr.user_id = OLD.id AND cr.share_id = s.id AND s.shared_by <> OLD.id;
+  UPDATE learning_tags t SET share_count = GREATEST(t.share_count - x.n, 0)
+    FROM (SELECT tag, count(*)::int AS n
+            FROM learning_shares s CROSS JOIN LATERAL unnest(s.skills) AS tag
+           WHERE s.shared_by = OLD.id AND NOT s.hidden
+           GROUP BY tag) x
+   WHERE t.tag = x.tag;
+  RETURN OLD;
+END
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS users_learning_counts ON users;
+CREATE TRIGGER users_learning_counts
+  BEFORE DELETE ON users
+  FOR EACH ROW EXECUTE FUNCTION learning_counts_on_user_delete();
+
+-- assigned_to — the member a mentor handed this resource to. Before this,
+-- "who the mentee is" was derived through session_id, which made the list
+-- query an OR across two tables that no single index can answer (a full scan
+-- of career_resources per page view). Recording the recipient directly turns
+-- "everything assigned to me" into one index walk, and lets a mentor assign
+-- without a session at all. SET NULL, not CASCADE: the row is the mentor's,
+-- and they keep it if the mentee's account goes.
+ALTER TABLE career_resources ADD COLUMN IF NOT EXISTS assigned_to TEXT
+  REFERENCES users(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_career_resources_assigned
+  ON career_resources (assigned_to, created_at DESC) WHERE assigned_to IS NOT NULL;
+
+-- One-off: give every existing session resource its recipient (the session's
+-- mentee), so the new list query returns exactly what the old session-based
+-- rule did. Guarded by an app_meta marker so this table-wide UPDATE runs once,
+-- not on every deploy.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM app_meta WHERE key = 'backfill_resources_assigned_to') THEN
+    UPDATE career_resources r
+       SET assigned_to = s.mentee_id
+      FROM mentorship_sessions s
+     WHERE r.session_id = s.id
+       AND r.assigned_to IS NULL
+       AND r.user_id = s.mentor_id;
+    INSERT INTO app_meta (key, value) VALUES ('backfill_resources_assigned_to', now()::text);
+  END IF;
+END $$;
+
+-- Session resources still missing their recipient — what the startup sweep
+-- (backfillSessionAssignees in resourceAssignees.ts) looks for, after each
+-- deploy, to catch rows the old build wrote between migrate and restart.
+-- Partial, so it holds almost nothing and the sweep is one tiny index read.
+CREATE INDEX IF NOT EXISTS idx_career_resources_unassigned_session
+  ON career_resources (session_id) WHERE session_id IS NOT NULL AND assigned_to IS NULL;
+
+-- "Has this mentor had an agreed session with this member?" — the check
+-- behind assigning a resource without a session. Also serves every
+-- "sessions I mentor" read, which until now had only partial indexes.
+CREATE INDEX IF NOT EXISTS idx_sessions_mentor_mentee
+  ON mentorship_sessions (mentor_id, mentee_id);

@@ -322,8 +322,10 @@ mentorshipRouter.post(
 // has a name.
 async function attachSessionResource(sessionId: string, mentorId: string, link: string, title?: string) {
   await query(
-    `INSERT INTO career_resources (user_id, title, url, kind, session_id)
-     VALUES ($1, $2, $3, 'other', $4)`,
+    // assigned_to is the session's mentee — how the resource reaches their
+    // list (see VISIBLE_PAGE in careerResources.routes.ts).
+    `INSERT INTO career_resources (user_id, title, url, kind, session_id, assigned_to)
+     VALUES ($1, $2, $3, 'other', $4, (SELECT mentee_id FROM mentorship_sessions WHERE id = $4))`,
     [mentorId, title?.trim().slice(0, 160) || 'Prep for this session', link, sessionId],
   )
 }
@@ -787,8 +789,10 @@ mentorshipRouter.post(
       // its task, and a failed task insert never leaves it half-completed.
       if (followUpUrl) {
         await client.query(
-          `INSERT INTO career_resources (user_id, title, url, kind, session_id, requires_submission)
-           VALUES ($1, $2, $3, 'other', $4, TRUE)`,
+          // assigned_to is the session's mentee: who must answer this task,
+          // and how it reaches their list.
+          `INSERT INTO career_resources (user_id, title, url, kind, session_id, requires_submission, assigned_to)
+           VALUES ($1, $2, $3, 'other', $4, TRUE, (SELECT mentee_id FROM mentorship_sessions WHERE id = $4))`,
           [req.user!.sub, followUpTitle, followUpUrl, req.params.id],
         )
       }
@@ -808,6 +812,18 @@ mentorshipRouter.post(
       req.user!.sub,
       { type: 'session', id: req.params.id },
     )
+
+    // The mentor has just explained something to one member. Asking now, while
+    // it is fresh, is how that same answer reaches everyone else on the stage
+    // — the one moment where sharing it costs almost nothing.
+    void pushNotification(
+      req.user!.sub,
+      'mentorship',
+      `You just helped someone through "${s.topic}". Share what you recommended with everyone on that stage?`,
+      undefined,
+      { type: 'learning_session', id: req.params.id },
+    )
+
     const full = await query<SessionRow>(`${SESSION_SELECT} WHERE s.id = $1`, [req.params.id])
     res.json(mapSession(full.rows[0]))
   }),

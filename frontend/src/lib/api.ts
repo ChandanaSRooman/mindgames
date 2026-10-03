@@ -10,6 +10,15 @@ import type {
   CareerRoadmap,
   CareerResource,
   CareerResourceInput,
+  CareerResourceSummary,
+  ContributeStage,
+  LearningShare,
+  LearningOverview,
+  ShareKind,
+  BrowseFilters,
+  SkillTag,
+  StageShares,
+  ProjectDifficulty,
   PublicCareerResource,
   CareerStageStatus,
   CheckoutSession,
@@ -94,6 +103,13 @@ export const isPaymentRequired = (err: unknown): err is HttpError =>
   err instanceof HttpError && err.status === 402
 
 // ---- Low-level fetch --------------------------------------------------------
+/** "?after=<id>&afterAt=<createdAt>" for a keyset-paged list, or "" for its
+ *  first page. The timestamp lets the server keep its place when the row the
+ *  client last saw has been deleted in the meantime. */
+function afterQuery(after?: { id: string; createdAt: string }): string {
+  return after ? `?${new URLSearchParams({ after: after.id, afterAt: after.createdAt })}` : ''
+}
+
 async function http<T>(url: string, options?: RequestInit): Promise<T> {
   const token = getToken()
   const res = await fetch(url, {
@@ -778,10 +794,26 @@ export const api = {
   // Returns everything the caller may see: their own resources, plus anything
   // attached to a mentorship session they are a party to. Passing a sessionId
   // narrows it to that one session, which is what the session view uses.
-  getCareerResources: (sessionId?: string) =>
-    http<CareerResource[]>(
-      `/api/career-resources${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`,
-    ),
+  // Without a sessionId it is paged: `limit` rows (server default 20, max 50)
+  // older than `after`, the id of the last row already shown — with `afterAt`,
+  // its createdAt, so paging survives that row being deleted. A page shorter
+  // than the limit is the last one. `saved` keeps only what the member kept for
+  // themselves — the Learning page's Saved Resources list.
+  getCareerResources: (
+    sessionId?: string,
+    page?: { limit?: number; after?: string; afterAt?: string; saved?: boolean },
+  ) => {
+    const q = new URLSearchParams()
+    if (sessionId) q.set('sessionId', sessionId)
+    if (page?.limit) q.set('limit', String(page.limit))
+    if (page?.after) q.set('after', page.after)
+    if (page?.after && page.afterAt) q.set('afterAt', page.afterAt)
+    if (page?.saved) q.set('scope', 'saved')
+    const qs = q.toString()
+    return http<CareerResource[]>(`/api/career-resources${qs ? `?${qs}` : ''}`)
+  },
+  // Totals counted on the server over everything the caller can see.
+  getCareerResourceSummary: () => http<CareerResourceSummary>('/api/career-resources/summary'),
   // Someone else's public profile — the deliberately smaller shape, with no
   // stage, session or status attached (see PublicCareerResource).
   getPublicCareerResources: (userId: string) =>
@@ -807,6 +839,92 @@ export const api = {
     http<CareerResource>(`/api/career-resources/${id}/submit`, {
       method: 'POST',
       body: JSON.stringify({ url }),
+    }),
+  // A mentor's side of direct assignments: what they gave this member without
+  // a session, and the work sent back (submissionUrl). Newest first, up to 50.
+  getAssignedByMe: (menteeId: string) =>
+    http<CareerResource[]>(`/api/career-resources/assigned-by-me?menteeId=${encodeURIComponent(menteeId)}`),
+
+  // ---- Learning hub (Learning Resources page) --------------------------------
+  // One call on open: roadmap, banner data and the tab counts.
+  getLearningOverview: () => http<LearningOverview>('/api/learning/overview'),
+  // What alumni shared for one roadmap stage. When nobody has shared yet the
+  // response carries the alumni who can help with it instead.
+  getLearningStage: (stepKey?: string, offset = 0) => {
+    const q = new URLSearchParams({ offset: String(offset) })
+    if (stepKey) q.set('stepKey', stepKey)
+    return http<StageShares>(`/api/learning/stage?${q}`)
+  },
+  // `after` is the last row already shown — its id and createdAt, so paging
+  // survives that row being deleted.
+  getLearningAssigned: (after?: Pick<CareerResource, 'id' | 'createdAt'>) =>
+    http<CareerResource[]>(`/api/learning/assigned${afterQuery(after)}`),
+  // The alum's side: stages this member can speak to, and where members are
+  // waiting with nothing shared yet.
+  getContributeStages: () => http<{ stages: ContributeStage[] }>('/api/learning/contribute'),
+  getMyShares: (after?: Pick<LearningShare, 'id' | 'createdAt'>) =>
+    http<LearningShare[]>(`/api/learning/mine${afterQuery(after)}`),
+  // "All Resources": the whole network's shares, narrowed by the search box and
+  // the Filter-by panel. `after` is the last item already shown — its id, plus
+  // the position it was seen at, so paging survives that item being deleted;
+  // `signal` lets a newer search cancel this one.
+  browseLearning: (
+    f: BrowseFilters,
+    after?: Pick<LearningShare, 'id' | 'helpedCount' | 'createdAt'>,
+    signal?: AbortSignal,
+  ) => {
+    const p = new URLSearchParams()
+    if (f.q.trim()) p.set('q', f.q.trim())
+    if (f.tags.length) p.set('tags', f.tags.join(','))
+    if (f.types.length) p.set('types', f.types.join(','))
+    if (f.difficulty.length) p.set('difficulty', f.difficulty.join(','))
+    if (after) {
+      p.set('after', after.id)
+      p.set('afterHelped', String(after.helpedCount))
+      p.set('afterAt', after.createdAt)
+    }
+    const qs = p.toString()
+    return http<LearningShare[]>(`/api/learning/browse${qs ? `?${qs}` : ''}`, { signal })
+  },
+  // The Skill / Topic filter: most-used skills, or those starting with `q`.
+  getLearningTags: (q?: string, signal?: AbortSignal) =>
+    http<SkillTag[]>(`/api/learning/tags${q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : ''}`, { signal }),
+  shareLearning: (body: {
+    topicKey: string
+    kind: ShareKind
+    title: string
+    url?: string
+    whyHelped: string
+    about?: string
+    skills: string[]
+    difficulty: ProjectDifficulty
+    estHours?: number
+  }) =>
+    http<{ share: LearningShare; duplicate: boolean }>('/api/learning/shares', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  deleteShare: (id: string) =>
+    http<void>(`/api/learning/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  saveShare: (id: string) =>
+    http<{ savedResourceId: string; savedCount: number }>(`/api/learning/shares/${encodeURIComponent(id)}/save`, {
+      method: 'POST',
+    }),
+  unsaveShare: (id: string) =>
+    http<{ savedCount: number }>(`/api/learning/shares/${encodeURIComponent(id)}/save`, { method: 'DELETE' }),
+  // "This helped me" — tells the network the share is good and thanks the
+  // person who shared it, in one press.
+  markShareHelped: (id: string) =>
+    http<{ helpedCount: number; iHelped: boolean }>(`/api/learning/shares/${encodeURIComponent(id)}/helped`, {
+      method: 'POST',
+    }),
+  unmarkShareHelped: (id: string) =>
+    http<{ helpedCount: number; iHelped: boolean }>(`/api/learning/shares/${encodeURIComponent(id)}/helped`, {
+      method: 'DELETE',
+    }),
+  reportShare: (id: string) =>
+    http<{ reported: boolean; hidden: boolean }>(`/api/learning/shares/${encodeURIComponent(id)}/report`, {
+      method: 'POST',
     }),
 }
 

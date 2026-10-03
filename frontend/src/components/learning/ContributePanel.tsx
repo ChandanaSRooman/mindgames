@@ -1,0 +1,72 @@
+import { HandHeart, Users } from 'lucide-react'
+import { waitingLabel } from '../../lib/learningHub'
+import { Button } from '../ui'
+import type { ContributeStage } from '../../types'
+
+/**
+ * The alum's half of the page: where members are waiting for help this member
+ * can actually give.
+ *
+ * A member qualifies for a stage either because they have been through it
+ * (their own completed roadmap stage) or because they already work in the role
+ * it leads to. Gaps come first, so the ask lands where it matters most.
+ *
+ * A strip at the end of the main column, after the tabs: the right column on
+ * this page is the Filter-by panel and Saved Resources. What the member has
+ * already shared lives in the "I've shared" tab, not here.
+ */
+export function ContributePanel({
+  stages,
+  onShare,
+}: {
+  stages: ContributeStage[]
+  onShare: (topicKey?: string) => void
+}) {
+  // No stage to share for (no roadmap, no role topics): staying quiet beats a
+  // dead button.
+  if (stages.length === 0) return null
+  // Only stages they have passed, or that lead to the role they hold, are
+  // suggested as 'members are waiting' — not the stage they are on themselves.
+  const gaps = stages.filter((s) => s.reason !== 'mine' && s.sharesCount === 0 && s.membersWaiting > 0)
+  const canHelp = stages.some((s) => s.reason !== 'mine')
+
+  return (
+    <section className="rounded-xl border border-orange-100 bg-gradient-to-r from-orange-50 to-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white text-[#ff4500] shadow-sm">
+          <HandHeart size={20} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-bold text-[#1c1c1c]">Help someone behind you</h2>
+          <p className="text-xs text-[#878a8c]">
+            {canHelp
+                ? 'Share what helped you get through a stage you have already passed.'
+                : 'Found something useful on your path? Share it with everyone on that stage.'}
+          </p>
+        </div>
+        <Button className="shrink-0" onClick={() => onShare()}>
+          Share what helped you
+        </Button>
+      </div>
+
+      {gaps.length > 0 && (
+        <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {gaps.slice(0, 3).map((s) => (
+            <li key={s.topicKey}>
+              <button
+                onClick={() => onShare(s.topicKey)}
+                className="w-full rounded-lg border border-[#edeff1] bg-white p-2 text-left hover:border-[#ff4500]/40"
+              >
+                <span className="block truncate text-xs font-semibold text-[#1c1c1c]">{s.title}</span>
+                <span className="flex items-center gap-1 text-[11px] text-[#ff4500]">
+                  <Users size={10} /> {waitingLabel(s.membersWaiting)} · nothing shared yet
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+    </section>
+  )
+}
