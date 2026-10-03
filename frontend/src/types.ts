@@ -794,6 +794,7 @@ export type NotificationTargetType =
   | 'startup'
   | 'session'
   | 'conversation'
+  | 'resource'
 
 export interface AppNotification {
   id: string
@@ -1403,9 +1404,153 @@ export interface CareerResource {
   ownerName?: string
   ownerPhoto?: string
   sessionTopic?: string
-  /** Its session has finished: what was assigned is a record, so it can't be
+  /** Its session has finished — or, for a direct assignment, the mentee has
+   *  submitted against it: what was assigned is a record, so it can't be
    *  deleted or rewritten (status and visibility can still change). */
   sessionLocked?: boolean
+  /** This row is the member's saved copy of what an alum shared, and who
+   *  shared it — so a saved list can still credit them. */
+  shareId?: string
+  sharedByName?: string
+  /** The member a mentor assigned this to (by session or directly). */
+  assignedToId?: string
+  assignedToName?: string
+}
+
+
+// ---- Learning hub (Learning Resources page) --------------------------------
+// Mirrors mapLearningShare in backend/src/mappers.ts and learning.routes.ts.
+// The page's premise: everything here was shared by a member of the network,
+// so every item carries the person who shared it and a way to reach them.
+
+/** The Resource Type filter's five values. */
+export type ShareKind = 'course' | 'tutorial' | 'doc' | 'project' | 'article'
+export type ProjectDifficulty = 'beginner' | 'intermediate' | 'advanced'
+
+/** Who shared something — enough to show them and open their profile or chat.
+ *  No photo: profile photos are data URLs of up to ~400 KB and these arrive in
+ *  lists, so the avatar falls back to initials. */
+export interface Sharer {
+  id: string
+  name: string
+  designation: string
+  company: string
+  isMentor: boolean
+}
+
+/** One thing an alum shared for a stage: a resource that helped them, or a
+ *  project brief from their real work. */
+export interface LearningShare {
+  id: string
+  kind: ShareKind
+  title: string
+  /** Null only for a project brief that stands on its description. */
+  url: string | null
+  /** Their own sentence on why it helped — what makes this a recommendation
+   *  rather than a bookmark. */
+  whyHelped: string
+  /** A project brief's full problem statement — what to build, requirements,
+   *  what done looks like. Null for everything else. */
+  about: string | null
+  /** Skill tags as typed ("LLM/RAG") — every share has at least one. */
+  skills: string[]
+  difficulty: ProjectDifficulty
+  /** Project briefs only. */
+  estHours: number | null
+  /** How many members pressed "this helped me" — the only standing an item
+   *  has on this page. */
+  helpedCount: number
+  savedCount: number
+  /** Hidden after members reported it — only ever true in the sharer's own
+   *  list, to tell them why it stopped appearing for others. */
+  hidden: boolean
+  sharedBy: Sharer
+  iHelped: boolean
+  /** The viewer's own saved copy, when they have saved it. */
+  mySavedResourceId: string | null
+  createdAt: string
+}
+
+/** An alum a member can ask when nobody has shared for their stage yet. */
+export interface StageHelper {
+  id: string
+  name: string
+  designation: string
+  company: string
+  isMentor: boolean
+  sharesCount: number
+}
+
+export interface LearningStageLite {
+  stepKey: string
+  title: string
+  status: CareerStageStatus
+}
+
+export interface LearningRoadmapSummary {
+  roadmapId: string
+  goal: { currentRole: string; targetRole: string | null }
+  timelineMonths: number
+  hoursPerWeek: number
+  stages: LearningStageLite[]
+}
+
+/** The page frame: plan, banner data and the tab counts. Each tab fetches its
+ *  own list. */
+export interface LearningOverview {
+  roadmap: LearningRoadmapSummary | null
+  currentStepKey: string | null
+  supportPreference: string | null
+  counts: { saved: number; assigned: number; shared: number }
+}
+
+/** One stage's shares; `alumni` is filled only when nobody has shared yet, so
+ *  the member always has someone to ask. */
+export interface StageShares {
+  stepKey: string | null
+  stageTitle?: string
+  shares: LearningShare[]
+  alumni: StageHelper[]
+  /** Members working on this stage — "4 members are on this step". */
+  memberCount: number
+}
+
+/** A stage this member can share for, and why they can. */
+export interface ContributeStage {
+  topicKey: string
+  stepKey: string | null
+  title: string
+  /** 'passed' = a stage of their own roadmap they completed; 'role' = a stage
+   *  leading to the role they already work in; 'mine' = a stage of their own
+   *  roadmap they are on now. Anyone can share for any of them; only passed and
+   *  role ones are suggested as 'members are waiting — can you help?'. */
+  reason: 'passed' | 'role' | 'mine'
+  membersWaiting: number
+  sharesCount: number
+}
+
+/** One entry in the Skill / Topic filter: the stored tag, how it displays, and
+ *  how many visible shares carry it. */
+export interface SkillTag {
+  tag: string
+  label: string
+  count: number
+}
+
+/** The All Resources tab's search + Filter-by state. Empty arrays = no filter. */
+export interface BrowseFilters {
+  q: string
+  tags: string[]
+  types: ShareKind[]
+  difficulty: ProjectDifficulty[]
+}
+
+
+/** Counted on the server over everything the caller can see. */
+export interface CareerResourceSummary {
+  count: number
+  done: number
+  byStage: Record<string, { total: number; done: number }>
 }
 
 /** A resource as shown on someone ELSE's profile — public only, and
@@ -1429,6 +1574,8 @@ export interface CareerResourceInput {
   roadmapId?: string
   stepKey?: string
   sessionId?: string
+  /** A mentor assigning directly to a member they have had a session with. */
+  assignedTo?: string
   isPublic?: boolean
   requiresSubmission?: boolean
 }

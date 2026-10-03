@@ -44,8 +44,9 @@ export function CareerGuidance() {
   const [helpers, setHelpers] = useState<AlumniHelper[]>([])
   const [matched, setMatched] = useState<AlumniService[]>([])
   // Feeds the Quick access card, and stays in step with anything a mentor
-  // assigns — getCareerResources() already returns everything shared into a
-  // session with this member, not just what they saved themselves.
+  // assigns — the summary counts everything assigned to this member, not just
+  // what they saved themselves. Only the number is fetched: this page never
+  // shows the rows, and the list itself is paged.
   const [resourceCount, setResourceCount] = useState(0)
   const [allServices, setAllServices] = useState<AlumniService[] | null>(null)
   const [showingAll, setShowingAll] = useState(false)
@@ -82,11 +83,11 @@ export function CareerGuidance() {
   }, [])
 
   const loadRoadmapExtras = useCallback(() => {
-    Promise.all([api.getCareerAlumniHelp(), api.getMatchedServices(), api.getCareerResources()])
+    Promise.all([api.getCareerAlumniHelp(), api.getMatchedServices(), api.getCareerResourceSummary()])
       .then(([people, services, resources]) => {
         setHelpers(people)
         setMatched(services)
-        setResourceCount(resources.length)
+        setResourceCount(resources.count)
       })
       .catch(() => {
         /* the roadmap itself still renders without these side panels */

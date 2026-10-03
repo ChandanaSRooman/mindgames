@@ -24,6 +24,8 @@ import { reportsRouter } from './routes/reports.routes.js'
 import { companiesRouter } from './routes/companies.routes.js'
 import { careerRouter } from './routes/career.routes.js'
 import { careerResourcesRouter } from './routes/careerResources.routes.js'
+import { learningRouter } from './routes/learning.routes.js'
+import { startLearningNudgeScheduler } from './learningNudge.js'
 import { subscriptionRouter } from './routes/subscription.routes.js'
 import { groupSessionsRouter } from './routes/groupSessions.routes.js'
 import { backfillCareerPaths } from './careerPaths.js'
@@ -73,6 +75,7 @@ app.use('/api/reports', reportsRouter)
 app.use('/api/companies', companiesRouter)
 app.use('/api/career', careerRouter)
 app.use('/api/career-resources', careerResourcesRouter)
+app.use('/api/learning', learningRouter)
 app.use('/api/subscription', subscriptionRouter)
 app.use('/api/group-sessions', groupSessionsRouter)
 
@@ -82,6 +85,7 @@ app.use(errorHandler)
 startDigestScheduler()
 startEventReminderScheduler()
 startSessionReminderScheduler()
+startLearningNudgeScheduler()
 
 // Resolve the address for email links BEFORE accepting requests. Awaiting it
 // is what makes that guarantee true: fire-and-forget left a window in which a

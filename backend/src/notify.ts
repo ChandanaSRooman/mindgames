@@ -21,7 +21,7 @@ type NotificationType =
  * the column — see the comment in schema.sql.
  */
 export type NotificationTarget = {
-  type: 'post' | 'event' | 'community' | 'user' | 'company' | 'startup' | 'session' | 'conversation'
+  type: 'post' | 'event' | 'community' | 'user' | 'company' | 'startup' | 'session' | 'conversation' | 'resource'
   id: string
 }
 

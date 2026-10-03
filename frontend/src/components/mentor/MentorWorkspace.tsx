@@ -12,6 +12,7 @@ import { isHttpUrl } from '../../lib/links'
 import { useApp } from '../../store/AppStore'
 import { ManageServicesPanel } from '../career/ManageServicesPanel'
 import { MenteeRoadmapModal } from './MenteeRoadmapModal'
+import { AssignResourceModal } from './AssignResourceModal'
 import { SubscriptionPlans } from '../subscription/SubscriptionPlans'
 import type { Mentee, MentorshipSession, ProfileStats } from '../../types'
 
@@ -51,6 +52,7 @@ export function MentorWorkspace({
   const [mentees, setMentees] = useState<Mentee[]>([])
   const [stats, setStats] = useState<ProfileStats | null>(null)
   const [roadmapFor, setRoadmapFor] = useState<string | null>(null)
+  const [assignTo, setAssignTo] = useState<{ id: string; name: string } | null>(null)
   const [showServices, setShowServices] = useState(false)
   const [showPlans, setShowPlans] = useState(false)
   const [showOfferSession, setShowOfferSession] = useState(false)
@@ -341,6 +343,16 @@ export function MentorWorkspace({
                     No roadmap yet
                   </span>
                 )}
+
+                {/* Hand them something to learn without tying it to a session. */}
+                <Button
+                  variant="ghost"
+                  className="!py-1.5 !text-xs"
+                  icon={<BookOpen size={13} />}
+                  onClick={() => setAssignTo({ id: m.id, name: m.name })}
+                >
+                  Assign resource
+                </Button>
               </div>
             ))}
           </div>
@@ -390,6 +402,9 @@ export function MentorWorkspace({
 
       {showServices && <ManageServicesPanel onClose={() => setShowServices(false)} />}
       {roadmapFor && <MenteeRoadmapModal menteeId={roadmapFor} onClose={() => setRoadmapFor(null)} />}
+      {assignTo && (
+        <AssignResourceModal menteeId={assignTo.id} menteeName={assignTo.name} onClose={() => setAssignTo(null)} />
+      )}
       {showPlans && (
         <SubscriptionPlans reason="You need a subscription to accept sessions" onClose={() => setShowPlans(false)} />
       )}

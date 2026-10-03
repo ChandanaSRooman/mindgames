@@ -6,6 +6,8 @@ import { ApiError, asyncHandler } from '../http.js'
 import { pushNotification } from '../notify.js'
 import { HTTP_URL, HTTP_URL_MESSAGE } from '../validation.js'
 import { mapCareerResource, mapPublicCareerResource, type CareerResourceRow } from '../mappers.js'
+import { pageLimit } from '../learning.js'
+import { RESOURCE_SELECT } from '../resourceQueries.js'
 
 /**
  * Learning resources — the things a member is learning from on the way
@@ -19,30 +21,66 @@ import { mapCareerResource, mapPublicCareerResource, type CareerResourceRow } fr
  *     "read this before we meet" (only the mentor attaches; the mentee
  *     answers via POST /:id/submit when a submission is required)
  *
- * Visibility follows from the session link: you see a resource if you own it,
- * or if it is attached to a session you are a party to. That rule lives here
- * and not in schema.sql because it depends on who is asking.
+ * A mentor can also assign a resource straight to a member they have an
+ * agreed session with, without tying it to any one session (assignedTo).
+ *
+ * Visibility: you see a resource if you own it, or if it was assigned to you
+ * (assigned_to) — by session or directly. That rule lives here and not in
+ * schema.sql because it depends on who is asking.
  */
 export const careerResourcesRouter = Router()
 
 const KINDS = ['article', 'video', 'course', 'book', 'doc', 'other'] as const
 const STATUSES = ['saved', 'in_progress', 'done'] as const
 
-// Everything the caller may see: their own rows, plus anything attached to a
-// session they are in. Written as one WHERE rather than two queries and a
-// merge in JS, so ORDER BY (and any later paging) applies to the whole set.
-const VISIBLE = `
-  (r.user_id = $1
-   OR (r.session_id IS NOT NULL AND EXISTS (
-         SELECT 1 FROM mentorship_sessions ms
-          WHERE ms.id = r.session_id
-            AND (ms.mentor_id = $1 OR ms.mentee_id = $1))))`
+// The ids the caller ($1) may see, newest first, one page at a time.
+//
+// Two halves glued with UNION ALL — "I own it" and "it was assigned to me" —
+// each a walk of its own index (idx_career_resources_user,
+// idx_career_resources_assigned). It used to be one WHERE with an OR across
+// career_resources and mentorship_sessions, which no single index can answer:
+// Postgres read every resource row to test it. Measured on a copy with 1M
+// resources that was ~1.6s per page view; the indexed halves take ~1ms. The
+// second half skips rows the caller owns, so nothing is listed twice.
+//
+// Paging is keyset: $2 is the id of the last row the client already has, and
+// its exact (created_at, id) is looked up by primary key. Each half stops at
+// $3 rows, so the merge reads at most 2 × $3 ids whatever the list's length.
+//
+// $4 = saved only, for the Learning page's "Saved Resources": just what the
+// member kept for themselves. It drops the "assigned to me" half (mentors'
+// items have their own tab there) and, from the member's own rows, anything
+// they assigned to SOMEONE ELSE as a mentor — that is their outgoing work,
+// not something they saved.
+const VISIBLE_PAGE = `
+  cursor_row AS (SELECT created_at, id FROM career_resources WHERE id = $2),
+  visible AS (
+    (SELECT r.id FROM career_resources r
+      WHERE r.user_id = $1
+        AND (NOT $4::boolean OR r.assigned_to IS NULL)
+        AND ($2::text IS NULL OR (r.created_at, r.id) < (SELECT created_at, id FROM cursor_row))
+      ORDER BY r.created_at DESC, r.id DESC LIMIT $3)
+    UNION ALL
+    (SELECT r.id FROM career_resources r
+      WHERE NOT $4::boolean AND r.assigned_to = $1 AND r.user_id <> $1
+        AND ($2::text IS NULL OR (r.created_at, r.id) < (SELECT created_at, id FROM cursor_row))
+      ORDER BY r.created_at DESC, r.id DESC LIMIT $3))`
 
-const SELECT = `
-  SELECT r.*, u.name AS owner_name, u.photo AS owner_photo, s.topic AS session_topic, s.status AS session_status
-    FROM career_resources r
-    JOIN users u ON u.id = r.user_id
-    LEFT JOIN mentorship_sessions s ON s.id = r.session_id`
+const SELECT = RESOURCE_SELECT
+
+/** Confirms the caller has mentored this member: an agreed (upcoming or past)
+ *  session between them. The gate on assigning without a session — without it
+ *  anyone could push resources and notifications into a stranger's list. One
+ *  walk of idx_sessions_mentor_mentee. */
+async function assertMentorOf(menteeId: string, me: string) {
+  const r = await query(
+    `SELECT 1 FROM mentorship_sessions
+      WHERE mentor_id = $1 AND mentee_id = $2 AND status IN ('upcoming', 'past')
+      LIMIT 1`,
+    [me, menteeId],
+  )
+  if (!r.rowCount) throw new ApiError(404, 'You can only assign to members you have had a session with')
+}
 
 /** Confirms the caller is the mentor or the mentee of this session.
  *
@@ -70,6 +108,15 @@ function isSessionOver(status: string | null | undefined): boolean {
  *  Keep in step with sessionLocked in mappers.ts. */
 function isSessionLocked(status: string | null | undefined): boolean {
   return status === 'past'
+}
+
+/** Whether an assigned resource is frozen against edit/delete: its session
+ *  finished, or — for a direct assignment, which has no session to finish —
+ *  the mentee has already submitted against it. Keep in step with
+ *  sessionLocked in mappers.ts and the DELETE statement below. */
+function isLocked(r: Pick<CareerResourceRow, 'session_id' | 'session_status' | 'assigned_to' | 'submission_url'>): boolean {
+  if (r.session_id) return isSessionLocked(r.session_status)
+  return !!r.assigned_to && !!r.submission_url
 }
 
 /** Attaching to a session is the mentor's job; the mentee's side is POST
@@ -115,9 +162,12 @@ const createSchema = z.object({
   roadmapId: z.string().optional(),
   stepKey: z.string().optional(),
   sessionId: z.string().optional(),
+  // A mentor assigning straight to a member, with no session attached.
+  assignedTo: z.string().min(1).optional(),
   isPublic: z.boolean().optional().default(false),
-  // Accepted only so a request asking for it gets a clear refusal below:
-  // evidence tasks are created at session completion, never as prep.
+  // Allowed on a direct assignment (assignedTo). On session prep it is
+  // accepted only so the request gets a clear refusal below: evidence tasks
+  // for a session are created at completion, never as prep.
   requiresSubmission: z.boolean().optional().default(false),
 })
 
@@ -134,23 +184,95 @@ const updateSchema = z.object({
   isPublic: z.boolean().optional(),
 })
 
-// GET /api/career-resources — everything I can see, newest first.
-// `?sessionId=` narrows it to one session, which is what the session view uses.
+// GET /api/career-resources — what I can see, newest first, one page at a time.
+//
+// ?limit= (default 20, max 50) and ?after=<id of the last row you have> page
+// through it; a page shorter than the limit is the last one. The response is
+// still a plain array, so every existing reader keeps working unchanged.
+//
+// ?scope=saved lists only what the caller kept for themselves (see VISIBLE_PAGE).
+//
+// ?sessionId= narrows it to one session, which is what the session view uses.
+// A session holds a handful of resources, so that view is not paged.
 careerResourcesRouter.get(
   '/',
   requireAuth,
   asyncHandler(async (req, res) => {
+    const me = req.user!.sub
+    const savedOnly = req.query.scope === 'saved'
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined
-    if (sessionId) await assertInSession(sessionId, req.user!.sub)
 
+    // assertInSession has just proved the caller is this session's mentor or
+    // mentee — exactly the people its resources are for — so every row in it
+    // is theirs to see: one walk of idx_career_resources_session.
+    if (sessionId) {
+      await assertInSession(sessionId, me)
+      const r = await query<CareerResourceRow>(
+        `${SELECT} WHERE r.session_id = $1 ORDER BY r.created_at DESC, r.id DESC LIMIT 200`,
+        [sessionId],
+      )
+      res.json(r.rows.map(mapCareerResource))
+      return
+    }
+
+    const limit = pageLimit(req.query.limit)
+    const after = typeof req.query.after === 'string' && req.query.after ? req.query.after : null
     const r = await query<CareerResourceRow>(
-      `${SELECT} WHERE ${VISIBLE}${sessionId ? ' AND r.session_id = $2' : ''}
-       ORDER BY r.created_at DESC`,
-      sessionId ? [req.user!.sub, sessionId] : [req.user!.sub],
+      `WITH ${VISIBLE_PAGE}
+       ${SELECT} WHERE r.id IN (SELECT id FROM visible)
+       ORDER BY r.created_at DESC, r.id DESC
+       LIMIT $3`,
+      [me, after, limit, savedOnly],
     )
     res.json(r.rows.map(mapCareerResource))
   }),
 )
+
+// GET /api/career-resources/summary — the numbers the list's headings show,
+// counted in the database over everything the caller can see:
+//   { count, done, byStage: { [stepKey]: { total, done } } }
+// byStage counts only rows filed against the caller's ACTIVE roadmap, the same
+// rule the page uses to group them. With the list paged, these totals can no
+// longer come from the rows the client happens to have loaded. Mounted before
+// the '/:id' routes so "summary" is never read as an id.
+careerResourcesRouter.get(
+  '/summary',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const r = await query<{ step_key: string | null; total: number; done: number }>(
+      `WITH v AS (
+         -- What the member kept (not what they assigned to others as a mentor)
+         -- plus what mentors gave them — the Learning page's two definitions,
+         -- so the number on Career Guidance matches what that page lists.
+         SELECT status, roadmap_id, step_key FROM career_resources
+          WHERE user_id = $1 AND assigned_to IS NULL
+         UNION ALL
+         SELECT status, roadmap_id, step_key FROM career_resources
+          WHERE assigned_to = $1 AND user_id <> $1),
+       active AS (SELECT id FROM career_roadmaps WHERE user_id = $1 AND status = 'active')
+       SELECT CASE WHEN v.roadmap_id = (SELECT id FROM active) THEN v.step_key END AS step_key,
+              count(*)::int AS total,
+              count(*) FILTER (WHERE v.status = 'done')::int AS done
+         FROM v
+        GROUP BY 1`,
+      [req.user!.sub],
+    )
+    let count = 0
+    let done = 0
+    const byStage: Record<string, { total: number; done: number }> = {}
+    for (const row of r.rows) {
+      count += row.total
+      done += row.done
+      if (row.step_key) byStage[row.step_key] = { total: row.total, done: row.done }
+    }
+    res.json({ count, done, byStage })
+  }),
+)
+
+// How many public resources a profile shows at most. A profile is a showcase,
+// not an archive, and the cap keeps one prolific member's page from returning
+// an unbounded list.
+const PUBLIC_RESOURCES_LIMIT = 50
 
 // GET /api/career-resources/of/:userId — the PUBLIC resources on someone
 // else's profile. Deliberately separate from GET / (which is "my own
@@ -163,8 +285,8 @@ careerResourcesRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const r = await query<CareerResourceRow>(
-      `${SELECT} WHERE r.user_id = $1 AND r.is_public ORDER BY r.created_at DESC`,
-      [req.params.userId],
+      `${SELECT} WHERE r.user_id = $1 AND r.is_public ORDER BY r.created_at DESC LIMIT $2`,
+      [req.params.userId, PUBLIC_RESOURCES_LIMIT],
     )
     res.json(r.rows.map(mapPublicCareerResource))
   }),
@@ -184,12 +306,30 @@ careerResourcesRouter.post(
     // A stage key only means something inside a roadmap, so one without the
     // other is a request that cannot be stored coherently.
     if (d.stepKey && !d.roadmapId) throw new ApiError(400, 'A stage needs its roadmap')
+    if (d.sessionId && d.assignedTo) {
+      throw new ApiError(400, 'Assign through a session or directly — not both')
+    }
+    // Both kinds of assignment hand the row to someone else, so the owner's
+    // own roadmap stage means nothing to the recipient.
+    if ((d.sessionId || d.assignedTo) && d.roadmapId) {
+      throw new ApiError(400, 'An assigned resource can’t be filed under your own roadmap stage')
+    }
     if (d.roadmapId) await assertOwnStage(d.roadmapId, d.stepKey, me)
+    if (d.assignedTo === me) throw new ApiError(400, 'You can’t assign a resource to yourself')
+
+    // A resource handed to someone has to point at something they can open —
+    // a title alone gives them nothing to read or act on. Personal saves can
+    // still be a bare note.
+    if ((d.sessionId || d.assignedTo) && !d.url) {
+      throw new ApiError(400, 'Add a link — an assigned resource needs something to open')
+    }
+
+    // Who receives it. For session prep that is the session's mentee; for a
+    // direct assignment, the member named — and only once a session between
+    // the two of them has been agreed.
+    let recipient: string | null = null
+    let sessionTopic: string | null = null
     if (d.sessionId) {
-      // A resource handed to a mentee has to point at something they can
-      // open — a title alone gives them nothing to read or act on. Personal
-      // saves (no session) can still be a bare note.
-      if (!d.url) throw new ApiError(400, 'Add a link — a session resource needs something to open')
       // Anything attached while a session is live is prep: read it, nothing
       // to hand back. A task that needs evidence is created by the session's
       // /complete route instead, once there's a session to follow up on.
@@ -197,36 +337,56 @@ careerResourcesRouter.post(
         throw new ApiError(400, 'Prep resources don’t take evidence — add a follow-up task when you complete the session')
       }
       await assertMentorOfSession(d.sessionId, me)
+      const s = await query<{ mentee_id: string; topic: string }>(
+        `SELECT mentee_id, topic FROM mentorship_sessions WHERE id = $1`,
+        [d.sessionId],
+      )
+      recipient = s.rows[0].mentee_id
+      sessionTopic = s.rows[0].topic
+    } else if (d.assignedTo) {
+      await assertMentorOf(d.assignedTo, me)
+      recipient = d.assignedTo
+    } else if (d.requiresSubmission) {
+      throw new ApiError(400, 'Only a resource assigned to someone can ask for a submission')
     }
 
     const ins = await query<{ id: string }>(
-      `INSERT INTO career_resources (user_id, title, url, note, kind, status, roadmap_id, step_key, session_id, is_public, requires_submission)
-       VALUES ($1, $2, $3, $4, COALESCE($5, 'article'), COALESCE($6, 'saved'), $7, $8, $9, $10, $11)
+      `INSERT INTO career_resources
+         (user_id, title, url, note, kind, status, roadmap_id, step_key, session_id, is_public,
+          requires_submission, assigned_to)
+       VALUES ($1, $2, $3, $4, COALESCE($5, 'article'), COALESCE($6, 'saved'), $7, $8, $9, $10, $11, $12)
        RETURNING id`,
       [
         me, d.title, d.url ?? null, d.note ?? null, d.kind ?? null, d.status ?? null,
         d.roadmapId ?? null, d.stepKey ?? null, d.sessionId ?? null, d.isPublic,
-        false,
+        // Evidence only ever on a direct assignment (session prep refused above).
+        !!d.assignedTo && d.requiresSubmission,
+        recipient,
       ],
     )
 
-    // Sharing into a session is the one case where someone else gains a row
-    // they did not create, so it is the one case worth a notification.
-    if (d.sessionId) {
-      const s = await query<{ mentor_id: string; mentee_id: string; topic: string }>(
-        `SELECT mentor_id, mentee_id, topic FROM mentorship_sessions WHERE id = $1`,
-        [d.sessionId],
-      )
-      const row = s.rows[0]
-      const other = row.mentor_id === me ? row.mentee_id : row.mentor_id
+    // An assignment is the one case where someone else gains a row they did
+    // not create, so it is the one case worth a notification.
+    if (recipient) {
       const who = await query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [me])
-      void pushNotification(
-        other,
-        'mentorship',
-        `${who.rows[0].name} shared "${d.title}" for your session "${row.topic}".`,
-        me,
-        { type: 'session', id: d.sessionId },
-      )
+      const name = who.rows[0].name
+      if (d.sessionId) {
+        void pushNotification(
+          recipient,
+          'mentorship',
+          `${name} shared "${d.title}" for your session "${sessionTopic}".`,
+          me,
+          { type: 'session', id: d.sessionId },
+        )
+      } else {
+        void pushNotification(
+          recipient,
+          'mentorship',
+          `${name} assigned you "${d.title}".`,
+          me,
+          { type: 'resource', id: ins.rows[0].id },
+        )
+      }
     }
 
     const full = await query<CareerResourceRow>(`${SELECT} WHERE r.id = $1`, [ins.rows[0].id])
@@ -254,15 +414,16 @@ careerResourcesRouter.patch(
     if (!cur.rowCount) throw new ApiError(404, 'Resource not found (or not yours)')
     const c = cur.rows[0]
 
-    if (c.session_id) {
+    if (c.session_id || c.assigned_to) {
       // Something handed to a mentee has to stay openable.
-      if (d.url === null) throw new ApiError(400, 'A session resource needs a link — change it instead of removing it')
-      // Once the session is over, what was assigned is a record. The owner can
+      if (d.url === null) throw new ApiError(400, 'An assigned resource needs a link — change it instead of removing it')
+      // Once the session is over — or, for a direct assignment, once the
+      // mentee has submitted — what was assigned is a record. The owner can
       // still tick it done or make it public — their own bookkeeping — but not
       // rewrite it.
       const changesContent = d.title !== undefined || d.url !== undefined || d.note !== undefined || d.kind !== undefined
-      if (changesContent && isSessionLocked(c.session_status)) {
-        throw new ApiError(409, 'This session is over — what was assigned can no longer be changed')
+      if (changesContent && isLocked(c)) {
+        throw new ApiError(409, 'This has been completed — what was assigned can no longer be changed')
       }
     }
 
@@ -289,12 +450,11 @@ const submitSchema = z.object({
   url: z.string().trim().url().regex(HTTP_URL, HTTP_URL_MESSAGE).max(2000),
 })
 
-// POST /api/career-resources/:id/submit — the session's MENTEE proves they
-// did an assigned resource, by pasting a link (a doc, a repo, a deployed
-// site). Deliberately not the owner: the mentor who assigned it is the one
-// who set requires_submission, and the mentee is who has to answer it. Who
-// "the mentee" is comes from the session this resource is attached to, not a
-// separate assignment field.
+// POST /api/career-resources/:id/submit — the MENTEE it was assigned to proves
+// they did it, by pasting a link (a doc, a repo, a deployed site).
+// Deliberately not the owner: the mentor who assigned it is the one who set
+// requires_submission, and the mentee is who has to answer it. "The mentee" is
+// assigned_to — set for session follow-ups and direct assignments alike.
 careerResourcesRouter.post(
   '/:id/submit',
   requireAuth,
@@ -303,11 +463,10 @@ careerResourcesRouter.post(
     if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
     const me = req.user!.sub
 
-    const cur = await query<{ requires_submission: boolean; title: string; user_id: string; session_id: string }>(
+    const cur = await query<{ requires_submission: boolean; title: string; user_id: string; session_id: string | null }>(
       `SELECT r.requires_submission, r.title, r.user_id, r.session_id
          FROM career_resources r
-         JOIN mentorship_sessions s ON s.id = r.session_id
-        WHERE r.id = $1 AND s.mentee_id = $2`,
+        WHERE r.id = $1 AND r.assigned_to = $2`,
       [req.params.id, me],
     )
     if (!cur.rowCount) throw new ApiError(404, 'Resource not found (or not assigned to you)')
@@ -323,9 +482,12 @@ careerResourcesRouter.post(
       'mentorship',
       `${who.rows[0].name} submitted "${cur.rows[0].title}".`,
       me,
-      // The session, not the resource: a 'session' target is resolved as a
-      // session id wherever the notification is opened.
-      { type: 'session', id: cur.rows[0].session_id },
+      // The session when there is one (a 'session' target is resolved as a
+      // session id wherever it is opened); a direct assignment points at the
+      // resource itself.
+      cur.rows[0].session_id
+        ? { type: 'session', id: cur.rows[0].session_id }
+        : { type: 'resource', id: req.params.id },
     )
 
     const full = await query<CareerResourceRow>(`${SELECT} WHERE r.id = $1`, [req.params.id])
@@ -340,16 +502,26 @@ careerResourcesRouter.delete(
   '/:id',
   requireAuth,
   asyncHandler(async (req, res) => {
-    // The status check and the delete are one statement, so the session can't
-    // finish between checking and deleting. A finished session's resources are
-    // a record — deleting a follow-up task would erase the mentee's evidence.
+    // The lock check, the delete and the share counter are one statement:
+    // the session can't finish between checking and deleting, and a saved
+    // share's "Saved by N" moves in the same instant its row goes —
+    // two statements could leave the counter wrong if the second failed.
+    // A finished session's resources, and a direct assignment the mentee has
+    // already answered, are a record: deleting would erase the evidence.
     const r = await query<{ id: string }>(
-      `DELETE FROM career_resources r
-        WHERE r.id = $1 AND r.user_id = $2
-          AND (r.session_id IS NULL OR EXISTS (
-                SELECT 1 FROM mentorship_sessions s
-                 WHERE s.id = r.session_id AND s.status <> 'past'))
-        RETURNING r.id`,
+      `WITH del AS (
+         DELETE FROM career_resources r
+          WHERE r.id = $1 AND r.user_id = $2
+            AND (CASE WHEN r.session_id IS NOT NULL
+                      THEN EXISTS (SELECT 1 FROM mentorship_sessions s
+                                    WHERE s.id = r.session_id AND s.status <> 'past')
+                      ELSE r.assigned_to IS NULL OR r.submission_url IS NULL END)
+          RETURNING r.id, r.share_id),
+       unsaved AS (
+         UPDATE learning_shares s SET saved_count = GREATEST(s.saved_count - 1, 0)
+           FROM del WHERE s.id = del.share_id
+         RETURNING s.id)
+       SELECT id FROM del`,
       [req.params.id, req.user!.sub],
     )
     if (!r.rowCount) {
@@ -358,7 +530,7 @@ careerResourcesRouter.delete(
         req.user!.sub,
       ])
       if (!mine.rowCount) throw new ApiError(404, 'Resource not found (or not yours)')
-      throw new ApiError(409, 'This session is over — what was assigned can no longer be removed')
+      throw new ApiError(409, 'This has been completed — what was assigned can no longer be removed')
     }
     res.status(204).end()
   }),

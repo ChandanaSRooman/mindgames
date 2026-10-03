@@ -853,6 +853,10 @@ export interface CareerResourceRow {
   owner_photo?: string | null
   session_topic?: string | null
   session_status?: string | null
+  share_id?: string | null
+  share_sharer_name?: string | null
+  assigned_to?: string | null
+  assignee_name?: string | null
 }
 
 export function mapCareerResource(r: CareerResourceRow) {
@@ -880,8 +884,90 @@ export function mapCareerResource(r: CareerResourceRow) {
     sessionTopic: r.session_topic ?? undefined,
     // Lets the UI hide edit/delete on a finished session's resources, which
     // the server refuses anyway (they're a record of what was assigned).
-    // Only 'past' locks — mirrors isSessionLocked in careerResources.routes.ts.
-    sessionLocked: r.session_id ? r.session_status === 'past' : false,
+    // Only 'past' locks a session's resources; a direct assignment (no
+    // session) locks once the mentee has submitted against it — mirrors
+    // isLocked in careerResources.routes.ts.
+    sessionLocked: r.session_id
+      ? r.session_status === 'past'
+      : !!r.assigned_to && !!r.submission_url,
+    // Learning hub links — all optional, so every existing reader is unchanged.
+    // This row is the member's saved copy of what an alum shared, and keeps
+    // their name, so a saved list still says who recommended it.
+    shareId: r.share_id ?? undefined,
+    sharedByName: r.share_sharer_name ?? undefined,
+    // Who the owner (a mentor) handed it to — set for session resources and
+    // for direct assignments alike.
+    assignedToId: r.assigned_to ?? undefined,
+    assignedToName: r.assignee_name ?? undefined,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Learning hub: what an alum shared, and who they are.
+//
+// The sharer is part of the item, not a footnote: the page exists to show
+// which member of the network vouches for something and how to reach them.
+// ---------------------------------------------------------------------------
+export interface LearningShareRow {
+  id: string
+  topic_key: string
+  kind: string
+  title: string
+  url: string | null
+  why_helped: string
+  about: string | null
+  skills: string[] | null
+  /** The same tags as typed ("LLM/RAG"), joined from learning_tags. */
+  skill_labels?: string[] | null
+  difficulty: string
+  est_hours: number | null
+  helped_count: number
+  saved_count: number
+  hidden?: boolean
+  created_at: Date | string
+  // The sharer, joined from users.
+  shared_by: string
+  sharer_name: string
+  sharer_designation: string | null
+  sharer_company: string | null
+  sharer_is_mentor?: boolean | null
+  // Per-viewer, joined by the query when it knows who is asking.
+  i_helped?: boolean | null
+  my_saved_id?: string | null
+}
+
+export function mapLearningShare(r: LearningShareRow) {
+  return {
+    id: r.id,
+    kind: r.kind,
+    title: r.title,
+    url: r.url ?? null,
+    whyHelped: r.why_helped,
+    // A project brief's full problem statement; null for everything else.
+    about: r.about ?? null,
+    // Display labels when known, else the stored tag.
+    skills: r.skill_labels ?? r.skills ?? [],
+    difficulty: r.difficulty,
+    estHours: r.est_hours ?? null,
+    // How many members said it helped them — the only standing an item has.
+    helpedCount: r.helped_count,
+    savedCount: r.saved_count,
+    // Only ever true in the sharer's own list (every other list leaves hidden
+    // shares out): tells them why it stopped appearing for others.
+    hidden: !!r.hidden,
+    sharedBy: {
+      id: r.shared_by,
+      name: r.sharer_name,
+      // No photo: a profile photo is a data URL of up to ~400 KB, and these
+      // are read in lists. The avatar falls back to initials.
+      designation: r.sharer_designation ?? '',
+      company: r.sharer_company ?? '',
+      isMentor: !!r.sharer_is_mentor,
+    },
+    iHelped: !!r.i_helped,
+    // The viewer's own saved copy, so the card can unsave without a lookup.
+    mySavedResourceId: r.my_saved_id ?? null,
+    createdAt: new Date(r.created_at).toISOString(),
   }
 }
 

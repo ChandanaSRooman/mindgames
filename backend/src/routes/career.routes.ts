@@ -12,6 +12,7 @@ import {
 } from '../careerPaths.js'
 import { startYearOf } from '../mappers.js'
 import { refreshBadges } from '../sessionStats.js'
+import { loadRoadmapCore } from '../roadmap.js'
 import {
   mapCareerAssessment,
   mapCareerRoadmap,
@@ -346,21 +347,10 @@ careerRouter.post(
 // ---------------------------------------------------------------------------
 
 async function loadActiveRoadmap(userId: string) {
-  const r = await query<CareerRoadmapRow>(
-    `SELECT * FROM career_roadmaps WHERE user_id = $1 AND status = 'active'`,
-    [userId],
-  )
-  if (!r.rowCount) return null
-  const mapped = mapCareerRoadmap(r.rows[0])
-  const states = await query<{ step_key: string; status: string }>(
-    `SELECT step_key, status FROM career_roadmap_step_state WHERE roadmap_id = $1`,
-    [r.rows[0].id],
-  )
-  const byKey = new Map(states.rows.map((s) => [s.step_key, s.status]))
-  mapped.stages = mapped.stages.map((s: Record<string, unknown>) => ({
-    ...s,
-    status: byKey.get(String(s.stepKey)) ?? s.status,
-  }))
+  // The plan and its live stage statuses — shared with the Learning
+  // Resources page, which needs exactly this much and not the services below.
+  const mapped = await loadRoadmapCore(userId)
+  if (!mapped) return null
 
   // The services the roadmap matched to its stages, for each stage card's
   // "N services" list. Live ones only: a service paused or deleted since the

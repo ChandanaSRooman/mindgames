@@ -1,0 +1,197 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { CircleCheck, MessageSquare, Users } from 'lucide-react'
+import { api } from '../../lib/api'
+import { roleLine } from '../../lib/format'
+import { appendPage, waitingLabel } from '../../lib/learningHub'
+import { useLayout } from '../layout/LayoutContext'
+import { Avatar } from '../ui'
+import type { LearningShare, LearningStageLite, StageHelper } from '../../types'
+import { ShareCard } from './ShareCard'
+import { CardGrid, LoadMore, SectionHeader } from './SectionHeader'
+
+const PAGE = 20
+
+/**
+ * What alumni shared for one roadmap stage, with chips to move between stages.
+ *
+ * When nobody has shared for a stage yet this does NOT show an empty page: it
+ * shows the alumni who can help with it, so the member always has a person to
+ * ask. That fallback is the whole idea of the page in miniature.
+ */
+export function StageView({
+  stages,
+  stepKey,
+  currentStepKey,
+  onSelect,
+  reloadKey = 0,
+  onShareHere,
+  onSavedChange,
+}: {
+  stages: LearningStageLite[]
+  stepKey: string | null
+  currentStepKey: string | null
+  onSelect: (stepKey: string) => void
+  reloadKey?: number
+  /** Opens the share form for the stage being viewed. */
+  onShareHere: (stepKey: string) => void
+  onSavedChange: (delta: 1 | -1) => void
+}) {
+  const { openChatWith } = useLayout()
+  const [shares, setShares] = useState<LearningShare[]>([])
+  const [alumni, setAlumni] = useState<StageHelper[]>([])
+  const [memberCount, setMemberCount] = useState(0)
+  const [state, setState] = useState<'loading' | 'ready' | 'failed' | 'none'>('loading')
+  const [more, setMore] = useState(false)
+  const [loading, setLoading] = useState(false)
+  // Answers for a stage the member has already clicked away from are ignored.
+  const wanted = useRef(stepKey)
+  wanted.current = stepKey
+
+  const loadPage = useCallback(async (key: string, offset: number) => {
+    setLoading(true)
+    try {
+      const r = await api.getLearningStage(key, offset)
+      if (wanted.current !== key) return
+      setShares((prev) => (offset === 0 ? r.shares : appendPage(prev, r.shares)))
+      if (offset === 0) {
+        setAlumni(r.alumni)
+        setMemberCount(r.memberCount)
+      }
+      setMore(r.shares.length === PAGE)
+      setState('ready')
+    } catch {
+      if (wanted.current === key) {
+        setState('failed')
+        setMore(false)
+      }
+    } finally {
+      if (wanted.current === key) setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    setShares([])
+    setAlumni([])
+    if (!stepKey) {
+      setState('none')
+      return
+    }
+    setState('loading')
+    void loadPage(stepKey, 0)
+  }, [stepKey, reloadKey, loadPage])
+
+  const update = (next: LearningShare) => setShares((prev) => prev.map((x) => (x.id === next.id ? next : x)))
+  const drop = (id: string) => setShares((prev) => prev.filter((x) => x.id !== id))
+
+  return (
+    <section>
+      <SectionHeader
+        icon={<Users size={18} />}
+        title="What alumni recommend"
+        sub={memberCount > 0 ? waitingLabel(memberCount) : 'Shared by members who have been through this stage.'}
+      />
+
+      {stages.length > 0 && (
+        <div className="mb-4 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Roadmap stage">
+          {stages.map((s, i) => {
+            const active = s.stepKey === stepKey
+            return (
+              <button
+                key={s.stepKey}
+                role="tab"
+                aria-selected={active}
+                onClick={() => onSelect(s.stepKey)}
+                className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                  active ? 'border-[#ff4500] bg-orange-50 text-[#ff4500]' : 'border-[#edeff1] bg-white text-[#878a8c] hover:text-[#1c1c1c]'
+                }`}
+              >
+                {s.status === 'completed' ? <CircleCheck size={12} className="text-green-600" /> : <span>{i + 1}.</span>}
+                <span className="max-w-[220px] truncate">{s.title}</span>
+                {s.stepKey === currentStepKey && <span className="rounded-full bg-[#ff4500] px-1.5 text-[9px] text-white">Now</span>}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {state === 'none' && (
+        <Empty>
+          Build your career roadmap and you'll see what alumni recommend for each stage.{' '}
+          <Link to="/career-guidance/assessment" className="font-semibold text-[#ff4500] hover:underline">
+            Start
+          </Link>
+        </Empty>
+      )}
+      {state === 'loading' && <p className="text-sm text-[#878a8c]">Loading…</p>}
+      {state === 'failed' && <p className="text-sm text-red-600">Could not load this stage.</p>}
+
+      {state === 'ready' && shares.length === 0 && (
+        <div className="rounded-xl border border-dashed border-[#edeff1] bg-white p-4">
+          <p className="text-sm font-semibold text-[#1c1c1c]">No one has shared for this stage yet.</p>
+          <p className="mt-0.5 text-xs text-[#878a8c]">
+            {alumni.length > 0
+              ? 'These alumni have been where you are — ask them what helped.'
+              : 'Ask in Mentorship, or share something yourself once you get through it.'}
+          </p>
+          {alumni.length > 0 && (
+            <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+              {alumni.map((a) => (
+                <li key={a.id} className="flex items-center gap-2.5 rounded-lg border border-[#edeff1] p-2.5">
+                  <Avatar name={a.name} size={36} to={`/profile/${a.id}`} />
+                  <div className="min-w-0 flex-1">
+                    <Link to={`/profile/${a.id}`} className="block truncate text-xs font-bold text-[#1c1c1c] hover:underline">
+                      {a.name}
+                      {a.isMentor && <span className="ml-1 text-[10px] font-semibold text-[#ff4500]">Mentor</span>}
+                    </Link>
+                    <p className="truncate text-[11px] text-[#878a8c]">{roleLine(a)}</p>
+                  </div>
+                  <button
+                    onClick={() => openChatWith(a.id)}
+                    aria-label={`Ask ${a.name}`}
+                    title={`Ask ${a.name}`}
+                    className="shrink-0 rounded-lg border border-[#edeff1] px-2 py-1.5 text-[#878a8c] hover:text-[#1c1c1c]"
+                  >
+                    <MessageSquare size={13} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {stepKey && (
+            <button
+              onClick={() => onShareHere(stepKey)}
+              className="mt-3 text-xs font-semibold text-[#ff4500] hover:underline"
+            >
+              Been through this stage? Share what helped you →
+            </button>
+          )}
+        </div>
+      )}
+
+      {shares.length > 0 && (
+        <>
+          <CardGrid>
+            {shares.map((s) => (
+              <ShareCard key={s.id} share={s} onChange={update} onRemoved={drop} onSavedChange={onSavedChange} />
+            ))}
+          </CardGrid>
+          {more && stepKey && <LoadMore loading={loading} onClick={() => void loadPage(stepKey, shares.length)} />}
+          {/* Anyone can add to a stage, not only fill an empty one. */}
+          {stepKey && (
+            <button
+              onClick={() => onShareHere(stepKey)}
+              className="mt-3 text-xs font-semibold text-[#ff4500] hover:underline"
+            >
+              Found something else that helped on this stage? Share it →
+            </button>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
+function Empty({ children }: { children: React.ReactNode }) {
+  return <p className="rounded-xl border border-dashed border-[#edeff1] bg-white p-4 text-sm text-[#878a8c]">{children}</p>
+}

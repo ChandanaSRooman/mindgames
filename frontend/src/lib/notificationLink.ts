@@ -33,6 +33,10 @@ export function notificationLink(n: AppNotification, fallback: string): string {
       return `/profile/${n.targetId}`
     case 'company':
       return `/companies/${n.targetId}`
+    // A resource assigned directly (or its submission) — it lives in the
+    // Learning Resources page's lists, which have no per-item route.
+    case 'resource':
+      return '/learning-resources'
     // No per-item route exists for these yet. Storing the target now means
     // adding one later is a change to this function alone.
     case 'event':

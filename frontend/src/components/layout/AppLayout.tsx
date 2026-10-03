@@ -23,7 +23,9 @@ export function AppLayout() {
   const [verifyDismissed, setVerifyDismissed] = useState(false)
   const [resending, setResending] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const isFullWidth = pathname.startsWith('/career-guidance')
+  // Learning Resources brings its own right column (Filter by + Saved
+  // Resources), which takes the general rail's place on that page only.
+  const isFullWidth = pathname.startsWith('/career-guidance') || pathname === '/learning-resources'
   const showVerifyBanner =
     !verifyDismissed && !currentUser.isAdmin && currentUser.emailVerified === false
 
